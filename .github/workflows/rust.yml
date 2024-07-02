@@ -52,6 +52,7 @@ jobs:
       #          submodules: recursive
       - name: Checkout submodules
         run: |
+          apt-get -y update
           apt-get -y install git
           git submodule update --init --recursive
       - name: Run tests
