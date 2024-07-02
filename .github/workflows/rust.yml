@@ -37,7 +37,7 @@ jobs:
   #          submodules: recursive
   #      - name: Run tests
   #        run: cargo test --all --verbose
-  tests_32_bit:
+  tests:
     runs-on: ubuntu-latest
     container:
       image: i386/ubuntu:latest
