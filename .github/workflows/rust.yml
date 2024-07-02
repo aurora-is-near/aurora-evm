@@ -40,7 +40,7 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     container:
-      image: i386/ubuntu:latest
+      image: ubuntu:latest
     steps:
       - uses: actions/checkout@v4
         with:
