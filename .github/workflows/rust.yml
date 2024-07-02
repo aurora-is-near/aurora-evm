@@ -51,7 +51,9 @@ jobs:
       #        with:
       #          submodules: recursive
       - name: Checkout submodules
-        run: git submodule update --init --recursive
+        run: |
+          apt -y install git
+          git submodule update --init --recursive
       - name: Run tests
         run: cargo test --all --verbose
 #  ethereum-tests:
