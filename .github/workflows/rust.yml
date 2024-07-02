@@ -48,8 +48,10 @@ jobs:
       #          sudo apt-get update
       #          sudo apt-get install git -y
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      #        with:
+      #          submodules: recursive
+      - name: Checkout submodules
+        run: git submodule update --init --recursive
       - name: Run tests
         run: cargo test --all --verbose
 #  ethereum-tests:
