@@ -42,11 +42,11 @@ jobs:
     container:
       image: rust:slim-bullseye
     steps:
-      - name: Bump git
-        run: |
-          sudo add-apt-repository ppa:git-core/ppa -y
-          sudo apt-get update
-          sudo apt-get install git -y
+      #      - name: Bump git
+      #        run: |
+      #          sudo add-apt-repository ppa:git-core/ppa -y
+      #          sudo apt-get update
+      #          sudo apt-get install git -y
       - uses: actions/checkout@v4
         with:
           submodules: recursive
