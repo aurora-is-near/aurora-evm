@@ -33,71 +33,101 @@ jobs:
   #    runs-on: ubuntu-latest
   #    steps:
   #      - uses: actions/checkout@v4
-  #        with:
-  #          submodules: recursive
   #      - name: Run tests
   #        run: cargo test --all --verbose
-  tests:
+  tests-32-bit:
     runs-on: ubuntu-latest
     steps:
-      #      - name: Bump git
-      #        run: |
-      #          sudo add-apt-repository ppa:git-core/ppa -y
-      #          sudo apt-get update
-      #          sudo apt-get install git -y
       - uses: actions/checkout@v4
-      #        with:
-      #          submodules: recursive
-      - uses: vxcontrol/run-on-arch-action@0.9.0
+      - name: Run tests 32 bit
+        uses: vxcontrol/run-on-arch-action@0.9.0
         id: tests
         with:
           arch: i386
           distro: bullseye
-          # Not required, but speeds up builds by storing container images in
-          # a GitHub package registry.
           githubToken: ${{ github.token }}
-
-          # Set an output parameter `uname` for use in subsequent steps
           run: |
             apt-get update && apt-get install -y curl clang llvm
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            $HOME/.cargo/bin/cargo test --all --verbose
-#  ethereum-tests:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout sources
-#        uses: actions/checkout@v4
-#        with:
-#          submodules: recursive
-#
-#      - name: Checkout ethereum/tests
-#        uses: actions/checkout@v4
-#        with:
-#          repository: ethereum/tests
-#          path: ethtests
-#          ref: v13.3
-#          submodules: recursive
-#          fetch-depth: 1
-#
-#      - name: Run Ethereum state tests
-#        run: |
-#          cargo run -r -p evm-jsontests -F enable-slow-tests -- \
-#          	state -f \
-#          	ethtests/GeneralStateTests/
-#
-#      - name: Run Ethereum vm tests
-#        run: |
-#          cargo run -r -p evm-jsontests -F enable-slow-tests -- \
-#          	vm -f \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
-#            ethtests/LegacyTests/Constantinople/VMTests/vmTests
+            export PATH="$PATH:$HOME/.cargo/bin"
+            cargo test --all --verbose
+  #  ethereum-tests:
+  #    runs-on: ubuntu-latest
+  #    steps:
+  #      - name: Checkout sources
+  #        uses: actions/checkout@v4
+  #        with:
+  #          submodules: recursive
+  #
+  #      - name: Checkout ethereum/tests
+  #        uses: actions/checkout@v4
+  #        with:
+  #          repository: ethereum/tests
+  #          path: ethtests
+  #          ref: v13.3
+  #          submodules: recursive
+  #          fetch-depth: 1
+  #
+  #      - name: Run Ethereum state tests
+  #        run: |
+  #          cargo run -r -p evm-jsontests -F enable-slow-tests -- \
+  #          	state -f \
+  #          	ethtests/GeneralStateTests/
+  #
+  #      - name: Run Ethereum vm tests
+  #        run: |
+  #          cargo run -r -p evm-jsontests -F enable-slow-tests -- \
+  #          	vm -f \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
+  #            ethtests/LegacyTests/Constantinople/VMTests/vmTests
+
+  ethereum-tests-32-bit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Checkout ethereum/tests
+        uses: actions/checkout@v4
+        with:
+          repository: ethereum/tests
+          path: ethtests
+          ref: v13.3
+          submodules: recursive
+          fetch-depth: 1
+      - name: Run Ethereum state tests 32 bit
+        uses: vxcontrol/run-on-arch-action@0.9.0
+        id: tests
+        with:
+          arch: i386
+          distro: bullseye
+          githubToken: ${{ github.token }}
+          run: |
+            apt-get update && apt-get install -y curl clang llvm
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            export PATH="$PATH:$HOME/.cargo/bin"
+            cargo run -r -p evm-jsontests -F enable-slow-tests -- \
+              state -f ethtests/GeneralStateTests/
+            cargo run -r -p evm-jsontests -F enable-slow-tests -- \
+              vm -f \
+              ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
+              ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
+              ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
+              ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
+              ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
+              ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
+              ethtests/LegacyTests/Constantinople/VMTests/vmTests
