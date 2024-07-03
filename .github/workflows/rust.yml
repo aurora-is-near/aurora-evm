@@ -52,14 +52,15 @@ jobs:
         id: tests
         with:
           arch: i386
-          distro: buster
-
+          distro: alpine_latest
           # Not required, but speeds up builds by storing container images in
           # a GitHub package registry.
           githubToken: ${{ github.token }}
 
           # Set an output parameter `uname` for use in subsequent steps
-          run: cargo test --all --verbose
+          run: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            cargo test --all --verbose
 #  ethereum-tests:
 #    runs-on: ubuntu-latest
 #    steps:
