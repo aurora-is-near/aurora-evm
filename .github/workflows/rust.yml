@@ -52,7 +52,7 @@ jobs:
         id: tests
         with:
           arch: i386
-          distro: alpine_lastest
+          distro: buster
 
           # Not required, but speeds up builds by storing container images in
           # a GitHub package registry.
