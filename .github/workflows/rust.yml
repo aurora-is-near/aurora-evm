@@ -61,7 +61,7 @@ jobs:
           run: |
             apt-get update && apt-get install -y curl clang llvm
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            cargo test --all --verbose
+            $HOME/.cargo/bin/cargo test --all --verbose
 #  ethereum-tests:
 #    runs-on: ubuntu-latest
 #    steps:
