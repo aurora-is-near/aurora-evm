@@ -848,7 +848,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 	}
 
 	/// Get fee needed for the current executor, given the price.
-	pub fn fee(&mut self, price: U256) -> U256 {
+	pub fn fee(&self, price: U256) -> U256 {
 		let used_gas = self.used_gas();
 		U256::from(used_gas).saturating_mul(price)
 	}
