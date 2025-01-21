@@ -1092,10 +1092,6 @@ fn test_run(
 	let mut tests_result = TestExecutionResult::new();
 	let test_tx = &test.0.transaction;
 	for (spec, states) in &test.0.post_states {
-		// TODOFEE
-		// if name != "tests/prague/eip7623_increase_calldata_cost/test_execution_gas.py::TestGasRefunds::test_gas_refunds_from_data_floor[fork_Prague-state_test-exact_gas-type_0_protected]" {
-		// 	continue;
-		// }
 		// Run tests for specific SPEC (Hard fork)
 		if let Some(s) = specific_spec.as_ref() {
 			if s != spec {

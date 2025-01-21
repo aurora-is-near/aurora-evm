@@ -832,35 +832,24 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 		let refunded_gas =
 			u64::try_from(self.state.metadata().gasometer.refunded_gas()).unwrap_or_default();
 		let total_used_gas = self.state.metadata().gasometer.total_used_gas();
-		// EIP-7623: max(total_used_gas, floor_gas)
-		if self.config.has_floor_gas {
-			let floor_gas = self.state.metadata().gasometer.floor_gas();
-			// We explicitly record difference between: max(total_used_gas, floor_gas)
-			if total_used_gas < floor_gas {
-				let _ = self
-					.state
-					.metadata_mut()
-					.gasometer
-					.record_cost(floor_gas - total_used_gas);
-			}
-		}
-		// TODOFEE
-		// println!(
-		// 	"TOTAL: {} | {refunded_gas}",
-		// 	self.state.metadata().gasometer.total_used_gas()
-		// );
-		total_used_gas
+		let total_used_gas_refunded = self.state.metadata().gasometer.total_used_gas()
 			- min(
 				total_used_gas / self.config.max_refund_quotient,
 				refunded_gas,
-			)
+			);
+		// EIP-7623: max(total_used_gas, floor_gas)
+		if self.config.has_floor_gas
+			&& total_used_gas_refunded < self.state.metadata().gasometer.floor_gas()
+		{
+			self.state.metadata().gasometer.floor_gas()
+		} else {
+			total_used_gas_refunded
+		}
 	}
 
 	/// Get fee needed for the current executor, given the price.
 	pub fn fee(&mut self, price: U256) -> U256 {
 		let used_gas = self.used_gas();
-		// TODOFEE
-		// println!("FEE: {}", used_gas);
 		U256::from(used_gas).saturating_mul(price)
 	}
 
