@@ -827,7 +827,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 	}
 
 	/// Get used gas for the current executor, given the price.
-	pub fn used_gas(&mut self) -> u64 {
+	pub fn used_gas(&self) -> u64 {
 		// Avoid uncontrolled `u64` casting
 		let refunded_gas =
 			u64::try_from(self.state.metadata().gasometer.refunded_gas()).unwrap_or_default();

@@ -151,7 +151,7 @@ impl<'config> Gasometer<'config> {
 		self.gas_limit
 	}
 
-	/// Gas limit.
+	/// Get floor gas
 	#[inline]
 	#[must_use]
 	pub fn floor_gas(&self) -> u64 {
