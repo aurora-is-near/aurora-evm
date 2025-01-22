@@ -114,6 +114,7 @@ impl<'config> Gasometer<'config> {
 				memory_gas: 0,
 				used_gas: 0,
 				refunded_gas: 0,
+				floor_gas: 0,
 				config,
 			}),
 		}
@@ -148,6 +149,13 @@ impl<'config> Gasometer<'config> {
 	#[must_use]
 	pub const fn gas_limit(&self) -> u64 {
 		self.gas_limit
+	}
+
+	/// Get floor gas
+	#[inline]
+	#[must_use]
+	pub fn floor_gas(&self) -> u64 {
+		self.inner.as_ref().map_or(0, |inner| inner.floor_gas)
 	}
 
 	/// Remaining gas.
@@ -321,6 +329,9 @@ impl<'config> Gasometer<'config> {
 	}
 
 	/// Record transaction cost.
+	/// Related EIPs:
+	/// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
+	/// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
 	///
 	/// # Errors
 	/// Return `ExitError`
@@ -342,6 +353,15 @@ impl<'config> Gasometer<'config> {
 					+ access_list_address_len as u64 * self.config.gas_access_list_address
 					+ access_list_storage_len as u64 * self.config.gas_access_list_storage_key
 					+ authorization_list_len as u64 * self.config.gas_per_empty_account_cost;
+
+				if self.config.has_floor_gas {
+					// According to EIP-2028: non-zero byte = 16, zero-byte = 4
+					// According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
+					let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
+					self.inner_mut()?.floor_gas = tokens_in_calldata
+						* self.config.total_cost_floor_per_token
+						+ self.config.gas_transaction_call;
+				}
 
 				log_gas!(
 					self,
@@ -935,6 +955,7 @@ struct Inner<'config> {
 	used_gas: u64,
 	refunded_gas: i64,
 	config: &'config Config,
+	floor_gas: u64,
 }
 
 impl Inner<'_> {

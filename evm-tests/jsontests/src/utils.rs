@@ -139,6 +139,32 @@ pub fn flush() {
 	io::stdout().flush().expect("Could not flush stdout");
 }
 
+/// EIP-7623 form Prague hard fork
+pub mod eip7623 {
+	/// The standard cost of calldata token.
+	pub const STANDARD_TOKEN_COST: usize = 4;
+	/// The cost of a non-zero byte in calldata adjusted by [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028).
+	pub const NON_ZERO_BYTE_DATA_COST: usize = 16;
+	/// The multiplier for a non zero byte in calldata adjusted by [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028).
+	pub const NON_ZERO_BYTE_MULTIPLIER: usize = NON_ZERO_BYTE_DATA_COST / STANDARD_TOKEN_COST;
+	// The cost floor per token
+	pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+
+	/// Retrieve the total number of tokens in calldata.
+	#[must_use]
+	pub fn get_tokens_in_calldata(input: &[u8]) -> u64 {
+		let zero_data_len = input.iter().filter(|v| **v == 0).count();
+		let non_zero_data_len = input.len() - zero_data_len;
+		u64::try_from(zero_data_len + non_zero_data_len * NON_ZERO_BYTE_MULTIPLIER).unwrap()
+	}
+
+	/// Calculate the transaction cost floor as specified in EIP-7623.
+	#[must_use]
+	pub const fn calc_tx_floor_cost(tokens_in_calldata: u64) -> u64 {
+		tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN + 21_000
+	}
+}
+
 /// EIP-7702
 pub mod eip7702 {
 	use super::{Digest, Keccak256, H160, H256, U256};
@@ -331,7 +357,7 @@ pub mod eip_4844 {
 
 pub mod transaction {
 	use crate::state::TxType;
-	use crate::utils::eip7702;
+	use crate::utils::{eip7623, eip7702};
 	use ethjson::hash::Address;
 	use ethjson::maybe::MaybeEmpty;
 	use ethjson::spec::ForkSpec;
@@ -439,6 +465,12 @@ pub mod transaction {
 		}
 
 		if *spec >= ForkSpec::Prague {
+			// EIP-7623 validation
+			let floor_gas = eip7623::calc_tx_floor_cost(eip7623::get_tokens_in_calldata(&tx.data));
+			if floor_gas > tx.gas_limit.into() {
+				return Err(InvalidTxReason::GasFloorMoreThanGasLimit);
+			}
+
 			// EIP-7702 - if transaction type is EOAAccountCode then
 			// `authorization_list` must be present
 			if TxType::from_txbytes(&tx_state.txbytes) == TxType::EOAAccountCode
@@ -451,22 +483,17 @@ pub mod transaction {
 			// Other validation step inside EVM transact logic.
 			for auth in test_tx.authorization_list.iter() {
 				// 1. Verify the chain id is either 0 or the chain’s current ID.
-				let mut is_valid = if auth.chain_id.0 > U256::from(u64::MAX) {
-					false
-				} else {
-					auth.chain_id.0 == U256::from(0) || auth.chain_id.0 == vicinity.chain_id
-				};
-				// 3. `authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]`
+				let mut is_valid = auth.chain_id.0 <= U256::from(u64::MAX)
+					&& (auth.chain_id.0 == U256::from(0) || auth.chain_id.0 == vicinity.chain_id);
 
+				// 3. `authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]`
 				// Validate the signature, as in tests it is possible to have invalid signatures values.
-				let v = auth.v.0 .0;
-				if !(v[0] < u64::from(u8::MAX) && v[1..4].iter().all(|&elem| elem == 0)) {
-					is_valid = false;
-				}
 				// Value `v` shouldn't be greater then 1
-				if v[0] > 1 {
+				let v = auth.v.0;
+				if v > U256::from(1) {
 					is_valid = false;
 				}
+
 				// EIP-2 validation
 				if auth.s.0 > eip7702::SECP256K1N_HALF {
 					is_valid = false;
@@ -546,6 +573,7 @@ pub mod transaction {
 		InvalidAuthorizationChain,
 		InvalidAuthorizationSignature,
 		CreateTransaction,
+		GasFloorMoreThanGasLimit,
 	}
 }
 

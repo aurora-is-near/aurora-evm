@@ -704,10 +704,10 @@ fn assert_empty_create_caller(expect_exception: &Option<String>, name: &str) {
 }
 
 /// Check call expected exception
-fn assert_call_exit_exception(expect_exception: &Option<String>) {
+fn assert_call_exit_exception(expect_exception: &Option<String>, name: &str) {
 	assert!(
 		expect_exception.is_none(),
-		"unexpected call exception: {expect_exception:?}"
+		"unexpected call exception: {expect_exception:?} for test: {name}"
 	);
 }
 
@@ -747,7 +747,9 @@ fn check_create_exit_reason(
 						return true;
 					}
 					_ => {
-						panic!("unexpected error: {err:?} for exception: {exception}")
+						panic!(
+							"unexpected error: {err:?} for exception: {exception} for test: {name}"
+						)
 					}
 				}
 			} else {
@@ -1062,6 +1064,13 @@ fn check_validate_exit_reason(
 						"unexpected exception {exception:?} for CreateTransaction for test: [{spec:?}] {name}"
 					);
 				}
+				InvalidTxReason::GasFloorMoreThanGasLimit => {
+					let check_result =  exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
+					assert!(
+						check_result,
+						"unexpected exception {exception:?} for GasFloorMoreThanGasLimit for test: [{spec:?}] {name}"
+					);
+				}
 				_ => {
 					panic!(
 						"unexpected exception {exception:?} for reason {reason:?} for test: [{spec:?}] {name}"
@@ -1268,7 +1277,7 @@ fn test_run(
 							access_list,
 							authorization_list,
 						);
-						assert_call_exit_exception(&state.expect_exception);
+						assert_call_exit_exception(&state.expect_exception, name);
 					}
 					ethjson::maybe::MaybeEmpty::None => {
 						let code = data;
