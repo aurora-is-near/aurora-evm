@@ -18,6 +18,7 @@
 
 #![warn(missing_docs)]
 
+mod bls;
 mod kzg;
 
 use std::{
