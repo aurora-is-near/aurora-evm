@@ -1,5 +1,12 @@
 #![allow(dead_code)]
-use blst::{blst_bendian_from_fp, blst_fp, blst_p1_affine};
+
+use blst::{
+	blst_bendian_from_fp, blst_fp, blst_fp_from_bendian, blst_p1_affine, blst_p1_affine_in_g1,
+	blst_p1_affine_on_curve,
+};
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::convert::TryInto;
 
 /// Number of bits used in the BLS12-381 curve finite field elements.
 const NBITS: usize = 256;
@@ -20,12 +27,6 @@ const MODULUS_REPR: [u8; 48] = [
 	0x1e, 0xab, 0xff, 0xfe, 0xb1, 0x53, 0xff, 0xff, 0xb9, 0xfe, 0xff, 0xff, 0xff, 0xff, 0xaa, 0xab,
 ];
 
-/// Length of each of the elements in a g1 operation input.
-const G1_INPUT_ITEM_LENGTH: usize = 128;
-
-/// Output length of a g1 operation.
-const G1_OUTPUT_LENGTH: usize = 128;
-
 /// BLS Encodes a single finite field element into byte slice with padding.
 fn fp_to_bytes(out: &mut [u8], input: *const blst_fp) {
 	if out.len() != PADDED_FP_LENGTH {
@@ -36,13 +37,142 @@ fn fp_to_bytes(out: &mut [u8], input: *const blst_fp) {
 	unsafe { blst_bendian_from_fp(rest.as_mut_ptr(), input) };
 }
 
-/// Encodes a G1 point in affine format into byte slice with padded elements.
-pub fn encode_g1_point(input: *const blst_p1_affine) -> Vec<u8> {
-	let mut out = vec![0u8; G1_OUTPUT_LENGTH];
-	// SAFETY: out comes from fixed length array, input is a blst value.
-	unsafe {
-		fp_to_bytes(&mut out[..PADDED_FP_LENGTH], &(*input).x);
-		fp_to_bytes(&mut out[PADDED_FP_LENGTH..], &(*input).y);
+/// Checks if the input is a valid big-endian representation of a field element.
+fn is_valid_be(input: &[u8; 48]) -> bool {
+	for (i, modul) in input.iter().zip(MODULUS_REPR.iter()) {
+		match i.cmp(modul) {
+			Ordering::Greater => return false,
+			Ordering::Less => return true,
+			Ordering::Equal => continue,
+		}
 	}
-	out
+	// false if matching the modulus
+	false
+}
+
+/// Checks whether or not the input represents a canonical field element, returning the field
+/// element if successful.
+fn fp_from_bendian(input: &[u8; 48]) -> Result<blst_fp, Cow<'static, str>> {
+	if !is_valid_be(input) {
+		return Err(Cow::from("non-canonical fp value"));
+	}
+	let mut fp = blst_fp::default();
+	// SAFETY: input has fixed length, and fp is a blst value.
+	unsafe {
+		// This performs the check for canonical field elements
+		blst_fp_from_bendian(&mut fp, input.as_ptr());
+	}
+
+	Ok(fp)
+}
+
+/// Removes zeros with which the precompile inputs are left padded to 64 bytes.
+fn remove_padding(input: &[u8]) -> Result<&[u8; FP_LENGTH], Cow<'static, str>> {
+	if input.len() != PADDED_FP_LENGTH {
+		return Err(Cow::from(format!(
+			"Padded input should be {PADDED_FP_LENGTH} bytes, was {}",
+			input.len()
+		)));
+	}
+	let (padding, unpadded) = input.split_at(PADDING_LENGTH);
+	if !padding.iter().all(|&x| x == 0) {
+		return Err(Cow::from(format!(
+			"{PADDING_LENGTH} top bytes of input are not zero"
+		)));
+	}
+	Ok(unpadded.try_into().unwrap())
+}
+
+pub mod g1 {
+	use super::*;
+
+	/// Length of each of the elements in a g1 operation input.
+	const G1_INPUT_ITEM_LENGTH: usize = 128;
+
+	/// Output length of a g1 operation.
+	const G1_OUTPUT_LENGTH: usize = 128;
+
+	/// Encodes a G1 point in affine format into byte slice with padded elements.
+	pub fn encode_g1_point(input: *const blst_p1_affine) -> Vec<u8> {
+		let mut out = vec![0u8; G1_OUTPUT_LENGTH];
+		// SAFETY: out comes from fixed length array, input is a blst value.
+		unsafe {
+			fp_to_bytes(&mut out[..PADDED_FP_LENGTH], &(*input).x);
+			fp_to_bytes(&mut out[PADDED_FP_LENGTH..], &(*input).y);
+		}
+		out
+	}
+
+	/// Returns a `blst_p1_affine` from the provided byte slices, which represent the x and y
+	/// affine coordinates of the point.
+	///
+	/// If the x or y coordinate do not represent a canonical field element, an error is returned.
+	///
+	/// See [fp_from_bendian] for more information.
+	pub fn decode_and_check_g1(
+		p0_x: &[u8; 48],
+		p0_y: &[u8; 48],
+	) -> Result<blst_p1_affine, Cow<'static, str>> {
+		let out = blst_p1_affine {
+			x: fp_from_bendian(p0_x)?,
+			y: fp_from_bendian(p0_y)?,
+		};
+
+		Ok(out)
+	}
+
+	/// Extracts a G1 point in Affine format from a 128 byte slice representation.
+	///
+	/// NOTE: This function will perform a G1 subgroup check if `subgroup_check` is set to `true`.
+	pub fn extract_g1_input(
+		input: &[u8],
+		subgroup_check: bool,
+	) -> Result<blst_p1_affine, Cow<'static, str>> {
+		if input.len() != G1_INPUT_ITEM_LENGTH {
+			return Err(Cow::from(format!(
+				"Input should be {G1_INPUT_ITEM_LENGTH} bytes, was {}",
+				input.len()
+			)));
+		}
+
+		let input_p0_x = remove_padding(&input[..PADDED_FP_LENGTH])?;
+		let input_p0_y = remove_padding(&input[PADDED_FP_LENGTH..G1_INPUT_ITEM_LENGTH])?;
+		let out = decode_and_check_g1(input_p0_x, input_p0_y)?;
+
+		if subgroup_check {
+			// NB: Subgroup checks
+			//
+			// Scalar multiplications, MSMs and pairings MUST perform a subgroup check.
+			//
+			// Implementations SHOULD use the optimized subgroup check method:
+			//
+			// https://eips.ethereum.org/assets/eip-2537/fast_subgroup_checks
+			//
+			// On any input that fail the subgroup check, the precompile MUST return an error.
+			//
+			// As endomorphism acceleration requires input on the correct subgroup, implementers MAY
+			// use endomorphism acceleration.
+			if unsafe { !blst_p1_affine_in_g1(&out) } {
+				return Err(Cow::from("Element not in G1"));
+			}
+		} else {
+			// From EIP-2537:
+			//
+			// Error cases:
+			//
+			// * An input is neither a point on the G1 elliptic curve nor the infinity point
+			//
+			// NB: There is no subgroup check for the G1 addition precompile.
+			//
+			// We use blst_p1_affine_on_curve instead of blst_p1_affine_in_g1 because the latter performs
+			// the subgroup check.
+			//
+			// SAFETY: out is a blst value.
+			if unsafe { !blst_p1_affine_on_curve(&out) } {
+				return Err(Cow::from("Element not on G1 curve"));
+			}
+		}
+
+		Ok(out)
+	}
 }
