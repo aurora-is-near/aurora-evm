@@ -831,11 +831,20 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 		// Avoid uncontrolled `u64` casting
 		let refunded_gas =
 			u64::try_from(self.state.metadata().gasometer.refunded_gas()).unwrap_or_default();
-		self.state.metadata().gasometer.total_used_gas()
+		let total_used_gas = self.state.metadata().gasometer.total_used_gas();
+		let total_used_gas_refunded = self.state.metadata().gasometer.total_used_gas()
 			- min(
-				self.state.metadata().gasometer.total_used_gas() / self.config.max_refund_quotient,
+				total_used_gas / self.config.max_refund_quotient,
 				refunded_gas,
-			)
+			);
+		// EIP-7623: max(total_used_gas, floor_gas)
+		if self.config.has_floor_gas
+			&& total_used_gas_refunded < self.state.metadata().gasometer.floor_gas()
+		{
+			self.state.metadata().gasometer.floor_gas()
+		} else {
+			total_used_gas_refunded
+		}
 	}
 
 	/// Get fee needed for the current executor, given the price.
@@ -945,7 +954,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 	/// 9. Increase the `nonce` of `authority` by one.
 	///
 	/// It means, that steps 1,3 of spec must be passed before calling this function:
-	/// 1 Verify the chain id is either 0 or the chain’s current ID.
+	/// 1. Verify the chain id is either 0 or the chain’s current ID.
 	/// 3. `authority = ecrecover(...)`
 	///
 	/// See: [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702#behavior)
@@ -994,13 +1003,13 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 			// 8. Set the code of authority to be `0xef0100 || address`. This is a delegation designation.
 			// * As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
 			//   Clear the account’s code.
-			let mut delegation_clearing = false;
-			if authority.address.is_zero() {
-				delegation_clearing = true;
+			let delegation_clearing = if authority.address.is_zero() {
 				state.set_code(authority.authority, Vec::new());
+				true
 			} else {
 				state.set_code(authority.authority, authority.delegation_code());
-			}
+				false
+			};
 			// 9. Increase the nonce of authority by one.
 			state.inc_nonce(authority.authority)?;
 
