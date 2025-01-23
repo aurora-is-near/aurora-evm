@@ -4,7 +4,6 @@ use blst::{
 	blst_bendian_from_fp, blst_fp, blst_fp_from_bendian, blst_p1_affine, blst_p1_affine_in_g1,
 	blst_p1_affine_on_curve,
 };
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::convert::TryInto;
 
@@ -52,9 +51,9 @@ fn is_valid_be(input: &[u8; 48]) -> bool {
 
 /// Checks whether or not the input represents a canonical field element, returning the field
 /// element if successful.
-fn fp_from_bendian(input: &[u8; 48]) -> Result<blst_fp, Cow<'static, str>> {
+fn fp_from_bendian(input: &[u8; 48]) -> Result<blst_fp, &'static str> {
 	if !is_valid_be(input) {
-		return Err(Cow::from("non-canonical fp value"));
+		return Err("non-canonical fp value");
 	}
 	let mut fp = blst_fp::default();
 	// SAFETY: input has fixed length, and fp is a blst value.
@@ -67,27 +66,30 @@ fn fp_from_bendian(input: &[u8; 48]) -> Result<blst_fp, Cow<'static, str>> {
 }
 
 /// Removes zeros with which the precompile inputs are left padded to 64 bytes.
-fn remove_padding(input: &[u8]) -> Result<&[u8; FP_LENGTH], Cow<'static, str>> {
+fn remove_padding(input: &[u8]) -> Result<&[u8; FP_LENGTH], &'static str> {
 	if input.len() != PADDED_FP_LENGTH {
-		return Err(Cow::from(format!(
-			"Padded input should be {PADDED_FP_LENGTH} bytes, was {}",
-			input.len()
-		)));
+		return Err(Box::leak(
+			format!(
+				"Padded input should be {PADDED_FP_LENGTH} bytes, was {}",
+				input.len()
+			)
+			.into_boxed_str(),
+		));
 	}
 	let (padding, unpadded) = input.split_at(PADDING_LENGTH);
 	if !padding.iter().all(|&x| x == 0) {
-		return Err(Cow::from(format!(
-			"{PADDING_LENGTH} top bytes of input are not zero"
-		)));
+		return Err(Box::leak(
+			format!("{PADDING_LENGTH} top bytes of input are not zero").into_boxed_str(),
+		));
 	}
 	Ok(unpadded.try_into().unwrap())
 }
 
-mod g1 {
+pub mod g1 {
 	use super::*;
 
 	/// Length of each of the elements in a g1 operation input.
-	const G1_INPUT_ITEM_LENGTH: usize = 128;
+	pub const G1_INPUT_ITEM_LENGTH: usize = 128;
 
 	/// Output length of a g1 operation.
 	const G1_OUTPUT_LENGTH: usize = 128;
@@ -112,7 +114,7 @@ mod g1 {
 	pub fn decode_and_check_g1(
 		p0_x: &[u8; 48],
 		p0_y: &[u8; 48],
-	) -> Result<blst_p1_affine, Cow<'static, str>> {
+	) -> Result<blst_p1_affine, &'static str> {
 		let out = blst_p1_affine {
 			x: fp_from_bendian(p0_x)?,
 			y: fp_from_bendian(p0_y)?,
@@ -127,12 +129,15 @@ mod g1 {
 	pub fn extract_g1_input(
 		input: &[u8],
 		subgroup_check: bool,
-	) -> Result<blst_p1_affine, Cow<'static, str>> {
+	) -> Result<blst_p1_affine, &'static str> {
 		if input.len() != G1_INPUT_ITEM_LENGTH {
-			return Err(Cow::from(format!(
-				"Input should be {G1_INPUT_ITEM_LENGTH} bytes, was {}",
-				input.len()
-			)));
+			return Err(Box::leak(
+				format!(
+					"Input should be {G1_INPUT_ITEM_LENGTH} bytes, was {}",
+					input.len()
+				)
+				.into_boxed_str(),
+			));
 		}
 
 		let input_p0_x = remove_padding(&input[..PADDED_FP_LENGTH])?;
@@ -153,7 +158,7 @@ mod g1 {
 			// As endomorphism acceleration requires input on the correct subgroup, implementers MAY
 			// use endomorphism acceleration.
 			if unsafe { !blst_p1_affine_in_g1(&out) } {
-				return Err(Cow::from("Element not in G1"));
+				return Err("Element not in G1");
 			}
 		} else {
 			// From EIP-2537:
@@ -169,7 +174,7 @@ mod g1 {
 			//
 			// SAFETY: out is a blst value.
 			if unsafe { !blst_p1_affine_on_curve(&out) } {
-				return Err(Cow::from("Element not on G1 curve"));
+				return Err("Element not on G1 curve");
 			}
 		}
 
@@ -177,7 +182,7 @@ mod g1 {
 	}
 }
 
-mod g2 {
+pub mod g2 {
 	use super::*;
 	use blst::{blst_fp2, blst_p2_affine, blst_p2_affine_in_g2, blst_p2_affine_on_curve};
 
@@ -212,7 +217,7 @@ mod g2 {
 		x2: &[u8; 48],
 		y1: &[u8; 48],
 		y2: &[u8; 48],
-	) -> Result<blst_p2_affine, Cow<'static, str>> {
+	) -> Result<blst_p2_affine, &'static str> {
 		Ok(blst_p2_affine {
 			x: check_canonical_fp2(x1, x2)?,
 			y: check_canonical_fp2(y1, y2)?,
@@ -224,7 +229,7 @@ mod g2 {
 	pub fn check_canonical_fp2(
 		input_1: &[u8; 48],
 		input_2: &[u8; 48],
-	) -> Result<blst_fp2, Cow<'static, str>> {
+	) -> Result<blst_fp2, &'static str> {
 		let fp_1 = fp_from_bendian(input_1)?;
 		let fp_2 = fp_from_bendian(input_2)?;
 
@@ -239,12 +244,15 @@ mod g2 {
 	pub fn extract_g2_input(
 		input: &[u8],
 		subgroup_check: bool,
-	) -> Result<blst_p2_affine, Cow<'static, str>> {
+	) -> Result<blst_p2_affine, &'static str> {
 		if input.len() != G2_INPUT_ITEM_LENGTH {
-			return Err(Cow::from(format!(
-				"Input should be {G2_INPUT_ITEM_LENGTH} bytes, was {}",
-				input.len()
-			)));
+			return Err(Box::leak(
+				format!(
+					"Input should be {G2_INPUT_ITEM_LENGTH} bytes, was {}",
+					input.len()
+				)
+				.into_boxed_str(),
+			));
 		}
 
 		let mut input_fps = [&[0; FP_LENGTH]; 4];
@@ -269,7 +277,7 @@ mod g2 {
 			// As endomorphism acceleration requires input on the correct subgroup, implementers MAY
 			// use endomorphism acceleration.
 			if unsafe { !blst_p2_affine_in_g2(&out) } {
-				return Err(Cow::from("Element not in G2"));
+				return Err("Element not in G2");
 			}
 		} else {
 			// From EIP-2537:
@@ -285,7 +293,7 @@ mod g2 {
 			//
 			// SAFETY: out is a blst value.
 			if unsafe { !blst_p2_affine_on_curve(&out) } {
-				return Err(Cow::from("Element not on G2 curve"));
+				return Err("Element not on G2 curve");
 			}
 		}
 

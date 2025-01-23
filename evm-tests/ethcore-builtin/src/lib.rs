@@ -21,14 +21,9 @@
 mod bls;
 mod kzg;
 
-use std::{
-	cmp::{max, min},
-	collections::BTreeMap,
-	convert::{TryFrom, TryInto},
-	io::{self, Cursor, Read},
-	str::FromStr,
+use blst::{
+	blst_p1, blst_p1_add_or_double_affine, blst_p1_affine, blst_p1_from_affine, blst_p1_to_affine,
 };
-
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use eip_152::compress;
 use eth_pairings::public_interface::eip2537::{
@@ -40,6 +35,13 @@ use log::{trace, warn};
 use num::{BigUint, One, Zero};
 use parity_bytes::BytesRef;
 use sha2::Digest;
+use std::{
+	cmp::{max, min},
+	collections::BTreeMap,
+	convert::{TryFrom, TryInto},
+	io::{self, Cursor, Read},
+	str::FromStr,
+};
 
 /// Native implementation of a built-in contract.
 pub trait Implementation: Send + Sync {
@@ -1188,7 +1190,30 @@ impl Implementation for Kzg {
 }
 
 impl Implementation for Bls12G1Add {
-	fn execute(&self, _input: &[u8], _output: &mut BytesRef) -> Result<(), &'static str> {
+	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), &'static str> {
+		if input.len() != 256 {
+			return Err("G1ADD input should be 256 bytes");
+		}
+		// NB: There is no subgroup check for the G1 addition precompile.
+		//
+		// We set the subgroup checks here to `false`
+		let a_aff = &bls::g1::extract_g1_input(&input[..bls::g1::G1_INPUT_ITEM_LENGTH], false)?;
+		let b_aff = &bls::g1::extract_g1_input(&input[bls::g1::G1_INPUT_ITEM_LENGTH..], false)?;
+
+		let mut b = blst_p1::default();
+		// SAFETY: b and b_aff are blst values.
+		unsafe { blst_p1_from_affine(&mut b, b_aff) };
+
+		let mut p = blst_p1::default();
+		// SAFETY: p, b and a_aff are blst values.
+		unsafe { blst_p1_add_or_double_affine(&mut p, &b, a_aff) };
+
+		let mut p_aff = blst_p1_affine::default();
+		// SAFETY: p_aff and p are blst values.
+		unsafe { blst_p1_to_affine(&mut p_aff, &p) };
+
+		let out = bls::g1::encode_g1_point(&p_aff);
+		output.write(0, out.as_slice());
 		Ok(())
 	}
 }
