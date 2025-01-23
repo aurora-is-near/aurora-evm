@@ -547,20 +547,18 @@ fn cancun_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 	use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
 
-	let mut builtins = berlin_builtins();
+	let mut builtins = cancun_builtins();
 	builtins.insert(
 		Address(H160::from_low_u64_be(0xB)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_g1_add".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
+			pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 375, word: 0 })),
 			activate_at: None,
 		})
 		.try_into()
 		.unwrap(),
 	);
+	/*
 	builtins.insert(
 		Address(H160::from_low_u64_be(0xC)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
@@ -665,6 +663,8 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		.try_into()
 		.unwrap(),
 	);
+
+	 */
 
 	builtins
 }
