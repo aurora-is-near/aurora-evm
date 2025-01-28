@@ -98,7 +98,10 @@ jobs:
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
           ethereum-spec-tests/fixtures/state_tests/prague/eip7702_set_code_tx/ \
           ethereum-spec-tests/fixtures/state_tests/prague/eip7623_increase_calldata_cost/ \
-          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g1add/
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g1add/ \
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g1mul/ \
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g2add/ \
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g2mul/          
           # Temporally disable as EOFv1 not implemented
           # ethtests/EIPTests/StateTests/
 

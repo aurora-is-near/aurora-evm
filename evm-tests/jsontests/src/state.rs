@@ -241,8 +241,6 @@ impl JsonPrecompile {
 				precompile_entry!(map, PRAGUE_BUILTINS, 0x0F);
 				precompile_entry!(map, PRAGUE_BUILTINS, 0x10);
 				precompile_entry!(map, PRAGUE_BUILTINS, 0x11);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x12);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x13);
 				Some(map)
 			}
 			_ => None,
@@ -558,15 +556,11 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		.try_into()
 		.unwrap(),
 	);
-	/*
 	builtins.insert(
 		Address(H160::from_low_u64_be(0xC)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_g1_mul".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
+			pricing: PricingCompat::Single(Pricing::Bls12PricerG1MSM),
 			activate_at: None,
 		})
 		.try_into()
@@ -575,11 +569,8 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 	builtins.insert(
 		Address(H160::from_low_u64_be(0xD)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g1_multiexp".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
+			name: "bls12_381_g2_add".to_string(),
+			pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 600, word: 0 })),
 			activate_at: None,
 		})
 		.try_into()
@@ -588,29 +579,38 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 	builtins.insert(
 		Address(H160::from_low_u64_be(0xE)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g2_add".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0xF)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_g2_mul".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
+			pricing: PricingCompat::Single(Pricing::Bls12PricerG2MSM),
 			activate_at: None,
 		})
 		.try_into()
 		.unwrap(),
 	);
+	// builtins.insert(
+	// 	Address(H160::from_low_u64_be(0xE)).into(),
+	// 	ethjson::spec::Builtin::from(BuiltinCompat {
+	// 		name: "bls12_381_g2_add".to_string(),
+	// 		pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 600, word: 0 })),
+	// 		activate_at: None,
+	// 	})
+	// 	.try_into()
+	// 	.unwrap(),
+	// );
+	// builtins.insert(
+	// 	Address(H160::from_low_u64_be(0xF)).into(),
+	// 	ethjson::spec::Builtin::from(BuiltinCompat {
+	// 		name: "bls12_381_g2_mul".to_string(),
+	// 		pricing: PricingCompat::Single(Pricing::Linear(Linear {
+	// 			base: 22_500,
+	// 			word: 0,
+	// 		})),
+	// 		activate_at: None,
+	// 	})
+	// 	.try_into()
+	// 	.unwrap(),
+	// );
+	/* TODO refactor
+
 	builtins.insert(
 		Address(H160::from_low_u64_be(0x10)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
