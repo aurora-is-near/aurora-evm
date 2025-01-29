@@ -560,7 +560,7 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		Address(H160::from_low_u64_be(0xC)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_g1_mul".to_string(),
-			pricing: PricingCompat::Single(Pricing::Bls12PricerG1MSM),
+			pricing: PricingCompat::Single(Pricing::Bls12G1Mul),
 			activate_at: None,
 		})
 		.try_into()
@@ -580,63 +580,23 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		Address(H160::from_low_u64_be(0xE)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_g2_mul".to_string(),
-			pricing: PricingCompat::Single(Pricing::Bls12PricerG2MSM),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	// builtins.insert(
-	// 	Address(H160::from_low_u64_be(0xE)).into(),
-	// 	ethjson::spec::Builtin::from(BuiltinCompat {
-	// 		name: "bls12_381_g2_add".to_string(),
-	// 		pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 600, word: 0 })),
-	// 		activate_at: None,
-	// 	})
-	// 	.try_into()
-	// 	.unwrap(),
-	// );
-	// builtins.insert(
-	// 	Address(H160::from_low_u64_be(0xF)).into(),
-	// 	ethjson::spec::Builtin::from(BuiltinCompat {
-	// 		name: "bls12_381_g2_mul".to_string(),
-	// 		pricing: PricingCompat::Single(Pricing::Linear(Linear {
-	// 			base: 22_500,
-	// 			word: 0,
-	// 		})),
-	// 		activate_at: None,
-	// 	})
-	// 	.try_into()
-	// 	.unwrap(),
-	// );
-	/* TODO refactor
-
-	builtins.insert(
-		Address(H160::from_low_u64_be(0x10)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g2_multiexp".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
+			pricing: PricingCompat::Single(Pricing::Bls12G2Mul),
 			activate_at: None,
 		})
 		.try_into()
 		.unwrap(),
 	);
 	builtins.insert(
-		Address(H160::from_low_u64_be(0x11)).into(),
+		Address(H160::from_low_u64_be(0xF)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_pairing".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
+			pricing: PricingCompat::Single(Pricing::Bls12Pairing),
 			activate_at: None,
 		})
 		.try_into()
 		.unwrap(),
 	);
+	/* TODO refactor
 	builtins.insert(
 		Address(H160::from_low_u64_be(0x12)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
@@ -663,7 +623,6 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		.try_into()
 		.unwrap(),
 	);
-
 	 */
 
 	builtins

@@ -76,10 +76,10 @@ enum Pricing {
 	Blake2F(Blake2FPricer),
 	Linear(Linear),
 	Modexp(ModexpPricer),
+	Bls12G1Mul(Bls12G1Pricer),
+	Bls12G2Mul(Bls12G2MulPricer),
 	// TODO
-	// Bls12Pairing(Bls12PairingPricer),
-	Bls12G1MSM(Bls12PricerG1MSM),
-	Bls12G2MSM(Bls12PricerG2MSM),
+	Bls12Pairing(Bls12PairingPricer),
 }
 
 impl Pricer for Pricing {
@@ -90,10 +90,10 @@ impl Pricer for Pricing {
 			Self::Blake2F(inner) => inner.cost(input),
 			Self::Linear(inner) => inner.cost(input),
 			Self::Modexp(inner) => inner.cost(input),
+			Self::Bls12G1Mul(inner) => inner.cost(input),
+			Self::Bls12G2Mul(inner) => inner.cost(input),
 			// TODO
-			// Self::Bls12Pairing(inner) => inner.cost(input),
-			Self::Bls12G1MSM(inner) => inner.cost(input),
-			Self::Bls12G2MSM(inner) => inner.cost(input),
+			Self::Bls12Pairing(inner) => inner.cost(input),
 		}
 	}
 }
@@ -299,43 +299,33 @@ impl ModexpPricer {
 	}
 }
 
-/// Bls12 pairing price
-#[derive(Debug, Copy, Clone)]
-struct Bls12PairingPrice {
-	base: u64,
-	pair: u64,
-}
-
-/// bls12_pairing pricing model. This computes a price using a base cost and a cost per pair.
-#[derive(Debug)]
-struct Bls12PairingPricer {
-	price: Bls12PairingPrice,
-}
-
 /// MSM pricer in G1
 #[derive(Debug, Copy, Clone)]
-pub struct Bls12PricerG1MSM;
+pub struct Bls12G1Pricer;
 
-/// MSM pricer in G1
+/// MSM pricer in G2
 #[derive(Debug, Copy, Clone)]
-pub struct Bls12PricerG2MSM;
+pub struct Bls12G2MulPricer;
 
-// TODO
-impl Pricer for Bls12PairingPricer {
-	fn cost(&self, input: &[u8]) -> U256 {
-		U256::from(self.price.base) + U256::from(self.price.pair) * U256::from(input.len())
-	}
-}
+/// Pairing pricer
+#[derive(Debug, Copy, Clone)]
+pub struct Bls12PairingPricer;
 
-impl Pricer for Bls12PricerG1MSM {
+impl Pricer for Bls12G1Pricer {
 	fn cost(&self, input: &[u8]) -> U256 {
 		U256::from(bls::g1_mul::required_gas(input))
 	}
 }
 
-impl Pricer for Bls12PricerG2MSM {
+impl Pricer for Bls12G2MulPricer {
 	fn cost(&self, input: &[u8]) -> U256 {
 		U256::from(bls::g2_mul::required_gas(input))
+	}
+}
+
+impl Pricer for Bls12PairingPricer {
+	fn cost(&self, input: &[u8]) -> U256 {
+		U256::from(bls::pairing::required_gas(input))
 	}
 }
 
@@ -427,17 +417,10 @@ impl From<ethjson::spec::builtin::Pricing> for Pricing {
 					price: pricer.price,
 				})
 			}
+			ethjson::spec::builtin::Pricing::Bls12G1Mul => Self::Bls12G1Mul(Bls12G1Pricer),
+			ethjson::spec::builtin::Pricing::Bls12G2Mul => Self::Bls12G2Mul(Bls12G2MulPricer),
 			// TODO
-			// ethjson::spec::builtin::Pricing::Bls12Pairing(pricer) => {
-			// 	Self::Bls12Pairing(Bls12PairingPricer {
-			// 		price: Bls12PairingPrice {
-			// 			base: pricer.base,
-			// 			pair: pricer.pair,
-			// 		},
-			// 	})
-			// }
-			ethjson::spec::builtin::Pricing::Bls12PricerG1MSM => Self::Bls12G1MSM(Bls12PricerG1MSM),
-			ethjson::spec::builtin::Pricing::Bls12PricerG2MSM => Self::Bls12G2MSM(Bls12PricerG2MSM),
+			ethjson::spec::builtin::Pricing::Bls12Pairing => Self::Bls12Pairing(Bls12PairingPricer),
 		}
 	}
 }
@@ -472,9 +455,9 @@ enum EthereumBuiltin {
 	Bls12G2Add(Bls12G2Add),
 	/// bls12_381 multiplication in g2
 	Bls12G2Mul(Bls12G2Mul),
+	/// bls12_381 pairing
+	Bls12Pairing(Bls12Pairing),
 	/*	TODO: refator it
-		/// bls12_381 pairing
-		Bls12Pairing(Bls12Pairing),
 		/// bls12_381 fp to g1 mapping
 		Bls12MapFpToG1(Bls12MapFpToG1),
 		/// bls12_381 fp2 to g2 mapping
@@ -501,8 +484,8 @@ impl FromStr for EthereumBuiltin {
 			"bls12_381_g1_mul" => Ok(Self::Bls12G1Mul(Bls12G1Mul)),
 			"bls12_381_g2_add" => Ok(Self::Bls12G2Add(Bls12G2Add)),
 			"bls12_381_g2_mul" => Ok(Self::Bls12G2Mul(Bls12G2Mul)),
+			"bls12_381_pairing" => Ok(Self::Bls12Pairing(Bls12Pairing)),
 			/*	TODO: refactor it
-						"bls12_381_pairing" => Ok(Self::Bls12Pairing(Bls12Pairing)),
 						"bls12_381_fp_to_g1" => Ok(Self::Bls12MapFpToG1(Bls12MapFpToG1)),
 						"bls12_381_fp2_to_g2" => Ok(Self::Bls12MapFp2ToG2(Bls12MapFp2ToG2)),
 			*/
@@ -528,8 +511,8 @@ impl Implementation for EthereumBuiltin {
 			Self::Bls12G1Mul(inner) => inner.execute(input, output),
 			Self::Bls12G2Add(inner) => inner.execute(input, output),
 			Self::Bls12G2Mul(inner) => inner.execute(input, output),
-			/* TODO: Refactor it
 			Self::Bls12Pairing(inner) => inner.execute(input, output),
+			/* TODO: Refactor it
 			Self::Bls12MapFpToG1(inner) => inner.execute(input, output),
 			Self::Bls12MapFp2ToG2(inner) => inner.execute(input, output),
 			*/
@@ -593,12 +576,11 @@ pub struct Bls12G2Add;
 /// The Bls12G2Mul builtin.
 pub struct Bls12G2Mul;
 
-/* TODO: refactor it
-
 #[derive(Debug)]
 /// The Bls12Pairing builtin.
 pub struct Bls12Pairing;
 
+/* TODO: refactor it
 #[derive(Debug)]
 /// The Bls12MapFpToG1 builtin.
 pub struct Bls12MapFpToG1;
@@ -996,46 +978,15 @@ impl Implementation for Bls12G2Mul {
 	}
 }
 
-/* TODO: refactor it
-
-impl Implementation for Bls12G2MultiExp {
-	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), &'static str> {
-		let result = EIP2537Executor::g2_multiexp(input);
-
-		match result {
-			Ok(result_bytes) => {
-				output.write(0, &result_bytes[..]);
-
-				Ok(())
-			}
-			Err(e) => {
-				trace!(target: "builtin", "Bls12G2MultiExp error: {:?}", e);
-
-				Err("Bls12G2MultiExp error")
-			}
-		}
-	}
-}
-
 impl Implementation for Bls12Pairing {
 	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), &'static str> {
-		let result = EIP2537Executor::pair(input);
-
-		match result {
-			Ok(result_bytes) => {
-				output.write(0, &result_bytes[..]);
-
-				Ok(())
-			}
-			Err(e) => {
-				trace!(target: "builtin", "Bls12Pairing error: {:?}", e);
-
-				Err("Bls12Pairing error")
-			}
-		}
+		let out = bls::pairing::pairing(input)?;
+		output.write(0, out.as_slice());
+		Ok(())
 	}
 }
 
+/* TODO: refactor it
 impl Implementation for Bls12MapFpToG1 {
 	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), &'static str> {
 		let result = EIP2537Executor::map_fp_to_g1(input);

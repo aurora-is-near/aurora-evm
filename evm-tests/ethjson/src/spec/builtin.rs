@@ -95,16 +95,13 @@ pub enum Pricing {
 	AltBn128Pairing(AltBn128Pairing),
 	/// Pricing for constant alt_bn128 operations
 	AltBn128ConstOperations(AltBn128ConstOperations),
-	/// Pricing of constant price bls12_381 operations
-	// TODO
-	// Bls12ConstOperations(Bls12ConstOperations),
-	/// Pricing of pairing bls12_381 operation
-	// TODO
-	// Bls12Pairing(Bls12Pairing),
 	/// Pricing of bls12_381 MSM operations in G1
-	Bls12PricerG1MSM,
+	Bls12G1Mul,
 	/// Pricing of bls12_381 MSM operations in G2
-	Bls12PricerG2MSM,
+	Bls12G2Mul,
+	// TODO
+	/// Pricing of pairing bls12_381 operation
+	Bls12Pairing,
 }
 
 /// Builtin compatibility layer
