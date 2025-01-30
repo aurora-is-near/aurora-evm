@@ -99,7 +99,6 @@ pub enum Pricing {
 	Bls12G1Mul,
 	/// Pricing of bls12_381 MSM operations in G2
 	Bls12G2Mul,
-	// TODO
 	/// Pricing of pairing bls12_381 operation
 	Bls12Pairing,
 }

@@ -103,7 +103,11 @@ jobs:
           ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g1mul/ \          
           ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g2add/ \
           ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g2msm/ \          
-          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g2mul/          
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_g2mul/ \
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_map_fp_to_g1 \
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_map_fp2_to_g2 \
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_variable_length_input_contracts \
+          ethereum-spec-tests/fixtures/state_tests/prague/eip2537_bls_12_381_precompiles/bls12_precompiles_before_fork
           # Temporally disable as EOFv1 not implemented
           # ethtests/EIPTests/StateTests/
 

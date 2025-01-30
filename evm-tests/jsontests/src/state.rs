@@ -596,13 +596,12 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		.try_into()
 		.unwrap(),
 	);
-	/* TODO refactor
 	builtins.insert(
-		Address(H160::from_low_u64_be(0x12)).into(),
+		Address(H160::from_low_u64_be(0x10)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_fp_to_g1".to_string(),
 			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
+				base: 5_500,
 				word: 0,
 			})),
 			activate_at: None,
@@ -611,11 +610,11 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		.unwrap(),
 	);
 	builtins.insert(
-		Address(H160::from_low_u64_be(0x13)).into(),
+		Address(H160::from_low_u64_be(0x11)).into(),
 		ethjson::spec::Builtin::from(BuiltinCompat {
 			name: "bls12_381_fp2_to_g2".to_string(),
 			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
+				base: 23_800,
 				word: 0,
 			})),
 			activate_at: None,
@@ -623,7 +622,6 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 		.try_into()
 		.unwrap(),
 	);
-	 */
 
 	builtins
 }

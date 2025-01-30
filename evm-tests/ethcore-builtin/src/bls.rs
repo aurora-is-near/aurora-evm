@@ -730,3 +730,74 @@ pub mod pairing {
 		PAIRING_MULTIPLIER_BASE * k as u64 + PAIRING_OFFSET_BASE
 	}
 }
+
+pub mod map_fp_to_g1 {
+	use super::*;
+	use blst::{blst_map_to_g1, blst_p1, blst_p1_to_affine};
+
+	/// Field-to-curve call expects 64 bytes as an input that is interpreted as an
+	/// element of Fp. Output of this call is 128 bytes and is an encoded G1 point.
+	/// See also: <https://eips.ethereum.org/EIPS/eip-2537#abi-for-mapping-fp-element-to-g1-point>
+	pub fn map_fp_to_g1(input: &[u8]) -> Result<Vec<u8>, &'static str> {
+		if input.len() != PADDED_FP_LENGTH {
+			return Err(Box::leak(
+				format!(
+					"MAP_FP_TO_G1 input should be {PADDED_FP_LENGTH} bytes, was {}",
+					input.len()
+				)
+				.into_boxed_str(),
+			));
+		}
+
+		let input_p0 = remove_padding(input)?;
+		let fp = fp_from_bendian(input_p0)?;
+
+		let mut p = blst_p1::default();
+		// SAFETY: p and fp are blst values.
+		// third argument is unused if null.
+		unsafe { blst_map_to_g1(&mut p, &fp, core::ptr::null()) };
+
+		let mut p_aff = blst_p1_affine::default();
+		// SAFETY: p_aff and p are blst values.
+		unsafe { blst_p1_to_affine(&mut p_aff, &p) };
+
+		Ok(g1::encode_g1_point(&p_aff))
+	}
+}
+
+pub mod map_fp2_to_g2 {
+	use super::*;
+	use crate::bls::g2::check_canonical_fp2;
+	use blst::{blst_map_to_g2, blst_p2, blst_p2_affine, blst_p2_to_affine};
+
+	/// Field-to-curve call expects 128 bytes as an input that is interpreted as
+	/// an element of Fp2. Output of this call is 256 bytes and is an encoded G2
+	/// point.
+	/// See also: <https://eips.ethereum.org/EIPS/eip-2537#abi-for-mapping-fp2-element-to-g2-point>
+	pub fn map_fp2_to_g2(input: &[u8]) -> Result<Vec<u8>, &'static str> {
+		if input.len() != PADDED_FP2_LENGTH {
+			return Err(Box::leak(
+				format!(
+					"MAP_FP2_TO_G2 input should be {PADDED_FP2_LENGTH} bytes, was {}",
+					input.len()
+				)
+				.into_boxed_str(),
+			));
+		}
+
+		let input_p0_x = remove_padding(&input[..PADDED_FP_LENGTH])?;
+		let input_p0_y = remove_padding(&input[PADDED_FP_LENGTH..PADDED_FP2_LENGTH])?;
+		let fp2 = check_canonical_fp2(input_p0_x, input_p0_y)?;
+
+		let mut p = blst_p2::default();
+		// SAFETY: p and fp2 are blst values.
+		// third argument is unused if null.
+		unsafe { blst_map_to_g2(&mut p, &fp2, core::ptr::null()) };
+
+		let mut p_aff = blst_p2_affine::default();
+		// SAFETY: p_aff and p are blst values.
+		unsafe { blst_p2_to_affine(&mut p_aff, &p) };
+
+		Ok(g2::encode_g2_point(&p_aff))
+	}
+}
