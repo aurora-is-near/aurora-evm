@@ -76,7 +76,7 @@ enum Pricing {
 	Blake2F(Blake2FPricer),
 	Linear(Linear),
 	Modexp(ModexpPricer),
-	Bls12G1Mul(Bls12G1Pricer),
+	Bls12G1Mul(Bls12G1MulPricer),
 	Bls12G2Mul(Bls12G2MulPricer),
 	Bls12Pairing(Bls12PairingPricer),
 }
@@ -299,7 +299,7 @@ impl ModexpPricer {
 
 /// MSM pricer in G1
 #[derive(Debug, Copy, Clone)]
-pub struct Bls12G1Pricer;
+pub struct Bls12G1MulPricer;
 
 /// MSM pricer in G2
 #[derive(Debug, Copy, Clone)]
@@ -309,7 +309,7 @@ pub struct Bls12G2MulPricer;
 #[derive(Debug, Copy, Clone)]
 pub struct Bls12PairingPricer;
 
-impl Pricer for Bls12G1Pricer {
+impl Pricer for Bls12G1MulPricer {
 	fn cost(&self, input: &[u8]) -> U256 {
 		U256::from(bls::g1_mul::required_gas(input))
 	}
@@ -415,7 +415,7 @@ impl From<ethjson::spec::builtin::Pricing> for Pricing {
 					price: pricer.price,
 				})
 			}
-			ethjson::spec::builtin::Pricing::Bls12G1Mul => Self::Bls12G1Mul(Bls12G1Pricer),
+			ethjson::spec::builtin::Pricing::Bls12G1Mul => Self::Bls12G1Mul(Bls12G1MulPricer),
 			ethjson::spec::builtin::Pricing::Bls12G2Mul => Self::Bls12G2Mul(Bls12G2MulPricer),
 			ethjson::spec::builtin::Pricing::Bls12Pairing => Self::Bls12Pairing(Bls12PairingPricer),
 		}
@@ -993,7 +993,10 @@ impl Implementation for Bls12MapFp2ToG2 {
 
 #[cfg(test)]
 mod tests {
-	use super::{Builtin, EthereumBuiltin, FromStr, Implementation, Linear, ModexpPricer, Pricing};
+	use super::{
+		Bls12G1MulPricer, Bls12G2MulPricer, Bls12PairingPricer, Builtin, EthereumBuiltin, FromStr,
+		Implementation, Linear, ModexpPricer, Pricing,
+	};
 	use ethereum_types::U256;
 	use ethjson::spec::builtin::{
 		AltBn128Pairing as JsonAltBn128PairingPricing, Builtin as JsonBuiltin,
@@ -1849,63 +1852,62 @@ mod tests {
 		assert_eq!(b.cost(&[0; 1], 0), U256::from(0), "not activated yet");
 		assert_eq!(b.cost(&[0; 1], 1), U256::from(1_337), "use price #3");
 	}
-	/* TODO: refactor it
-	   #[test]
-	   fn bls12_381_g1_add() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => Pricing::Bls12ConstOperations(Bls12ConstOperations{price: 1})],
-			   native: EthereumBuiltin::from_str("bls12_381_g1_add").unwrap(),
-		   };
+	#[test]
+	fn bls12_381_g1_add() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Linear(Linear { base: 375, word: 0 })],
+			native: EthereumBuiltin::from_str("bls12_381_g1_add").unwrap(),
+		};
 
-		   let input = hex!("
+		let input = hex!("
 			   00000000000000000000000000000000117dbe419018f67844f6a5e1b78a1e597283ad7b8ee7ac5e58846f5a5fd68d0da99ce235a91db3ec1cf340fe6b7afcdb
 			   0000000000000000000000000000000013316f23de032d25e912ae8dc9b54c8dba1be7cecdbb9d2228d7e8f652011d46be79089dd0a6080a73c82256ce5e4ed2
 			   000000000000000000000000000000000441e7f7f96198e4c23bd5eb16f1a7f045dbc8c53219ab2bcea91d3a027e2dfe659feac64905f8b9add7e4bfc91bec2b
 			   0000000000000000000000000000000005fc51bb1b40c87cd4292d4b66f8ca5ce4ef9abd2b69d4464b4879064203bda7c9fc3f896a3844ebc713f7bb20951d95
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   0000000000000000000000000000000016b8ab56b45a9294466809b8e858c1ad15ad0d52cfcb62f8f5753dc94cee1de6efaaebce10701e3ec2ecaa9551024ea
 			   600000000000000000000000000000000124571eec37c0b1361023188d66ec17c1ec230d31b515e0e81e599ec19e40c8a7c8cdea9735bc3d8b4e37ca7e5dd71f6
 		   ");
 
-		   let mut output = [0u8; 128];
+		let mut output = [0u8; 128];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_g1_mul() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => Pricing::Bls12ConstOperations(Bls12ConstOperations{price: 1})],
-			   native: EthereumBuiltin::from_str("bls12_381_g1_mul").unwrap(),
-		   };
+	#[test]
+	fn bls12_381_g1_mul() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Bls12G1Mul(Bls12G1MulPricer)],
+			native: EthereumBuiltin::from_str("bls12_381_g1_mul").unwrap(),
+		};
 
-		   let input = hex!("
+		let input = hex!("
 			   000000000000000000000000000000000b3a1dfe2d1b62538ed49648cb2a8a1d66bdc4f7a492eee59942ab810a306876a7d49e5ac4c6bb1613866c158ded993e
 			   000000000000000000000000000000001300956110f47ca8e2aacb30c948dfd046bf33f69bf54007d76373c5a66019454da45e3cf14ce2b9d53a50c9b4366aa3
 			   ac23d04ee3acc757aae6795532ce4c9f34534e506a4d843a26b052a040c79659
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   000000000000000000000000000000001227b7021e9d3dc8bcbf5b346fc503f7f8576965769c5e22bb70056eef03c84b8c80290ae9ce20345770290c55549bce
 			   00000000000000000000000000000000188ddbbfb4ad2d34a8d3dc0ec92b70b63caa73ad7dea0cc9740bac2309b4bb11107912bd086379746e9a9bcd26d4db58
 		   ");
 
-		   let mut output = [0u8; 128];
+		let mut output = [0u8; 128];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_g1_mul() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => Pricing::Bls12PricerG1MSM],
-			   native: EthereumBuiltin::from_str("bls12_381_g1_mul").unwrap(),
-		   };
-		   let input = hex!("
+	#[test]
+	fn bls12_381_g1_mul_extend() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Bls12G1Mul(Bls12G1MulPricer)],
+			native: EthereumBuiltin::from_str("bls12_381_g1_mul").unwrap(),
+		};
+		let input = hex!("
 			   0000000000000000000000000000000012196c5a43d69224d8713389285f26b98f86ee910ab3dd668e413738282003cc5b7357af9a7af54bb713d62255e80f56
 			   0000000000000000000000000000000006ba8102bfbeea4416b710c73e8cce3032c31c6269c44906f8ac4f7874ce99fb17559992486528963884ce429a992fee
 			   b3c940fe79b6966489b527955de7599194a9ac69a6ff58b8d99e7b1084f0464e
@@ -1955,25 +1957,25 @@ mod tests {
 			   000000000000000000000000000000001699a3cc1f10cd2ed0dc68eb916b4402e4f12bf4746893bf70e26e209e605ea89e3d53e7ac52bd07713d3c8fc671931d
 			   b3682accc3939283b870357cf83683350baf73aa0d3d68bda82a0f6ae7e51746
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   000000000000000000000000000000000b370fc4ca67fb0c3c270b1b4c4816ef953cd9f7cf6ad20e88099c40aace9c4bb3f4cd215e5796f65080c69c9f4d2a0f
 			   0000000000000000000000000000000007203220935ddc0190e2d7a99ec3f9231da550768373f9a5933dffd366f48146f8ea5fe5dee6539d925288083bb5a8f1
 		   ");
 
-		   let mut output = [0u8; 128];
+		let mut output = [0u8; 128];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_g2_add() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => Pricing::Bls12ConstOperations(Bls12ConstOperations{price: 1})],
-			   native: EthereumBuiltin::from_str("bls12_381_g2_add").unwrap(),
-		   };
-		   let input = hex!("
+	#[test]
+	fn bls12_381_g2_add() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Linear(Linear { base: 600, word: 0 })],
+			native: EthereumBuiltin::from_str("bls12_381_g2_add").unwrap(),
+		};
+		let input = hex!("
 			   00000000000000000000000000000000161c595d151a765c7dee03c9210414cdffab84b9078b4b98f9df09be5ec299b8f6322c692214f00ede97958f235c352b
 			   00000000000000000000000000000000106883e0937cb869e579b513bde8f61020fcf26be38f8b98eae3885cedec2e028970415fc653cf10e64727b7f6232e06
 			   000000000000000000000000000000000f351a82b733af31af453904874b7ca6252957a1ab51ec7f7b6fff85bbf3331f870a7e72a81594a9930859237e7a154d
@@ -1983,56 +1985,56 @@ mod tests {
 			   0000000000000000000000000000000011f0c512fe7dc2dd8abdc1d22c2ecd2e7d1b84f8950ab90fc93bf54badf7bb9a9bad8c355d52a5efb110dca891e4cc3d
 			   0000000000000000000000000000000019774010814d1d94caf3ecda3ef4f5c5986e966eaf187c32a8a5a4a59452af0849690cf71338193f2d8435819160bcfb
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   000000000000000000000000000000000383ab7a17cc57e239e874af3f1aaabba0e64625b848676712f05f56132dbbd1cadfabeb3fe1f461daba3f1720057ddd
 			   00000000000000000000000000000000096967e9b3747f1b8e344535eaa0c51e70bc77412bfaa2a7ce76f11f570c9febb8f4227316866a416a50436d098e6f9a
 			   000000000000000000000000000000001079452b7519a7b090d668d54c266335b1cdd1080ed867dd17a2476b11c2617da829bf740e51cb7dfd60d73ed02c0c67
 			   00000000000000000000000000000000015fc3a972e05cbd9014882cfe6f2f16d0291c403bf28b05056ac625e4f71dfb1295c85d73145ef554614e6eb2d5bf02
 		   ");
 
-		   let mut output = [0u8; 256];
+		let mut output = [0u8; 256];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_g2_mul() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => Pricing::Bls12PricerG2MSM],
-			   native: EthereumBuiltin::from_str("bls12_381_g2_mul").unwrap(),
-		   };
+	#[test]
+	fn bls12_381_g2_mul() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Bls12G2Mul(Bls12G2MulPricer)],
+			native: EthereumBuiltin::from_str("bls12_381_g2_mul").unwrap(),
+		};
 
-		   let input = hex!("
+		let input = hex!("
 			   00000000000000000000000000000000159da74f15e4c614b418997f81a1b8a3d9eb8dd80d94b5bad664bff271bb0f2d8f3c4ceb947dc6300d5003a2f7d7a829
 			   000000000000000000000000000000000cdd4d1d4666f385dd54052cf5c1966328403251bebb29f0d553a9a96b5ade350c8493270e9b5282d8a06f9fa8d7b1d9
 			   00000000000000000000000000000000189f8d3c94fdaa72cc67a7f93d35f91e22206ff9e97eed9601196c28d45b69c802ae92bcbf582754717b0355e08d37c0
 			   00000000000000000000000000000000054b0a282610f108fc7f6736b8c22c8778d082bf4b0d0abca5a228198eba6a868910dd5c5c440036968e977955054196
 			   b6a9408625b0ca8fcbfb21d34eec2d8e24e9a30d2d3b32d7a37d110b13afbfea
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   000000000000000000000000000000000b24adeb2ca184c9646cb39f45e0cf8711e10bf308ddae06519562b0af3b43be44c2fcb90622726f7446ed690551d30e
 			   00000000000000000000000000000000069467c3edc19416067f572c51740ba8e0e7380121ade98e38ce26d907a2bf3a4e82af2bd195b6c3b7c9b29218880531
 			   000000000000000000000000000000000eb8c90d0727511be53ffcb6f3b144c07983ed4b76d31ab003e45b37c7bc1066910f5e29f5adad5757af979dd0d8351d
 			   0000000000000000000000000000000004760f8d814189dcd893949797a3c4f56f2b60964bba3a4fc741e7ead05eb886787b2502fc64b20363eeba44e65d0ca0
 		   ");
 
-		   let mut output = [0u8; 256];
+		let mut output = [0u8; 256];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_g2_multiexp() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => Pricing::Bls12ConstOperations(Bls12ConstOperations{price: 1})],
-			   native: EthereumBuiltin::from_str("bls12_381_g2_multiexp").unwrap(),
-		   };
+	#[test]
+	fn bls12_381_g2_mul_extend() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Bls12G2Mul(Bls12G2MulPricer)],
+			native: EthereumBuiltin::from_str("bls12_381_g2_mul").unwrap(),
+		};
 
-		   let input = hex!("
+		let input = hex!("
 			   00000000000000000000000000000000039b10ccd664da6f273ea134bb55ee48f09ba585a7e2bb95b5aec610631ac49810d5d616f67ba0147e6d1be476ea220e
 			   0000000000000000000000000000000000fbcdff4e48e07d1f73ec42fe7eb026f5c30407cfd2f22bbbfe5b2a09e8a7bb4884178cb6afd1c95f80e646929d3004
 			   0000000000000000000000000000000001ed3b0e71acb0adbf44643374edbf4405af87cfc0507db7e8978889c6c3afbe9754d1182e98ac3060d64994d31ef576
@@ -2114,28 +2116,28 @@ mod tests {
 			   00000000000000000000000000000000047b9163a218f7654a72e0d7c651a2cf7fd95e9784a59e0bf119d081de6c0465d374a55fbc1eff9828c9fd29abf4c4bd
 			   b3682accc3939283b870357cf83683350baf73aa0d3d68bda82a0f6ae7e51746
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   00000000000000000000000000000000083ad744b34f6393bc983222b004657494232c5d9fbc978d76e2377a28a34c4528da5d91cbc0977dc953397a6d21eca2
 			   0000000000000000000000000000000015aec6526e151cf5b8403353517dfb9a162087a698b71f32b266d3c5c936a83975d5567c25b3a5994042ec1379c8e526
 			   000000000000000000000000000000000e3647185d1a20efad19f975729908840dc33909a583600f7915025f906aef9c022fd34e618170b11178aaa824ae36b3
 			   00000000000000000000000000000000159576d1d53f6cd12c39d651697e11798321f17cd287118d7ebeabf68281bc03109ee103ee8ef2ef93c71dd1dcbaf1e0
 		   ");
 
-		   let mut output = [0u8; 256];
+		let mut output = [0u8; 256];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_pairing() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => 	Pricing::Bls12Pairing(Bls12PairingPricer{price: Bls12PairingPrice{base: 1, pair: 1}})],
-			   native: EthereumBuiltin::from_str("bls12_381_pairing").unwrap(),
-		   };
+	#[test]
+	fn bls12_381_pairing() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Bls12Pairing(Bls12PairingPricer)],
+			native: EthereumBuiltin::from_str("bls12_381_pairing").unwrap(),
+		};
 
-		   let input = hex!("
+		let input = hex!("
 			   000000000000000000000000000000001830f52d9bff64a623c6f5259e2cd2c2a08ea17a8797aaf83174ea1e8c3bd3955c2af1d39bfa474815bfe60714b7cd80
 			   000000000000000000000000000000000874389c02d4cf1c61bc54c4c24def11dfbe7880bc998a95e70063009451ee8226fec4b278aade3a7cea55659459f1d5
 			   00000000000000000000000000000000197737f831d4dc7e708475f4ca7ca15284db2f3751fcaac0c17f517f1ddab35e1a37907d7b99b39d6c8d9001cd50e79e
@@ -2149,111 +2151,63 @@ mod tests {
 			   000000000000000000000000000000001918cb6e448ed69fb906145de3f11455ee0359d030e90d673ce050a360d796de33ccd6a941c49a1414aca1c26f9e699e
 			   0000000000000000000000000000000019a915154a13249d784093facc44520e7f3a18410ab2a3093e0b12657788e9419eec25729944f7945e732104939e7a9e
 		   ");
-		   let expected = hex!(
-			   "
+		let expected = hex!(
+			"
 			   0000000000000000000000000000000000000000000000000000000000000001
 		   "
-		   );
+		);
 
-		   let mut output = [0u8; 32];
+		let mut output = [0u8; 32];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_fp_to_g1() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => 	Pricing::Bls12Pairing(Bls12PairingPricer{price: Bls12PairingPrice{base: 1, pair: 1}})],
-			   native: EthereumBuiltin::from_str("bls12_381_fp_to_g1").unwrap(),
-		   };
+	#[test]
+	fn bls12_381_fp_to_g1() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Linear(Linear { base: 5_500, word: 0 })],
+			native: EthereumBuiltin::from_str("bls12_381_fp_to_g1").unwrap(),
+		};
 
-		   let input = hex!("
+		let input = hex!("
 			   0000000000000000000000000000000017f66b472b36717ee0902d685c808bb5f190bbcb2c51d067f1cbec64669f10199a5868d7181dcec0498fcc71f5acaf79
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   00000000000000000000000000000000188dc9e5ddf48977f33aeb6e505518269bf67fb624fa86b79741d842e75a6fa1be0911c2caa9e55571b6e55a3c0c0b9e
 			   00000000000000000000000000000000193e8b7c7e78daf104a59d7b39401a65355fa874bd34e91688580941e99a863367efc68fe871e38e07423090e93919c9
 		   ");
 
-		   let mut output = [0u8; 128];
+		let mut output = [0u8; 128];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 
-	   #[test]
-	   fn bls12_381_fp2_to_g2() {
-		   let f = Builtin {
-			   pricer: btreemap![0 => 	Pricing::Bls12Pairing(Bls12PairingPricer{price: Bls12PairingPrice{base: 1, pair: 1}})],
-			   native: EthereumBuiltin::from_str("bls12_381_fp2_to_g2").unwrap(),
-		   };
+	#[test]
+	fn bls12_381_fp2_to_g2() {
+		let f = Builtin {
+			pricer: btreemap![0 => Pricing::Linear(Linear { base: 23_800, word: 0 })],
+			native: EthereumBuiltin::from_str("bls12_381_fp2_to_g2").unwrap(),
+		};
 
-		   let input = hex!("
+		let input = hex!("
 			   000000000000000000000000000000000f470603a402bc134db1b389fd187460f9eb2dd001a2e99f730af386508c62f0e911d831a2562da84bce11d39f2ff13f
 			   000000000000000000000000000000000d8c45f4ab20642d0cba9764126e0818b7d731a6ba29ed234d9d6309a5e8ddfbd85193f1fa8b7cfeed3d31b23b904ee9
 		   ");
-		   let expected = hex!("
+		let expected = hex!("
 			   0000000000000000000000000000000012e74d5a0c005a86ca148e9eff8e34a00bfa8b6e6aadf633d65cd09bb29917e0ceb0d5c9d9650c162d7fe4aa27452685
 			   0000000000000000000000000000000005f09101a2088712619f9c096403b66855a12f9016c55aef6047372fba933f02d9d59db1a86df7be57978021e2457821
 			   00000000000000000000000000000000136975b37fe400d1d217a2b496c1552b39be4e9e71dd7ad482f5f0836d271d02959fdb698dda3d0530587fb86e0db1dd
 			   0000000000000000000000000000000000bad0aabd9309e92e2dd752f4dd73be07c0de2c5ddd57916b9ffa065d7440d03d44e7c042075cda694414a9fb639bb7
 		   ");
 
-		   let mut output = [0u8; 256];
+		let mut output = [0u8; 256];
 
-		   f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
-			   .expect("Builtin should not fail");
-		   assert_eq!(&output[..], &expected[..]);
-	   }
-
-	   #[test]
-	   fn bls12_381_g1_mul_init_from_spec() {
-		   use ethjson::spec::builtin::{Bls12G1Multiexp, Pricing};
-
-		   let b = Builtin::try_from(JsonBuiltin {
-			   name: "bls12_381_g1_mul".to_owned(),
-			   pricing: btreemap![
-				   10000000 => PricingAt {
-					   info: None,
-					   price: Pricing::Bls12PricerG1MSM),
-				   }
-			   ],
-		   })
-		   .unwrap();
-
-		   match b.native {
-			   EthereumBuiltin::Bls12G1MultiExp(..) => {}
-			   _ => {
-				   panic!("invalid precompile type");
-			   }
-		   }
-	   }
-
-	   #[test]
-	   fn bls12_381_g2_mul_init_from_spec() {
-		   use ethjson::spec::builtin::{Bls12G2Multiexp, Pricing};
-
-		   let b = Builtin::try_from(JsonBuiltin {
-			   name: "bls12_381_g2_mul".to_owned(),
-			   pricing: btreemap![
-				   10000000 => PricingAt {
-					   info: None,
-					   price: Pricing::Bls12PricerG2MSM),
-				   }
-			   ],
-		   })
-		   .unwrap();
-
-		   match b.native {
-			   EthereumBuiltin::Bls12G2MultiExp(..) => {}
-			   _ => {
-				   panic!("invalid precompile type");
-			   }
-		   }
-	   }
-
-	*/
+		f.execute(&input[..], &mut BytesRef::Fixed(&mut output[..]))
+			.expect("Builtin should not fail");
+		assert_eq!(&output[..], &expected[..]);
+	}
 }

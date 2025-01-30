@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use blst::{
 	blst_bendian_from_fp, blst_fp, blst_fp_from_bendian, blst_p1_affine, blst_p1_affine_in_g1,
 	blst_p1_affine_on_curve, blst_scalar, blst_scalar_from_bendian,
@@ -719,8 +717,8 @@ pub mod pairing {
 				result = 1;
 			}
 		}
-		let mut out = [0u8; 256];
-		out[255] = result;
+		let mut out = [0u8; 32];
+		out[31] = result;
 		Ok(out.into())
 	}
 
