@@ -22,9 +22,9 @@ ethcore-builtin = { path = "../ethcore-builtin" }
 rlp = "0.6"
 sha3 = "0.10"
 parity-bytes = "0.1"
-env_logger = "0.11"
 hex-literal = "0.4"
 
 [features]
 enable-slow-tests = []
 print-debug = ["evm/print-debug"]
+dump-state = ["evm/with-serde"]
