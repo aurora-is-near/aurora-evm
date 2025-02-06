@@ -117,7 +117,7 @@ impl StateTestsDumper for StateTestsDump {
 			.duration_since(UNIX_EPOCH)
 			.unwrap()
 			.as_micros();
-		let path = format!("{spec:?}_BLS12-382_g1_add_{now}.json");
+		let path = format!("{spec:?}_BLS12-382_{now}.json");
 		let json = serde_json::to_string(&self).unwrap();
 		std::fs::write(path, json).unwrap();
 	}
