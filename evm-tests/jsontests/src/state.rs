@@ -5,7 +5,7 @@ use ethjson::spec::builtin::{AltBn128ConstOperations, AltBn128Pairing, PricingAt
 use ethjson::spec::{ForkSpec, Pricing};
 use ethjson::test_helpers::state::PostStateResult;
 use ethjson::uint::Uint;
-use evm::backend::{ApplyBackend, MemoryAccount, MemoryBackend, MemoryVicinity};
+use evm::backend::{ApplyBackend, Backend, MemoryAccount, MemoryBackend, MemoryVicinity};
 use evm::executor::stack::{
 	Authorization, MemoryStackState, PrecompileFailure, PrecompileFn, PrecompileOutput,
 	StackExecutor, StackSubstateMetadata,
@@ -17,7 +17,6 @@ use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
 use sha3::{Digest, Keccak256};
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
@@ -66,7 +65,7 @@ impl StateTestsDump {
 	pub fn set_vicinity(&mut self, vicinity: &MemoryVicinity) {
 		#[cfg(feature = "dump-state")]
 		{
-			self.caller = vicinity.orixgin;
+			self.caller = vicinity.origin;
 			self.gas_price = vicinity.gas_price;
 			self.effective_gas_price = vicinity.effective_gas_price;
 		}
@@ -74,7 +73,7 @@ impl StateTestsDump {
 
 	pub fn set_tx_data(
 		&mut self,
-		to: &H160,
+		to: H160,
 		value: U256,
 		data: Vec<u8>,
 		gas_limit: u64,
@@ -82,7 +81,7 @@ impl StateTestsDump {
 	) {
 		#[cfg(feature = "dump-state")]
 		{
-			self.to = &to;
+			self.to = to;
 			self.value = value;
 			self.data = data;
 			self.gas_limit = gas_limit;
@@ -112,10 +111,18 @@ impl StateTestsDump {
 	}
 
 	#[allow(clippy::missing_const_for_fn)]
-	pub fn dump_to_file(&self, path: &Path) {
+	pub fn dump_to_file(&self, spec: &ForkSpec) {
 		#[cfg(feature = "dump-state")]
 		{
-			std::fs::write(path, serde_json::to_string_pretty(&self).unwrap()).unwrap();
+			use std::time::{SystemTime, UNIX_EPOCH};
+			let now = SystemTime::now()
+				.duration_since(UNIX_EPOCH)
+				.unwrap()
+				.as_micros();
+			let path = format!("{spec:?}_BLS12-382_g1_add_{now}.json");
+			let json = serde_json::to_string(&self).unwrap();
+			//println!("State tests dump: {path}");
+			//std::fs::write(path, json).unwrap();
 		}
 	}
 }
@@ -1326,7 +1333,7 @@ fn test_run(
 						let value = transaction.value.into();
 
 						state_tests_dump.set_tx_data(
-							&to.into(),
+							to.into(),
 							value,
 							data.clone(),
 							gas_limit,
@@ -1425,10 +1432,6 @@ fn test_run(
 			let (is_valid_hash, actual_hash) =
 				crate::utils::check_valid_hash(&state.hash.0, backend.state());
 
-			state_tests_dump.set_used_gas(used_gas);
-			state_tests_dump.set_state_hash(&actual_hash);
-			state_tests_dump.set_result_state(backend.state());
-
 			if !is_valid_hash {
 				let failed_res = FailedTestDetails {
 					expected_hash: state.hash.0,
@@ -1468,6 +1471,11 @@ fn test_run(
 			} else if verbose_output.very_verbose && !verbose_output.verbose_failed {
 				println!(" [{spec:?}]  {name}:{i} ... passed");
 			}
+
+			state_tests_dump.set_used_gas(used_gas);
+			state_tests_dump.set_state_hash(&actual_hash);
+			state_tests_dump.set_result_state(backend.state());
+			state_tests_dump.dump_to_file(spec);
 		}
 	}
 	tests_result
