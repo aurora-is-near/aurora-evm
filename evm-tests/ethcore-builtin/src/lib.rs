@@ -986,11 +986,6 @@ impl Implementation for Bls12MapFpToG1 {
 impl Implementation for Bls12MapFp2ToG2 {
 	fn execute(&self, input: &[u8], output: &mut BytesRef) -> Result<(), &'static str> {
 		let out = bls::map_fp2_to_g2::map_fp2_to_g2(input)?;
-		println!(
-			"{{ \"input\": {:?}, \"output\": {:?} }},",
-			hex::encode(&input),
-			hex::encode(&out)
-		);
 		output.write(0, out.as_slice());
 		Ok(())
 	}
