@@ -47,32 +47,46 @@ pub struct StateTestsDump {
 	pub access_list: Vec<(H160, Vec<H256>)>,
 }
 
-#[allow(unused_variables)]
-impl StateTestsDump {
-	pub fn set_state(&mut self, state: &BTreeMap<H160, MemoryAccount>) {
-		#[cfg(feature = "dump-state")]
-		{
-			self.state = state.clone();
-		}
+trait StateTestsDumper {
+	fn set_state(&mut self, _state: &BTreeMap<H160, MemoryAccount>) {}
+	fn set_used_gas(&mut self, _used_gas: u64) {}
+	fn set_vicinity(&mut self, _vicinity: &MemoryVicinity) {}
+	fn set_tx_data(
+		&mut self,
+		_to: &H160,
+		_value: U256,
+		_data: Vec<u8>,
+		_gas_limit: u64,
+		_access_list: Vec<(H160, Vec<H256>)>,
+	) {
+	}
+	fn set_caller_secret_key(&mut self, _caller_secret_key: &H256) {}
+	fn set_state_hash(&mut self, _state_hash: &H256) {}
+	fn set_result_state(&mut self, _state: &BTreeMap<H160, MemoryAccount>) {}
+	#[allow(dead_code)]
+	fn dump_to_file(&self, _path: &Path) {}
+}
+
+#[cfg(not(feature = "dump-state"))]
+impl StateTestsDumper for StateTestsDump {}
+
+#[cfg(feature = "dump-state")]
+impl StateTestsDumper for StateTestsDump {
+	fn set_state(&mut self, state: &BTreeMap<H160, MemoryAccount>) {
+		self.state = state.clone();
 	}
 
-	pub fn set_used_gas(&mut self, used_gas: u64) {
-		#[cfg(feature = "dump-state")]
-		{
-			self.used_gas = used_gas;
-		}
+	fn set_used_gas(&mut self, used_gas: u64) {
+		self.used_gas = used_gas;
 	}
 
-	pub fn set_vicinity(&mut self, vicinity: &MemoryVicinity) {
-		#[cfg(feature = "dump-state")]
-		{
-			self.caller = vicinity.orixgin;
-			self.gas_price = vicinity.gas_price;
-			self.effective_gas_price = vicinity.effective_gas_price;
-		}
+	fn set_vicinity(&mut self, vicinity: &MemoryVicinity) {
+		self.caller = vicinity.origin;
+		self.gas_price = vicinity.gas_price;
+		self.effective_gas_price = vicinity.effective_gas_price;
 	}
 
-	pub fn set_tx_data(
+	fn set_tx_data(
 		&mut self,
 		to: &H160,
 		value: U256,
@@ -80,43 +94,27 @@ impl StateTestsDump {
 		gas_limit: u64,
 		access_list: Vec<(H160, Vec<H256>)>,
 	) {
-		#[cfg(feature = "dump-state")]
-		{
-			self.to = &to;
-			self.value = value;
-			self.data = data;
-			self.gas_limit = gas_limit;
-			self.access_list = access_list;
-		}
+		self.to = *to;
+		self.value = value;
+		self.data = data;
+		self.gas_limit = gas_limit;
+		self.access_list = access_list;
 	}
 
-	pub fn set_caller_secret_key(&mut self, caller_secret_key: &H256) {
-		#[cfg(feature = "dump-state")]
-		{
-			self.caller_secret_key = *caller_secret_key;
-		}
+	fn set_caller_secret_key(&mut self, caller_secret_key: &H256) {
+		self.caller_secret_key = *caller_secret_key;
 	}
 
-	pub fn set_state_hash(&mut self, state_hash: &H256) {
-		#[cfg(feature = "dump-state")]
-		{
-			self.state_hash = *state_hash;
-		}
+	fn set_state_hash(&mut self, state_hash: &H256) {
+		self.state_hash = *state_hash;
 	}
 
-	pub fn set_result_state(&mut self, state: &BTreeMap<H160, MemoryAccount>) {
-		#[cfg(feature = "dump-state")]
-		{
-			self.result_state = state.clone();
-		}
+	fn set_result_state(&mut self, state: &BTreeMap<H160, MemoryAccount>) {
+		self.result_state = state.clone();
 	}
 
-	#[allow(clippy::missing_const_for_fn)]
-	pub fn dump_to_file(&self, path: &Path) {
-		#[cfg(feature = "dump-state")]
-		{
-			std::fs::write(path, serde_json::to_string_pretty(&self).unwrap()).unwrap();
-		}
+	fn dump_to_file(&self, path: &Path) {
+		std::fs::write(path, serde_json::to_string_pretty(&self).unwrap()).unwrap();
 	}
 }
 
