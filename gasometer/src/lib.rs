@@ -637,16 +637,6 @@ fn get_and_set_warm<H: Handler>(handler: &mut H, target: H160) -> (bool, Option<
 	(target_is_cold, delegated_designator_is_cold)
 }
 
-/// Get and set warm address if it's not warmed for non-delegated opcodes like `EXT*`.
-/// NOTE: Related to EIP-7702
-fn get_and_set_non_delegated_warm<H: Handler>(handler: &mut H, target: H160) -> bool {
-	let target_is_cold = handler.is_cold(target, None);
-	if target_is_cold {
-		handler.warm_target((target, None));
-	}
-	target_is_cold
-}
-
 /// Calculate the opcode cost.
 ///
 /// # Errors
@@ -704,8 +694,11 @@ pub fn dynamic_opcode_cost<H: Handler>(
 
 		Opcode::EXTCODESIZE => {
 			let target = stack.peek_h256(0)?.into();
-			let target_is_cold = get_and_set_non_delegated_warm(handler, target);
-			GasCost::ExtCodeSize { target_is_cold }
+			let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
+			GasCost::ExtCodeSize {
+				target_is_cold,
+				delegated_designator_is_cold,
+			}
 		}
 		Opcode::BALANCE => {
 			let target = stack.peek_h256(0)?.into();
@@ -719,8 +712,11 @@ pub fn dynamic_opcode_cost<H: Handler>(
 
 		Opcode::EXTCODEHASH if config.has_ext_code_hash => {
 			let target = stack.peek_h256(0)?.into();
-			let target_is_cold = get_and_set_non_delegated_warm(handler, target);
-			GasCost::ExtCodeHash { target_is_cold }
+			let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
+			GasCost::ExtCodeHash {
+				target_is_cold,
+				delegated_designator_is_cold,
+			}
 		}
 		Opcode::EXTCODEHASH => GasCost::Invalid(opcode),
 
@@ -756,9 +752,10 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		},
 		Opcode::EXTCODECOPY => {
 			let target = stack.peek_h256(0)?.into();
-			let target_is_cold = get_and_set_non_delegated_warm(handler, target);
+			let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
 			GasCost::ExtCodeCopy {
 				target_is_cold,
+				delegated_designator_is_cold,
 				len: stack.peek(3)?,
 			}
 		}
@@ -1075,16 +1072,25 @@ impl Inner<'_> {
 			GasCost::Low => u64::from(consts::G_LOW),
 			GasCost::Invalid(opcode) => return Err(ExitError::InvalidCode(opcode)),
 
-			GasCost::ExtCodeSize { target_is_cold } => costs::address_access_cost(
+			GasCost::ExtCodeSize {
 				target_is_cold,
-				None,
+				delegated_designator_is_cold,
+			} => costs::address_access_cost(
+				target_is_cold,
+				delegated_designator_is_cold,
 				self.config.gas_ext_code,
 				self.config,
 			),
 			GasCost::ExtCodeCopy {
 				target_is_cold,
+				delegated_designator_is_cold,
 				len,
-			} => costs::extcodecopy_cost(len, target_is_cold, None, self.config)?,
+			} => costs::extcodecopy_cost(
+				len,
+				target_is_cold,
+				delegated_designator_is_cold,
+				self.config,
+			)?,
 			GasCost::Balance { target_is_cold } => costs::address_access_cost(
 				target_is_cold,
 				None,
@@ -1092,9 +1098,12 @@ impl Inner<'_> {
 				self.config,
 			),
 			GasCost::BlockHash => u64::from(consts::G_BLOCKHASH),
-			GasCost::ExtCodeHash { target_is_cold } => costs::address_access_cost(
+			GasCost::ExtCodeHash {
 				target_is_cold,
-				None,
+				delegated_designator_is_cold,
+			} => costs::address_access_cost(
+				target_is_cold,
+				delegated_designator_is_cold,
 				self.config.gas_ext_code_hash,
 				self.config,
 			),
@@ -1138,6 +1147,8 @@ pub enum GasCost {
 	ExtCodeSize {
 		/// True if address has not been previously accessed in this transaction
 		target_is_cold: bool,
+		/// True if delegated designator of authority has not been previously accessed in this transaction (EIP-7702)
+		delegated_designator_is_cold: Option<bool>,
 	},
 	/// Gas cost for `BALANCE`.
 	Balance {
@@ -1150,6 +1161,8 @@ pub enum GasCost {
 	ExtCodeHash {
 		/// True if address has not been previously accessed in this transaction
 		target_is_cold: bool,
+		/// True if delegated designator of authority has not been previously accessed in this transaction (EIP-7702)
+		delegated_designator_is_cold: Option<bool>,
 	},
 
 	/// Gas cost for `CALL`.
@@ -1238,6 +1251,8 @@ pub enum GasCost {
 	ExtCodeCopy {
 		/// True if target has not been previously accessed in this transaction
 		target_is_cold: bool,
+		/// True if delegated designator of authority has not been previously accessed in this transaction (EIP-7702)
+		delegated_designator_is_cold: Option<bool>,
 		/// Length.
 		len: U256,
 	},

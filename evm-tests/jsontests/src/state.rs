@@ -234,15 +234,6 @@ impl JsonPrecompile {
 				precompile_entry!(map, PRAGUE_BUILTINS, 8);
 				precompile_entry!(map, PRAGUE_BUILTINS, 9);
 				precompile_entry!(map, PRAGUE_BUILTINS, 0x0A);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x0B);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x0C);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x0D);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x0E);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x0F);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x10);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x11);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x12);
-				precompile_entry!(map, PRAGUE_BUILTINS, 0x13);
 				Some(map)
 			}
 			_ => None,
@@ -545,128 +536,7 @@ fn cancun_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 }
 
 fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
-	use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
-
-	let mut builtins = berlin_builtins();
-	builtins.insert(
-		Address(H160::from_low_u64_be(0xB)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g1_add".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0xC)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g1_mul".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0xD)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g1_multiexp".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0xE)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g2_add".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0xF)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g2_mul".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0x10)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_g2_multiexp".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0x11)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_pairing".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0x12)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_fp_to_g1".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-	builtins.insert(
-		Address(H160::from_low_u64_be(0x13)).into(),
-		ethjson::spec::Builtin::from(BuiltinCompat {
-			name: "bls12_381_fp2_to_g2".to_string(),
-			pricing: PricingCompat::Single(Pricing::Linear(Linear {
-				base: 50_000,
-				word: 0,
-			})),
-			activate_at: None,
-		})
-		.try_into()
-		.unwrap(),
-	);
-
-	builtins
+	cancun_builtins()
 }
 
 pub fn test(
