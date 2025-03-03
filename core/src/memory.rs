@@ -141,7 +141,7 @@ impl Memory {
 
 		if offset
 			.checked_add(target_size)
-			.map_or(true, |pos| pos > self.limit)
+			.is_none_or(|pos| pos > self.limit)
 		{
 			return Err(ExitFatal::NotSupported);
 		}
