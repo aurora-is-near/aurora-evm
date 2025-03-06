@@ -154,6 +154,11 @@ impl Accessed {
 		self.authority.insert(authority, address);
 	}
 
+	/// Remove authority from the accessed authority list (EIP-7702).
+	pub fn remove_authority(&mut self, authority: H160) {
+		self.authority.remove(&authority);
+	}
+
 	/// Get authority from the accessed authority list (EIP-7702).
 	#[must_use]
 	pub fn get_authority_target(&self, authority: H160) -> Option<H160> {
@@ -304,6 +309,13 @@ impl<'config> StackSubstateMetadata<'config> {
 	pub fn add_authority(&mut self, authority: H160, address: H160) {
 		if let Some(accessed) = &mut self.accessed {
 			accessed.add_authority(authority, address);
+		}
+	}
+
+	/// Remove authority from accessed list (related to EIP-7702)
+	pub fn remove_authority(&mut self, authority: H160) {
+		if let Some(accessed) = &mut self.accessed {
+			accessed.remove_authority(authority);
 		}
 	}
 }
@@ -861,7 +873,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 		self.state.basic(address).nonce
 	}
 
-	/// Check if the existing account is "create collision".    
+	/// Check if the existing account is "create collision".
 	/// [EIP-7610](https://eips.ethereum.org/EIPS/eip-7610)
 	pub fn is_create_collision(&self, address: H160) -> bool {
 		!self.code(address).is_empty()
@@ -1015,8 +1027,10 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 			// 9. Increase the nonce of authority by one.
 			state.inc_nonce(authority.authority)?;
 
-			// Add to authority access list cache
-			if !delegation_clearing {
+			// Add/Remove to authority access list cache
+			if delegation_clearing {
+				state.metadata_mut().remove_authority(authority.authority);
+			} else {
 				state
 					.metadata_mut()
 					.add_authority(authority.authority, authority.address);
@@ -1479,7 +1493,7 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
 	/// delegated address code size.
 	/// <https://eips.ethereum.org/EIPS/eip-7702#delegation-designation>
 	fn code_size(&mut self, address: H160) -> U256 {
-		let target_code = self.authority_code(address);
+		let target_code = self.code(address);
 		U256::from(target_code.len())
 	}
 
@@ -1493,12 +1507,7 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
 		if !self.exists(address) {
 			return H256::default();
 		}
-		if let Some(target) = self.get_authority_target(address) {
-			if !self.exists(target) {
-				return H256::default();
-			}
-		}
-		let code = self.authority_code(address);
+		let code = self.code(address);
 		H256::from_slice(Keccak256::digest(code).as_slice())
 	}
 

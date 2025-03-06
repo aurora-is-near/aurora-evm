@@ -143,7 +143,7 @@ pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
 }
 
 /// NOTE: For EIP-7702 should not copy from designated address
-pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
+pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
 	pop_h256!(runtime, address);
 	pop_u256!(runtime, memory_offset, code_offset, len);
 
@@ -163,7 +163,7 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
 		memory_offset,
 		code_offset,
 		len,
-		&handler.authority_code(address.into()),
+		&handler.code(address.into()),
 	) {
 		Ok(()) => (),
 		Err(e) => return Control::Exit(e.into()),

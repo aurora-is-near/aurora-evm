@@ -1243,8 +1243,9 @@ fn test_run(
 				tests_result.failed += 1;
 
 				if verbose_output.verbose_failed {
-					println!(" [{spec:?}] {name}:{i} ... failed\t<----");
+					println!("\n[{spec:?}] {name}:{i} ... failed\t<----");
 				}
+
 				if verbose_output.print_state {
 					// Print detailed state data
 					println!(
