@@ -105,7 +105,7 @@ fn main() -> Result<(), String> {
 		let mut tests_result = TestExecutionResult::new();
 		for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
 			let path = Path::new(src_name);
-			assert!(path.exists(), "data source is not exist");
+			assert!(path.exists(), "data source is not exist: {path:?}");
 			if path.is_file() {
 				run_test_for_file(&spec, &verbose_output, path, &mut tests_result);
 			} else if path.is_dir() {

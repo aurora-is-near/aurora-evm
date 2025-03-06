@@ -27,3 +27,4 @@ hex-literal = "1"
 [features]
 enable-slow-tests = []
 print-debug = ["evm/print-debug"]
+dump-state = ["evm/with-serde"]
