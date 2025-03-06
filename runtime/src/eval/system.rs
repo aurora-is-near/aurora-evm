@@ -201,7 +201,7 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
 		.resize_offset(memory_offset, len));
 	if data_offset
 		.checked_add(len.into())
-		.map_or(true, |l| l > U256::from(runtime.return_data_buffer.len()))
+		.is_none_or(|l| l > U256::from(runtime.return_data_buffer.len()))
 	{
 		return Control::Exit(ExitError::OutOfOffset.into());
 	}
