@@ -837,10 +837,10 @@ fn assert_vicinity_validation(
 		ForkSpec::Istanbul | ForkSpec::Berlin => match reason {
 			InvalidTxReason::GasPriseEip1559 => {
 				for (i, state) in states.iter().enumerate() {
-					let expected = state
-						.expect_exception
-						.as_deref()
-						.expect("expected error message for test: [{spec}] {name}:{i}");
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: [{spec:?}] {name}:{i}")
+					});
+
 					let is_checked =
 						expected == "TR_TypeNotSupported" || expected == "TR_TypeNotSupportedBlob";
 					assert!(
@@ -851,101 +851,96 @@ fn assert_vicinity_validation(
 			}
 			_ => panic!("Unexpected validation reason: {reason:?} [{name}]"),
 		},
-		ForkSpec::London => {
-			match reason {
-				InvalidTxReason::PriorityFeeTooLarge => {
-					for (i, state) in states.iter().enumerate() {
-						let expected = state.expect_exception.as_deref().expect(
-							"expected error message for test: {reason:?} [{spec}] {name}:{i}",
-						);
-						let is_checked = expected == "tipTooHigh" || expected == "TR_TipGtFeeCap";
-						assert!(
+		ForkSpec::London => match reason {
+			InvalidTxReason::PriorityFeeTooLarge => {
+				for (i, state) in states.iter().enumerate() {
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+					let is_checked = expected == "tipTooHigh" || expected == "TR_TipGtFeeCap";
+					assert!(
                             is_checked,
                             "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
                         );
-					}
 				}
-				InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-					for (i, state) in states.iter().enumerate() {
-						let expected = state.expect_exception.as_deref().expect(
-							"expected error message for test: {reason:?} [{spec}] {name}:{i}",
-						);
-						let is_checked =
-							expected == "lowFeeCap" || expected == "TR_FeeCapLessThanBlocks";
-						assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                        );
-					}
-				}
-				_ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
 			}
-		}
-		ForkSpec::Paris => {
-			match reason {
-				InvalidTxReason::PriorityFeeTooLarge => {
-					for (i, state) in states.iter().enumerate() {
-						let expected = state.expect_exception.as_deref().expect(
-							"expected error message for test: {reason:?} [{spec}] {name}:{i}",
-						);
-						let is_checked = expected == "TR_TipGtFeeCap";
-						assert!(
+			InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+				for (i, state) in states.iter().enumerate() {
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+					let is_checked =
+						expected == "lowFeeCap" || expected == "TR_FeeCapLessThanBlocks";
+					assert!(
                             is_checked,
                             "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
                         );
-					}
 				}
-				InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-					for (i, state) in states.iter().enumerate() {
-						let expected = state.expect_exception.as_deref().expect(
-							"expected error message for test: {reason:?} [{spec}] {name}:{i}",
-						);
-						let is_checked = expected == "TR_FeeCapLessThanBlocks";
-						assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                        );
-					}
-				}
-				_ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
 			}
-		}
-		ForkSpec::Shanghai => {
-			match reason {
-				InvalidTxReason::PriorityFeeTooLarge => {
-					for (i, state) in states.iter().enumerate() {
-						let expected = state.expect_exception.as_deref().expect(
-							"expected error message for test: {reason:?} [{spec}] {name}:{i}",
-						);
-						let is_checked = expected == "TR_TipGtFeeCap";
-						assert!(
+			_ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
+		},
+		ForkSpec::Paris => match reason {
+			InvalidTxReason::PriorityFeeTooLarge => {
+				for (i, state) in states.iter().enumerate() {
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+					let is_checked = expected == "TR_TipGtFeeCap";
+					assert!(
                             is_checked,
                             "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
                         );
-					}
 				}
-				InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-					for (i, state) in states.iter().enumerate() {
-						let expected = state.expect_exception.as_deref().expect(
-							"expected error message for test: {reason:?} [{spec}] {name}:{i}",
-						);
-						let is_checked = expected == "TR_FeeCapLessThanBlocks";
-						assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                        );
-					}
-				}
-				_ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
 			}
-		}
+			InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+				for (i, state) in states.iter().enumerate() {
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+					let is_checked = expected == "TR_FeeCapLessThanBlocks";
+					assert!(
+                            is_checked,
+                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+                        );
+				}
+			}
+			_ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
+		},
+		ForkSpec::Shanghai => match reason {
+			InvalidTxReason::PriorityFeeTooLarge => {
+				for (i, state) in states.iter().enumerate() {
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+					let is_checked = expected == "TR_TipGtFeeCap";
+					assert!(
+                            is_checked,
+                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+                        );
+				}
+			}
+			InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+				for (i, state) in states.iter().enumerate() {
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+
+					let is_checked = expected == "TR_FeeCapLessThanBlocks";
+					assert!(
+                            is_checked,
+                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+                        );
+				}
+			}
+			_ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
+		},
 		ForkSpec::Cancun => match reason {
 			InvalidTxReason::PriorityFeeTooLarge => {
 				for (i, state) in states.iter().enumerate() {
-					let expected = state
-						.expect_exception
-						.as_deref()
-						.expect("expected error message for test: {reason:?} [{spec}] {name}:{i}");
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+
 					let is_checked = expected == "TR_TipGtFeeCap"
 						|| expected == "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS";
 					assert!(
@@ -956,10 +951,10 @@ fn assert_vicinity_validation(
 			}
 			InvalidTxReason::GasPriceLessThenBlockBaseFee => {
 				for (i, state) in states.iter().enumerate() {
-					let expected = state
-						.expect_exception
-						.as_deref()
-						.expect("expected error message for test: {reason:?} [{spec}] {name}:{i}");
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
+					});
+
 					let is_checked = expected == "TR_FeeCapLessThanBlocks"
 						|| expected == "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS";
 					assert!(
@@ -973,10 +968,9 @@ fn assert_vicinity_validation(
 		ForkSpec::Prague => match reason {
 			InvalidTxReason::GasPriceLessThenBlockBaseFee => {
 				for (i, state) in states.iter().enumerate() {
-					let expected = state
-						.expect_exception
-						.as_deref()
-						.expect("expected error message for test: {reason:?} [{spec}] {name}:{i}");
+					let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
+						panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i})")
+					});
 					let is_checked = expected == "TR_FeeCapLessThanBlocks"
 						|| expected == "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS";
 					assert!(
