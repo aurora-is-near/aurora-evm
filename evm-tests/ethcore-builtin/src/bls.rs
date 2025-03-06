@@ -2,6 +2,7 @@ use blst::{
 	blst_bendian_from_fp, blst_fp, blst_fp_from_bendian, blst_p1_affine, blst_p1_affine_in_g1,
 	blst_p1_affine_on_curve, blst_scalar, blst_scalar_from_bendian,
 };
+use std::cmp::Ordering;
 use std::convert::TryInto;
 
 /// Number of bits used in the BLS12-381 curve finite field elements.
@@ -37,7 +38,15 @@ fn fp_to_bytes(out: &mut [u8], input: *const blst_fp) {
 
 /// Checks if the input is a valid big-endian representation of a field element.
 fn is_valid_be(input: &[u8; 48]) -> bool {
-	input.iter().zip(MODULUS_REPR.iter()).any(|(&a, &b)| a < b)
+	for (i, modul) in input.iter().zip(MODULUS_REPR.iter()) {
+		match i.cmp(modul) {
+			Ordering::Greater => return false,
+			Ordering::Less => return true,
+			Ordering::Equal => continue,
+		}
+	}
+	// false if matching the modulus
+	false
 }
 
 /// Checks whether or not the input represents a canonical field element, returning the field
