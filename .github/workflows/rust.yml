@@ -98,7 +98,7 @@ jobs:
           cargo run -r -p evm-jsontests -F enable-slow-tests -- state -f \
           ethtests/GeneralStateTests/ \
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-          ethereum-spec-tests/fixtures/state_tests/prague/
+          ethereum-spec-tests/fixtures/state_tests/
           # Temporally disable as EOFv1 not implemented
           # ethtests/EIPTests/StateTests/
 
