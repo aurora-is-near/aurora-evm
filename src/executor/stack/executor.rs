@@ -47,13 +47,6 @@ macro_rules! try_or_fail {
 }
 
 const DEFAULT_CALL_STACK_CAPACITY: usize = 4;
-/// For EIP-7702 Hash of `EF01` bytes
-/// At the moment unused.
-#[allow(dead_code)]
-const EIP7702_MAGIC_HASH: [u8; 32] = [
-	0xEA, 0xDC, 0xDB, 0xA6, 0x6A, 0x79, 0xAB, 0x5D, 0xCE, 0x91, 0x62, 0x2D, 0x1D, 0x75, 0xC8, 0xCF,
-	0xF5, 0xCF, 0xF0, 0xB9, 0x69, 0x44, 0xC3, 0xBF, 0x10, 0x72, 0xCD, 0x08, 0xCE, 0x01, 0x83, 0x29,
-];
 
 const fn l64(gas: u64) -> u64 {
 	gas - gas / 64
@@ -1961,16 +1954,5 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
 	/// Retrieve the gas limit of this call.
 	fn gas_limit(&self) -> Option<u64> {
 		self.gas_limit
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::EIP7702_MAGIC_HASH;
-	use sha3::{Digest, Keccak256};
-	#[test]
-	fn test_ef01_hash() {
-		let hash = Keccak256::digest([0xEF, 0x01]);
-		assert_eq!(hash.as_slice(), EIP7702_MAGIC_HASH);
 	}
 }
