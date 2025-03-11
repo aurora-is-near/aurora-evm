@@ -259,12 +259,11 @@ pub mod eip_4844 {
 	/// EIP-4844 constants
 	/// Gas consumption of a single data blob (== blob byte size).
 	pub const GAS_PER_BLOB: u64 = 1 << 17;
-	/// Target number of the blob per block.
-	pub const TARGET_BLOB_NUMBER_PER_BLOCK: u64 = 3;
-	/// Max number of blobs per block
-	pub const MAX_BLOB_NUMBER_PER_BLOCK: u64 = 2 * TARGET_BLOB_NUMBER_PER_BLOCK;
-	/// Target consumable blob gas for data blobs per block (for 1559-like pricing).
-	pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB;
+	/// Max number of blobs per block: EIP-7691
+	pub const MAX_BLOBS_PER_BLOCK_ELECTRA: u64 = 9;
+	pub const MAX_BLOBS_PER_BLOCK_CANCUN: u64 = 6;
+	/// Target consumable blob gas for data blobs per block: EIP-7691
+	pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 786432;
 	/// Minimum gas price for data blobs.
 	pub const MIN_BLOB_GASPRICE: u64 = 1;
 	/// Controls the maximum rate of change for blob gas price.
@@ -449,9 +448,13 @@ pub mod transaction {
 
 				// ensure the total blob gas spent is at most equal to the limit
 				// assert blob_gas_used <= MAX_BLOB_GAS_PER_BLOCK
-				if test_tx.blob_versioned_hashes.len()
-					> super::eip_4844::MAX_BLOB_NUMBER_PER_BLOCK as usize
-				{
+				// EIP-7691
+				let max_blob_len = if *spec == ForkSpec::Cancun {
+					super::eip_4844::MAX_BLOBS_PER_BLOCK_CANCUN
+				} else {
+					super::eip_4844::MAX_BLOBS_PER_BLOCK_ELECTRA
+				};
+				if test_tx.blob_versioned_hashes.len() > max_blob_len as usize {
 					return Err(InvalidTxReason::TooManyBlobs);
 				}
 			}
