@@ -5,12 +5,15 @@ use core::cmp::min;
 use core::ops::{BitAnd, Not};
 use primitive_types::{H256, U256};
 
-/// A sequencial memory. It uses Rust's `Vec` for internal
+/// A sequential memory. It uses Rust's `Vec` for internal
 /// representation.
 #[derive(Clone, Debug)]
 pub struct Memory {
+	/// Memory data
 	data: Vec<u8>,
+	/// Memory effective length, that changed after resize operations.
 	effective_len: usize,
+	/// Memory limit
 	limit: usize,
 }
 
@@ -59,7 +62,7 @@ impl Memory {
 	/// with 32 bytes as the step. If the length is zero, this function does nothing.
 	///
 	/// # Errors
-	/// Return `ExitError`
+	/// Return `ExitError::InvalidRange` if `offset + len` is overflow.
 	pub fn resize_offset(&mut self, offset: usize, len: usize) -> Result<(), ExitError> {
 		if len == 0 {
 			return Ok(());
@@ -73,7 +76,7 @@ impl Memory {
 	/// Resize the memory, making it cover to `end`, with 32 bytes as the step.
 	///
 	/// # Errors
-	/// Return `ExitError`
+	/// Return `ExitError::InvalidRange` if `end` value is overflow in `next_multiple_of_32` call.
 	pub fn resize_end(&mut self, end: usize) -> Result<(), ExitError> {
 		if end > self.effective_len {
 			let new_end = next_multiple_of_32(end).ok_or(ExitError::InvalidRange)?;
@@ -105,7 +108,7 @@ impl Memory {
 		ret
 	}
 
-	/// Get `H256` from a specific offset in memory.
+	/// Get `H256` value from a specific offset in memory.
 	#[must_use]
 	pub fn get_h256(&self, offset: usize) -> H256 {
 		let mut ret = [0; 32];
@@ -127,7 +130,7 @@ impl Memory {
 	/// untrusted.
 	///
 	/// # Errors
-	/// Return `ExitFatal`
+	/// Return `ExitFatal::NotSupported` if `offset + target_size` is out of memory limit or overflow.
 	pub fn set(
 		&mut self,
 		offset: usize,
@@ -166,7 +169,9 @@ impl Memory {
 	/// `copy_within` uses `memmove` to avoid `DoS` attacks.
 	///
 	/// # Errors
-	/// Return `ExitFatal`
+	/// Return `ExitFatal::Other`:
+	/// - `OverflowOnCopy` if `offset + length` is overflow
+	/// - `OutOfGasOnCopy` if `offst_length` out of memory limit
 	pub fn copy(
 		&mut self,
 		src_offset: usize,
@@ -200,7 +205,7 @@ impl Memory {
 	/// Copy `data` into the memory, of given `len`.
 	///
 	/// # Errors
-	/// Return `ExitFatal`
+	/// Return `ExitFatal::NotSupported` if `set()` call return out of memory limit.
 	pub fn copy_large(
 		&mut self,
 		memory_offset: usize,

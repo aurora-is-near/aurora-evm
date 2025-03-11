@@ -120,16 +120,26 @@ pub fn verylowcopy_cost(len: U256) -> Result<u64, ExitError> {
 	Ok(gas.as_u64())
 }
 
-pub fn extcodecopy_cost(len: U256, is_cold: bool, config: &Config) -> Result<u64, ExitError> {
+pub fn extcodecopy_cost(
+	len: U256,
+	is_cold: bool,
+	delegated_designator_is_cold: Option<bool>,
+	config: &Config,
+) -> Result<u64, ExitError> {
 	let wordd = len / U256::from(32);
 	let is_wordr = (len % U256::from(32)) == U256::zero();
-	let gas = U256::from(address_access_cost(is_cold, config.gas_ext_code, config))
-		.checked_add(
-			U256::from(consts::G_COPY)
-				.checked_mul(if is_wordr { wordd } else { wordd + U256::one() })
-				.ok_or(ExitError::OutOfGas)?,
-		)
-		.ok_or(ExitError::OutOfGas)?;
+	let gas = U256::from(address_access_cost(
+		is_cold,
+		delegated_designator_is_cold,
+		config.gas_ext_code,
+		config,
+	))
+	.checked_add(
+		U256::from(consts::G_COPY)
+			.checked_mul(if is_wordr { wordd } else { wordd + U256::one() })
+			.ok_or(ExitError::OutOfGas)?,
+	)
+	.ok_or(ExitError::OutOfGas)?;
 
 	if gas > U64_MAX {
 		return Err(ExitError::OutOfGas);
@@ -264,24 +274,44 @@ pub fn suicide_cost(value: U256, is_cold: bool, target_exists: bool, config: &Co
 pub fn call_cost(
 	value: U256,
 	is_cold: bool,
+	delegated_designator_is_cold: Option<bool>,
 	is_call_or_callcode: bool,
 	is_call_or_staticcall: bool,
 	new_account: bool,
 	config: &Config,
 ) -> u64 {
 	let transfers_value = value != U256::default();
-	address_access_cost(is_cold, config.gas_call, config)
-		+ xfer_cost(is_call_or_callcode, transfers_value)
+	address_access_cost(
+		is_cold,
+		delegated_designator_is_cold,
+		config.gas_call,
+		config,
+	) + xfer_cost(is_call_or_callcode, transfers_value)
 		+ new_cost(is_call_or_staticcall, new_account, transfers_value, config)
 }
 
-pub const fn address_access_cost(is_cold: bool, regular_value: u64, config: &Config) -> u64 {
+pub const fn address_access_cost(
+	is_cold: bool,
+	delegated_designator_is_cold: Option<bool>,
+	regular_value: u64,
+	config: &Config,
+) -> u64 {
 	if config.increase_state_access_gas {
-		if is_cold {
+		let mut gas = if is_cold {
 			config.gas_account_access_cold
 		} else {
 			config.gas_storage_read_warm
+		};
+		if config.has_authorization_list {
+			if let Some(target_is_cold) = delegated_designator_is_cold {
+				if target_is_cold {
+					gas += config.gas_account_access_cold;
+				} else {
+					gas += config.gas_storage_read_warm;
+				}
+			}
 		}
+		gas
 	} else {
 		regular_value
 	}

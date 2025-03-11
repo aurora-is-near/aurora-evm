@@ -28,9 +28,9 @@ pub trait Handler {
 	/// Get balance of address.
 	fn balance(&self, address: H160) -> U256;
 	/// Get code size of address.
-	fn code_size(&self, address: H160) -> U256;
+	fn code_size(&mut self, address: H160) -> U256;
 	/// Get code hash of address.
-	fn code_hash(&self, address: H160) -> H256;
+	fn code_hash(&mut self, address: H160) -> H256;
 	/// Get code of address.
 	fn code(&self, address: H160) -> Vec<u8>;
 	/// Get storage value of address at index.
@@ -172,4 +172,14 @@ pub trait Handler {
 	/// # Errors
 	/// Return `ExitError`
 	fn tload(&mut self, address: H160, index: H256) -> Result<U256, ExitError>;
+
+	/// Return the target address of the authority delegation designation (EIP-7702).
+	fn get_authority_target(&mut self, address: H160) -> Option<H160>;
+
+	/// Get delegation designator code for the authority code.
+	/// EIP-7702
+	fn authority_code(&mut self, authority: H160) -> Vec<u8>;
+
+	/// Warm target according to EIP-2929
+	fn warm_target(&mut self, target: (H160, Option<H256>));
 }

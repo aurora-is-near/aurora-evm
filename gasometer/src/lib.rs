@@ -114,6 +114,7 @@ impl<'config> Gasometer<'config> {
 				memory_gas: 0,
 				used_gas: 0,
 				refunded_gas: 0,
+				floor_gas: 0,
 				config,
 			}),
 		}
@@ -148,6 +149,13 @@ impl<'config> Gasometer<'config> {
 	#[must_use]
 	pub const fn gas_limit(&self) -> u64 {
 		self.gas_limit
+	}
+
+	/// Get floor gas
+	#[inline]
+	#[must_use]
+	pub fn floor_gas(&self) -> u64 {
+		self.inner.as_ref().map_or(0, |inner| inner.floor_gas)
 	}
 
 	/// Remaining gas.
@@ -220,9 +228,21 @@ impl<'config> Gasometer<'config> {
 		Ok(())
 	}
 
+	/// Record refund for `authority` - EIP-7702
+	/// `refunded_accounts` represent count of valid `authority`  accounts.
+	///
+	/// ## Errors
+	/// Return `ExitError` if `record_refund` operation fails.
+	pub fn record_authority_refund(&mut self, refunded_accounts: u64) -> Result<(), ExitError> {
+		let refund = i64::try_from(
+			refunded_accounts
+				* (self.config.gas_per_empty_account_cost - self.config.gas_per_auth_base_cost),
+		)
+		.unwrap_or(i64::MAX);
+		self.record_refund(refund)
+	}
+
 	/// Record `CREATE` code deposit.
-	///
-	///
 	///
 	/// # Errors
 	/// Return `ExitError`
@@ -284,7 +304,10 @@ impl<'config> Gasometer<'config> {
 		inner_mut.refunded_gas += gas_refund;
 
 		// NOTE Extended meesage: "Record dynamic cost {gas_cost} - memory_gas {} - gas_refund {}",
-		log_gas!(self, "record_dynamic_cost: {}", gas_cost,);
+		log_gas!(
+			self,
+			"record_dynamic_cost: {gas_cost} - {memory_gas} - {gas_refund}"
+		);
 
 		Ok(())
 	}
@@ -306,40 +329,55 @@ impl<'config> Gasometer<'config> {
 	}
 
 	/// Record transaction cost.
+	/// Related EIPs:
+	/// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
+	/// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
 	///
 	/// # Errors
 	/// Return `ExitError`
 	pub fn record_transaction(&mut self, cost: TransactionCost) -> Result<(), ExitError> {
 		let gas_cost = match cost {
-			// NOTE: in that context usize->u64 `as_conversions` is save
+			// NOTE: in that context usize->u64 `as_conversions` is safe
 			#[allow(clippy::as_conversions)]
 			TransactionCost::Call {
 				zero_data_len,
 				non_zero_data_len,
 				access_list_address_len,
 				access_list_storage_len,
+				authorization_list_len,
 			} => {
 				#[deny(clippy::let_and_return)]
 				let cost = self.config.gas_transaction_call
 					+ zero_data_len as u64 * self.config.gas_transaction_zero_data
 					+ non_zero_data_len as u64 * self.config.gas_transaction_non_zero_data
 					+ access_list_address_len as u64 * self.config.gas_access_list_address
-					+ access_list_storage_len as u64 * self.config.gas_access_list_storage_key;
+					+ access_list_storage_len as u64 * self.config.gas_access_list_storage_key
+					+ authorization_list_len as u64 * self.config.gas_per_empty_account_cost;
+
+				if self.config.has_floor_gas {
+					// According to EIP-2028: non-zero byte = 16, zero-byte = 4
+					// According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
+					let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
+					self.inner_mut()?.floor_gas = tokens_in_calldata
+						* self.config.total_cost_floor_per_token
+						+ self.config.gas_transaction_call;
+				}
 
 				log_gas!(
 					self,
-					"Record Call {} [gas_transaction_call: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}]",
+					"Record Call {} [gas_transaction_call: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}, authorization_list_len: {}]",
 					cost,
 					self.config.gas_transaction_call,
 					zero_data_len,
 					non_zero_data_len,
 					access_list_address_len,
-					access_list_storage_len
+					access_list_storage_len,
+					authorization_list_len
 				);
 
 				cost
 			}
-			// NOTE: in that context usize->u64 `as_conversions` is save
+			// NOTE: in that context usize->u64 `as_conversions` is safe
 			#[allow(clippy::as_conversions)]
 			TransactionCost::Create {
 				zero_data_len,
@@ -355,6 +393,15 @@ impl<'config> Gasometer<'config> {
 					+ access_list_storage_len as u64 * self.config.gas_access_list_storage_key;
 				if self.config.max_initcode_size.is_some() {
 					cost += initcode_cost;
+				}
+
+				if self.config.has_floor_gas {
+					// According to EIP-2028: non-zero byte = 16, zero-byte = 4
+					// According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
+					let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
+					self.inner_mut()?.floor_gas = tokens_in_calldata
+						* self.config.total_cost_floor_per_token
+						+ self.config.gas_transaction_call;
 				}
 
 				log_gas!(
@@ -399,7 +446,11 @@ impl<'config> Gasometer<'config> {
 /// Calculate the call transaction cost.
 #[allow(clippy::naive_bytecount)]
 #[must_use]
-pub fn call_transaction_cost(data: &[u8], access_list: &[(H160, Vec<H256>)]) -> TransactionCost {
+pub fn call_transaction_cost(
+	data: &[u8],
+	access_list: &[(H160, Vec<H256>)],
+	authorization_list_len: usize,
+) -> TransactionCost {
 	let zero_data_len = data.iter().filter(|v| **v == 0).count();
 	let non_zero_data_len = data.len() - zero_data_len;
 	let (access_list_address_len, access_list_storage_len) = count_access_list(access_list);
@@ -409,6 +460,7 @@ pub fn call_transaction_cost(data: &[u8], access_list: &[(H160, Vec<H256>)]) -> 
 		non_zero_data_len,
 		access_list_address_len,
 		access_list_storage_len,
+		authorization_list_len,
 	}
 }
 
@@ -470,7 +522,7 @@ pub fn static_opcode_cost(opcode: Opcode) -> Option<u32> {
 		table[Opcode::COINBASE.as_usize()] = Some(consts::G_BASE);
 		table[Opcode::TIMESTAMP.as_usize()] = Some(consts::G_BASE);
 		table[Opcode::NUMBER.as_usize()] = Some(consts::G_BASE);
-		table[Opcode::DIFFICULTY.as_usize()] = Some(consts::G_BASE);
+		table[Opcode::PREVRANDAO.as_usize()] = Some(consts::G_BASE);
 		table[Opcode::GASLIMIT.as_usize()] = Some(consts::G_BASE);
 		table[Opcode::GASPRICE.as_usize()] = Some(consts::G_BASE);
 		table[Opcode::GAS.as_usize()] = Some(consts::G_BASE);
@@ -574,6 +626,36 @@ pub fn static_opcode_cost(opcode: Opcode) -> Option<u32> {
 	TABLE[opcode.as_usize()]
 }
 
+/// Get and set warm address if it's not warmed.
+fn get_and_set_warm<H: Handler>(handler: &mut H, target: H160) -> (bool, Option<bool>) {
+	let delegated_designator_is_cold =
+		handler
+			.get_authority_target(target)
+			.map(|authority_target| {
+				if handler.is_cold(authority_target, None) {
+					handler.warm_target((authority_target, None));
+					true
+				} else {
+					false
+				}
+			});
+	let target_is_cold = handler.is_cold(target, None);
+	if target_is_cold {
+		handler.warm_target((target, None));
+	}
+	(target_is_cold, delegated_designator_is_cold)
+}
+
+/// Get and set warm address if it's not warmed for non-delegated opcodes like `EXT*`.
+/// NOTE: Related to EIP-7702
+fn get_and_set_non_delegated_warm<H: Handler>(handler: &mut H, target: H160) -> bool {
+	let target_is_cold = handler.is_cold(target, None);
+	if target_is_cold {
+		handler.warm_target((target, None));
+	}
+	target_is_cold
+}
+
 /// Calculate the opcode cost.
 ///
 /// # Errors
@@ -591,8 +673,7 @@ pub fn dynamic_opcode_cost<H: Handler>(
 	is_static: bool,
 	config: &Config,
 	handler: &mut H,
-) -> Result<(GasCost, StorageTarget, Option<MemoryCost>), ExitError> {
-	let mut storage_target = StorageTarget::None;
+) -> Result<(GasCost, Option<MemoryCost>), ExitError> {
 	let gas_cost = match opcode {
 		Opcode::RETURN => GasCost::Zero,
 
@@ -632,36 +713,34 @@ pub fn dynamic_opcode_cost<H: Handler>(
 
 		Opcode::EXTCODESIZE => {
 			let target = stack.peek_h256(0)?.into();
-			storage_target = StorageTarget::Address(target);
-			GasCost::ExtCodeSize {
-				target_is_cold: handler.is_cold(target, None),
-			}
+			let target_is_cold = get_and_set_non_delegated_warm(handler, target);
+			GasCost::ExtCodeSize { target_is_cold }
 		}
 		Opcode::BALANCE => {
 			let target = stack.peek_h256(0)?.into();
-			storage_target = StorageTarget::Address(target);
-			GasCost::Balance {
-				target_is_cold: handler.is_cold(target, None),
+			let target_is_cold = handler.is_cold(target, None);
+			if target_is_cold {
+				handler.warm_target((target, None));
 			}
+			GasCost::Balance { target_is_cold }
 		}
 		Opcode::BLOCKHASH => GasCost::BlockHash,
 
 		Opcode::EXTCODEHASH if config.has_ext_code_hash => {
 			let target = stack.peek_h256(0)?.into();
-			storage_target = StorageTarget::Address(target);
-			GasCost::ExtCodeHash {
-				target_is_cold: handler.is_cold(target, None),
-			}
+			let target_is_cold = get_and_set_non_delegated_warm(handler, target);
+			GasCost::ExtCodeHash { target_is_cold }
 		}
 		Opcode::EXTCODEHASH => GasCost::Invalid(opcode),
 
 		Opcode::CALLCODE => {
 			let target = stack.peek_h256(1)?.into();
-			storage_target = StorageTarget::Address(target);
+			let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
 			GasCost::CallCode {
 				value: stack.peek(2)?,
 				gas: stack.peek(0)?,
-				target_is_cold: handler.is_cold(target, None),
+				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists: {
 					handler.record_external_operation(evm_core::ExternalOperation::IsEmpty)?;
 					handler.exists(target)
@@ -670,10 +749,11 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		}
 		Opcode::STATICCALL => {
 			let target = stack.peek_h256(1)?.into();
-			storage_target = StorageTarget::Address(target);
+			let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
 			GasCost::StaticCall {
 				gas: stack.peek(0)?,
-				target_is_cold: handler.is_cold(target, None),
+				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists: {
 					handler.record_external_operation(evm_core::ExternalOperation::IsEmpty)?;
 					handler.exists(target)
@@ -685,9 +765,9 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		},
 		Opcode::EXTCODECOPY => {
 			let target = stack.peek_h256(0)?.into();
-			storage_target = StorageTarget::Address(target);
+			let target_is_cold = get_and_set_non_delegated_warm(handler, target);
 			GasCost::ExtCodeCopy {
-				target_is_cold: handler.is_cold(target, None),
+				target_is_cold,
 				len: stack.peek(3)?,
 			}
 		}
@@ -699,18 +779,20 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		},
 		Opcode::SLOAD => {
 			let index = stack.peek_h256(0)?;
-			storage_target = StorageTarget::Slot(address, index);
-			GasCost::SLoad {
-				target_is_cold: handler.is_cold(address, Some(index)),
+			let target_is_cold = handler.is_cold(address, Some(index));
+			if target_is_cold {
+				handler.warm_target((address, Some(index)));
 			}
+			GasCost::SLoad { target_is_cold }
 		}
 
 		Opcode::DELEGATECALL if config.has_delegate_call => {
 			let target = stack.peek_h256(1)?.into();
-			storage_target = StorageTarget::Address(target);
+			let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
 			GasCost::DelegateCall {
 				gas: stack.peek(0)?,
-				target_is_cold: handler.is_cold(target, None),
+				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists: {
 					handler.record_external_operation(evm_core::ExternalOperation::IsEmpty)?;
 					handler.exists(target)
@@ -728,13 +810,15 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		Opcode::SSTORE if !is_static => {
 			let index = stack.peek_h256(0)?;
 			let value = stack.peek_h256(1)?;
-			storage_target = StorageTarget::Slot(address, index);
-
+			let target_is_cold = handler.is_cold(address, Some(index));
+			if target_is_cold {
+				handler.warm_target((address, Some(index)));
+			}
 			GasCost::SStore {
 				original: handler.original_storage(address, index),
 				current: handler.storage(address, index),
 				new: value,
-				target_is_cold: handler.is_cold(address, Some(index)),
+				target_is_cold,
 			}
 		}
 		Opcode::LOG0 if !is_static => GasCost::Log {
@@ -761,12 +845,15 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		Opcode::CREATE2 if !is_static && config.has_create2 => GasCost::Create2 {
 			len: stack.peek(2)?,
 		},
-		Opcode::SUICIDE if !is_static => {
+		Opcode::SELFDESTRUCT if !is_static => {
 			let target = stack.peek_h256(0)?.into();
-			storage_target = StorageTarget::Address(target);
+			let target_is_cold = handler.is_cold(target, None);
+			if target_is_cold {
+				handler.warm_target((target, None));
+			}
 			GasCost::Suicide {
 				value: handler.balance(address),
-				target_is_cold: handler.is_cold(target, None),
+				target_is_cold,
 				target_exists: {
 					handler.record_external_operation(evm_core::ExternalOperation::IsEmpty)?;
 					handler.exists(target)
@@ -776,11 +863,12 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		}
 		Opcode::CALL if !is_static || (is_static && stack.peek(2)? == U256::zero()) => {
 			let target = stack.peek_h256(1)?.into();
-			storage_target = StorageTarget::Address(target);
+			let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
 			GasCost::Call {
 				value: stack.peek(2)?,
 				gas: stack.peek(0)?,
-				target_is_cold: handler.is_cold(target, None),
+				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists: {
 					handler.record_external_operation(evm_core::ExternalOperation::IsEmpty)?;
 					handler.exists(target)
@@ -848,7 +936,7 @@ pub fn dynamic_opcode_cost<H: Handler>(
 		_ => None,
 	};
 
-	Ok((gas_cost, storage_target, memory_cost))
+	Ok((gas_cost, memory_cost))
 }
 
 fn peek_memory_cost(
@@ -876,6 +964,7 @@ struct Inner<'config> {
 	used_gas: u64,
 	refunded_gas: i64,
 	config: &'config Config,
+	floor_gas: u64,
 }
 
 impl Inner<'_> {
@@ -906,16 +995,19 @@ impl Inner<'_> {
 	}
 
 	/// Returns the gas cost numerical value.
+	#[allow(clippy::too_many_lines)]
 	fn gas_cost(&self, cost: GasCost, gas: u64) -> Result<u64, ExitError> {
 		Ok(match cost {
 			GasCost::Call {
 				value,
 				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists,
 				..
 			} => costs::call_cost(
 				value,
 				target_is_cold,
+				delegated_designator_is_cold,
 				true,
 				true,
 				!target_exists,
@@ -924,11 +1016,13 @@ impl Inner<'_> {
 			GasCost::CallCode {
 				value,
 				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists,
 				..
 			} => costs::call_cost(
 				value,
 				target_is_cold,
+				delegated_designator_is_cold,
 				true,
 				false,
 				!target_exists,
@@ -936,11 +1030,13 @@ impl Inner<'_> {
 			),
 			GasCost::DelegateCall {
 				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists,
 				..
 			} => costs::call_cost(
 				U256::zero(),
 				target_is_cold,
+				delegated_designator_is_cold,
 				false,
 				false,
 				!target_exists,
@@ -948,11 +1044,13 @@ impl Inner<'_> {
 			),
 			GasCost::StaticCall {
 				target_is_cold,
+				delegated_designator_is_cold,
 				target_exists,
 				..
 			} => costs::call_cost(
 				U256::zero(),
 				target_is_cold,
+				delegated_designator_is_cold,
 				false,
 				true,
 				!target_exists,
@@ -986,19 +1084,26 @@ impl Inner<'_> {
 			GasCost::Low => u64::from(consts::G_LOW),
 			GasCost::Invalid(opcode) => return Err(ExitError::InvalidCode(opcode)),
 
-			GasCost::ExtCodeSize { target_is_cold } => {
-				costs::address_access_cost(target_is_cold, self.config.gas_ext_code, self.config)
-			}
+			GasCost::ExtCodeSize { target_is_cold } => costs::address_access_cost(
+				target_is_cold,
+				None,
+				self.config.gas_ext_code,
+				self.config,
+			),
 			GasCost::ExtCodeCopy {
 				target_is_cold,
 				len,
-			} => costs::extcodecopy_cost(len, target_is_cold, self.config)?,
-			GasCost::Balance { target_is_cold } => {
-				costs::address_access_cost(target_is_cold, self.config.gas_balance, self.config)
-			}
+			} => costs::extcodecopy_cost(len, target_is_cold, None, self.config)?,
+			GasCost::Balance { target_is_cold } => costs::address_access_cost(
+				target_is_cold,
+				None,
+				self.config.gas_balance,
+				self.config,
+			),
 			GasCost::BlockHash => u64::from(consts::G_BLOCKHASH),
 			GasCost::ExtCodeHash { target_is_cold } => costs::address_access_cost(
 				target_is_cold,
+				None,
 				self.config.gas_ext_code_hash,
 				self.config,
 			),
@@ -1064,6 +1169,8 @@ pub enum GasCost {
 		gas: U256,
 		/// True if target has not been previously accessed in this transaction
 		target_is_cold: bool,
+		/// True if delegated designator of authority has not been previously accessed in this transaction (EIP-7702)
+		delegated_designator_is_cold: Option<bool>,
 		/// Whether the target exists.
 		target_exists: bool,
 	},
@@ -1075,6 +1182,8 @@ pub enum GasCost {
 		gas: U256,
 		/// True if target has not been previously accessed in this transaction
 		target_is_cold: bool,
+		/// True if delegated designator of authority has not been previously accessed in this transaction (EIP-7702)
+		delegated_designator_is_cold: Option<bool>,
 		/// Whether the target exists.
 		target_exists: bool,
 	},
@@ -1084,6 +1193,8 @@ pub enum GasCost {
 		gas: U256,
 		/// True if target has not been previously accessed in this transaction
 		target_is_cold: bool,
+		/// True if delegated designator of authority has not been previously accessed in this transaction (EIP-7702)
+		delegated_designator_is_cold: Option<bool>,
 		/// Whether the target exists.
 		target_exists: bool,
 	},
@@ -1093,6 +1204,8 @@ pub enum GasCost {
 		gas: U256,
 		/// True if target has not been previously accessed in this transaction
 		target_is_cold: bool,
+		/// True if delegated designator of authority has not been previously accessed in this transaction (EIP-7702)
+		delegated_designator_is_cold: Option<bool>,
 		/// Whether the target exists.
 		target_exists: bool,
 	},
@@ -1195,6 +1308,8 @@ pub enum TransactionCost {
 		access_list_address_len: usize,
 		/// Total number of storage keys in transaction access list (see EIP-2930)
 		access_list_storage_len: usize,
+		/// Number of authorities in transaction authorization list (see EIP-7702)
+		authorization_list_len: usize,
 	},
 	/// Create transaction cost.
 	Create {

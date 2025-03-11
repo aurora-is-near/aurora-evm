@@ -1,5 +1,7 @@
 use crate::backend::{Apply, Backend, Basic, Log};
-use crate::executor::stack::executor::{Accessed, StackState, StackSubstateMetadata};
+use crate::executor::stack::executor::{
+	Accessed, Authorization, StackState, StackSubstateMetadata,
+};
 use crate::prelude::*;
 use crate::{ExitError, Transfer};
 use core::mem;
@@ -364,6 +366,8 @@ impl<'config> MemoryStackSubstate<'config> {
 	}
 
 	pub fn set_storage(&mut self, address: H160, key: H256, value: H256) {
+		#[cfg(feature = "print-debug")]
+		println!("    [SSTORE {address:?}] {key:?}:{value:?}");
 		self.storages.insert((address, key), value);
 	}
 
@@ -489,6 +493,22 @@ impl<'config> MemoryStackSubstate<'config> {
 	pub fn set_tstorage(&mut self, address: H160, key: H256, value: U256) {
 		self.tstorages.insert((address, key), value);
 	}
+
+	/// Get authority target from the current state. If it's `None` just take a look
+	/// recursively in the parent state.
+	fn get_authority_target_recursive(&self, authority: H160) -> Option<H160> {
+		if let Some(target) = self
+			.metadata
+			.accessed()
+			.as_ref()
+			.and_then(|accessed| accessed.get_authority_target(authority))
+		{
+			return Some(target);
+		}
+		self.parent
+			.as_ref()
+			.and_then(|p| p.get_authority_target_recursive(authority))
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -606,7 +626,7 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
 
 		self.backend.basic(address).balance == U256::zero()
 			&& self.backend.basic(address).nonce == U256::zero()
-			&& self.backend.code(address).len() == 0
+			&& self.backend.code(address).is_empty()
 	}
 
 	fn deleted(&self, address: H160) -> bool {
@@ -672,6 +692,33 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
 	fn tstore(&mut self, address: H160, index: H256, value: U256) -> Result<(), ExitError> {
 		self.substate.set_tstorage(address, index, value);
 		Ok(())
+	}
+
+	/// EIP-7702 - check is authority cold.
+	fn is_authority_cold(&mut self, address: H160) -> Option<bool> {
+		self.get_authority_target(address)
+			.map(|target| self.is_cold(target))
+	}
+
+	/// Get authority target (EIP-7702) - delegated address.
+	/// First we're trying to get authority target from the cache recursively with parent state,
+	/// if it's not found we get code for the authority address and check if it's delegation
+	/// designator. If it's true, we add result to cache and return delegated target address.
+	fn get_authority_target(&mut self, authority: H160) -> Option<H160> {
+		// Read from cache
+		if let Some(target_address) = self.substate.get_authority_target_recursive(authority) {
+			Some(target_address)
+		} else {
+			// If not found in the cache
+			// Get code for delegated address
+			let authority_code = self.code(authority);
+			if let Some(target) = Authorization::get_delegated_address(&authority_code) {
+				// Add to cache
+				self.metadata_mut().add_authority(authority, target);
+				return Some(target);
+			}
+			None
+		}
 	}
 }
 

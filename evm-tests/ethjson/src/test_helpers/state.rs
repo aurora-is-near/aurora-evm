@@ -79,6 +79,10 @@ pub struct MultiTransaction {
 	pub blob_versioned_hashes: Vec<U256>,
 	/// EIP-4844
 	pub max_fee_per_blob_gas: Option<Uint>,
+
+	/// EIP-7702
+	#[serde(default)]
+	pub authorization_list: AuthorizationList,
 }
 
 impl MultiTransaction {
@@ -109,6 +113,7 @@ impl MultiTransaction {
 			v: Default::default(),
 			secret: self.secret,
 			access_list,
+			authorization_list: self.authorization_list.clone(),
 		}
 	}
 }
@@ -125,6 +130,28 @@ pub struct AccessListTuple {
 	pub address: Address,
 	/// Keys (slots) to access at that address
 	pub storage_keys: Vec<H256>,
+}
+
+/// EIP-7702 Authorization List
+pub type AuthorizationList = Vec<AuthorizationItem>;
+/// EIP-7702 Authorization item
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorizationItem {
+	/// Chain ID
+	pub chain_id: Uint,
+	/// Address to access
+	pub address: Address,
+	/// Keys (slots) to access at that address
+	pub nonce: Uint,
+	/// r signature
+	pub r: Uint,
+	/// s signature
+	pub s: Uint,
+	/// Parity
+	pub v: Uint,
+	/// Signer address
+	pub signer: Option<Address>,
 }
 
 /// State test indexes deserialization.

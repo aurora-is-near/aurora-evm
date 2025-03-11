@@ -59,7 +59,26 @@ impl Opcode {
 	pub const NOT: Opcode = Opcode(0x19);
 	/// `BYTE`
 	pub const BYTE: Opcode = Opcode(0x1a);
+	/// `SHL`
+	pub const SHL: Opcode = Opcode(0x1b);
+	/// `SHR`
+	pub const SHR: Opcode = Opcode(0x1c);
+	/// `SAR`
+	pub const SAR: Opcode = Opcode(0x1d);
 
+	/// `SHA3`
+	pub const SHA3: Opcode = Opcode(0x20);
+
+	/// `ADDRESS`
+	pub const ADDRESS: Opcode = Opcode(0x30);
+	/// `BALANCE`
+	pub const BALANCE: Opcode = Opcode(0x31);
+	/// `ORIGIN`
+	pub const ORIGIN: Opcode = Opcode(0x32);
+	/// `CALLER`
+	pub const CALLER: Opcode = Opcode(0x33);
+	/// `CALLVALUE`
+	pub const CALLVALUE: Opcode = Opcode(0x34);
 	/// `CALLDATALOAD`
 	pub const CALLDATALOAD: Opcode = Opcode(0x35);
 	/// `CALLDATASIZE`
@@ -71,12 +90,41 @@ impl Opcode {
 	/// `CODECOPY`
 	pub const CODECOPY: Opcode = Opcode(0x39);
 
-	/// `SHL`
-	pub const SHL: Opcode = Opcode(0x1b);
-	/// `SHR`
-	pub const SHR: Opcode = Opcode(0x1c);
-	/// `SAR`
-	pub const SAR: Opcode = Opcode(0x1d);
+	/// `GASPRICE`
+	pub const GASPRICE: Opcode = Opcode(0x3a);
+	/// `EXTCODESIZE`
+	pub const EXTCODESIZE: Opcode = Opcode(0x3b);
+	/// `EXTCODECOPY`
+	pub const EXTCODECOPY: Opcode = Opcode(0x3c);
+	/// `RETURNDATASIZE`
+	pub const RETURNDATASIZE: Opcode = Opcode(0x3d);
+	/// `RETURNDATACOPY`
+	pub const RETURNDATACOPY: Opcode = Opcode(0x3e);
+	/// `EXTCODEHASH`
+	pub const EXTCODEHASH: Opcode = Opcode(0x3f);
+	/// `BLOCKHASH`
+	pub const BLOCKHASH: Opcode = Opcode(0x40);
+	/// `COINBASE`
+	pub const COINBASE: Opcode = Opcode(0x41);
+	/// `TIMESTAMP`
+	pub const TIMESTAMP: Opcode = Opcode(0x42);
+	/// `NUMBER`
+	pub const NUMBER: Opcode = Opcode(0x43);
+	/// `DIFFICULTY`
+	/// EIP-4399 - Rename `DIFFICULTY` to `PREVRANDAO`
+	pub const PREVRANDAO: Opcode = Opcode(0x44);
+	/// `GASLIMIT`
+	pub const GASLIMIT: Opcode = Opcode(0x45);
+	/// `CHAINID`
+	pub const CHAINID: Opcode = Opcode(0x46);
+	/// `SELFBALANCE`
+	pub const SELFBALANCE: Opcode = Opcode(0x47);
+	/// `BASEFEE`
+	pub const BASEFEE: Opcode = Opcode(0x48);
+	/// `BLOBHASH` - EIP-4844
+	pub const BLOBHASH: Opcode = Opcode(0x49);
+	/// `BLOBBASEFEE` - EIP-7516
+	pub const BLOBBASEFEE: Opcode = Opcode(0x4a);
 
 	/// `POP`
 	pub const POP: Opcode = Opcode(0x50);
@@ -86,6 +134,10 @@ impl Opcode {
 	pub const MSTORE: Opcode = Opcode(0x52);
 	/// `MSTORE8`
 	pub const MSTORE8: Opcode = Opcode(0x53);
+	/// `SLOAD`
+	pub const SLOAD: Opcode = Opcode(0x54);
+	/// `SSTORE`
+	pub const SSTORE: Opcode = Opcode(0x55);
 	/// `JUMP`
 	pub const JUMP: Opcode = Opcode(0x56);
 	/// `JUMPI`
@@ -94,9 +146,10 @@ impl Opcode {
 	pub const PC: Opcode = Opcode(0x58);
 	/// `MSIZE`
 	pub const MSIZE: Opcode = Opcode(0x59);
+	/// `GAS`
+	pub const GAS: Opcode = Opcode(0x5a);
 	/// `JUMPDEST`
 	pub const JUMPDEST: Opcode = Opcode(0x5b);
-
 	/// `TLOAD` - EIP-1153
 	pub const TLOAD: Opcode = Opcode(0x5c);
 	/// `TSTORE` - EIP-1153
@@ -175,93 +228,75 @@ impl Opcode {
 	pub const SWAP15: Opcode = Opcode(0x9e);
 	pub const SWAP16: Opcode = Opcode(0x9f);
 
-	/// `RETURN`
-	pub const RETURN: Opcode = Opcode(0xf3);
-	/// `REVERT`
-	pub const REVERT: Opcode = Opcode(0xfd);
-
-	/// `INVALID`
-	pub const INVALID: Opcode = Opcode(0xfe);
-
-	/// See [EIP-3541](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-3541.md)
-	pub const EOFMAGIC: Opcode = Opcode(0xef);
-}
-
-// External opcodes
-#[allow(clippy::use_self)]
-impl Opcode {
-	/// `SHA3`
-	pub const SHA3: Opcode = Opcode(0x20);
-	/// `ADDRESS`
-	pub const ADDRESS: Opcode = Opcode(0x30);
-	/// `BALANCE`
-	pub const BALANCE: Opcode = Opcode(0x31);
-	/// `SELFBALANCE`
-	pub const SELFBALANCE: Opcode = Opcode(0x47);
-	/// `BASEFEE`
-	pub const BASEFEE: Opcode = Opcode(0x48);
-	/// `BLOBHASH` - EIP-4844
-	pub const BLOBHASH: Opcode = Opcode(0x49);
-	/// `BLOBBASEFEE` - EIP-7516
-	pub const BLOBBASEFEE: Opcode = Opcode(0x4a);
-	/// `ORIGIN`
-	pub const ORIGIN: Opcode = Opcode(0x32);
-	/// `CALLER`
-	pub const CALLER: Opcode = Opcode(0x33);
-	/// `CALLVALUE`
-	pub const CALLVALUE: Opcode = Opcode(0x34);
-	/// `GASPRICE`
-	pub const GASPRICE: Opcode = Opcode(0x3a);
-	/// `EXTCODESIZE`
-	pub const EXTCODESIZE: Opcode = Opcode(0x3b);
-	/// `EXTCODECOPY`
-	pub const EXTCODECOPY: Opcode = Opcode(0x3c);
-	/// `EXTCODEHASH`
-	pub const EXTCODEHASH: Opcode = Opcode(0x3f);
-	/// `RETURNDATASIZE`
-	pub const RETURNDATASIZE: Opcode = Opcode(0x3d);
-	/// `RETURNDATACOPY`
-	pub const RETURNDATACOPY: Opcode = Opcode(0x3e);
-	/// `BLOCKHASH`
-	pub const BLOCKHASH: Opcode = Opcode(0x40);
-	/// `COINBASE`
-	pub const COINBASE: Opcode = Opcode(0x41);
-	/// `TIMESTAMP`
-	pub const TIMESTAMP: Opcode = Opcode(0x42);
-	/// `NUMBER`
-	pub const NUMBER: Opcode = Opcode(0x43);
-	/// `DIFFICULTY`
-	pub const DIFFICULTY: Opcode = Opcode(0x44);
-	/// `GASLIMIT`
-	pub const GASLIMIT: Opcode = Opcode(0x45);
-	/// `SLOAD`
-	pub const SLOAD: Opcode = Opcode(0x54);
-	/// `SSTORE`
-	pub const SSTORE: Opcode = Opcode(0x55);
-	/// `GAS`
-	pub const GAS: Opcode = Opcode(0x5a);
 	/// `LOGn`
 	pub const LOG0: Opcode = Opcode(0xa0);
 	pub const LOG1: Opcode = Opcode(0xa1);
 	pub const LOG2: Opcode = Opcode(0xa2);
 	pub const LOG3: Opcode = Opcode(0xa3);
 	pub const LOG4: Opcode = Opcode(0xa4);
+
+	pub const DATALOAD: Opcode = Opcode(0xd0);
+	pub const DATALOADN: Opcode = Opcode(0xd1);
+	pub const DATASIZE: Opcode = Opcode(0xd2);
+	pub const DATACOPY: Opcode = Opcode(0xd3);
+
+	/// `RJUMP` relative jump (EIP-4200)
+	pub const RJUMP: Opcode = Opcode(0xe0);
+	/// `RJUMPI` conditional relative jump (EIP-4200)
+	pub const RJUMPI: Opcode = Opcode(0xe1);
+	/// `RJUMPV` relative jump with  via jump table (EIP-4200)
+	pub const RJUMPV: Opcode = Opcode(0xe2);
+
+	/// `CALLF` call a function (EIP-4750)
+	pub const CALLF: Opcode = Opcode(0xe3);
+	/// `RETF` return from a function (EIP-4750)
+	pub const RETF: Opcode = Opcode(0xe4);
+
+	/// `JUMPF`  jumps to a code section without adding a new return stack frame (EIP-6206)
+	pub const JUMPF: Opcode = Opcode(0xe5);
+
+	/// `DUPN` EIP-663
+	pub const DUPN: Opcode = Opcode(0xe6);
+	/// `SWAPN` EIP-663
+	pub const SWAPN: Opcode = Opcode(0xe7);
+	/// `EXCHANGE` EIP-663
+	pub const EXCHANGE: Opcode = Opcode(0xe8);
+
+	/// `EOFCREATE` EIP-7620
+	pub const EOFCREATE: Opcode = Opcode(0xec);
+	/// `RETURNCONTRACT` EIP-7620
+	pub const RETURNCONTRACT: Opcode = Opcode(0xee);
+
 	/// `CREATE`
 	pub const CREATE: Opcode = Opcode(0xf0);
-	/// `CREATE2`
-	pub const CREATE2: Opcode = Opcode(0xf5);
 	/// `CALL`
 	pub const CALL: Opcode = Opcode(0xf1);
 	/// `CALLCODE`
 	pub const CALLCODE: Opcode = Opcode(0xf2);
+	/// `RETURN`
+	pub const RETURN: Opcode = Opcode(0xf3);
 	/// `DELEGATECALL`
 	pub const DELEGATECALL: Opcode = Opcode(0xf4);
+	/// `CREATE2`
+	pub const CREATE2: Opcode = Opcode(0xf5);
+
+	/// `RETURNDATALOAD` - EIP-7069
+	pub const RETURNDATALOAD: Opcode = Opcode(0xf7);
+	/// `EXTCALL` - EIP-7069
+	pub const EXTCALL: Opcode = Opcode(0xf8);
+	/// `EXTDELEGATECALL` - EIP-7069
+	pub const EXTDELEGATECALL: Opcode = Opcode(0xf9);
 	/// `STATICCALL`
 	pub const STATICCALL: Opcode = Opcode(0xfa);
-	/// `SUICIDE`
-	pub const SUICIDE: Opcode = Opcode(0xff);
-	/// `CHAINID`
-	pub const CHAINID: Opcode = Opcode(0x46);
+	/// `EXTSTATICCALL` - EIP-7069
+	pub const EXTSTATICCALL: Opcode = Opcode(0xfb);
+
+	/// `REVERT`
+	pub const REVERT: Opcode = Opcode(0xfd);
+	/// `INVALID`
+	pub const INVALID: Opcode = Opcode(0xfe);
+	/// `SELFDESTRUCT`
+	pub const SELFDESTRUCT: Opcode = Opcode(0xff);
 }
 
 impl Opcode {
@@ -405,7 +440,6 @@ impl Display for Opcode {
 			Self::RETURN => "RETURN",
 			Self::REVERT => "REVERT",
 			Self::INVALID => "INVALID",
-			Self::EOFMAGIC => "EOFMAGIC",
 			Self::SHA3 => "SHA3",
 			Self::ADDRESS => "ADDRESS",
 			Self::BALANCE => "BALANCE",
@@ -426,7 +460,7 @@ impl Display for Opcode {
 			Self::COINBASE => "COINBASE",
 			Self::TIMESTAMP => "TIMESTAMP",
 			Self::NUMBER => "NUMBER",
-			Self::DIFFICULTY => "DIFFICULTY",
+			Self::PREVRANDAO => "PREVRANDAO",
 			Self::GASLIMIT => "GASLIMIT",
 			Self::SLOAD => "SLOAD",
 			Self::SSTORE => "SSTORE",
@@ -442,8 +476,12 @@ impl Display for Opcode {
 			Self::CALLCODE => "CALLCODE",
 			Self::DELEGATECALL => "DELEGATECALL",
 			Self::STATICCALL => "STATICCALL",
-			Self::SUICIDE => "SUICIDE",
+			Self::SELFDESTRUCT => "SELFDESTRUCT",
 			Self::CHAINID => "CHAINID",
+			Self::EXTSTATICCALL => "EXTSTATICCALL",
+			Self::EXTCALL => "EXTCALL",
+			Self::EXTDELEGATECALL => "EXTDELEGATECALL",
+			Self::RETURNDATALOAD => "RETURNDATALOAD",
 			_ => "UNKNOWN",
 		};
 		write!(f, "{name} [{}]", self.0)

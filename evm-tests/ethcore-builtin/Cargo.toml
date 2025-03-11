@@ -23,6 +23,7 @@ hex-literal = "1"
 c-kzg = "1.0"
 derive_more = "0.99"
 hex = "0.4.3"
+blst = "0.3.13"
 
 [dev-dependencies]
 maplit = "1.0.2"

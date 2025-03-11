@@ -9,6 +9,7 @@ pub use self::memory::{MemoryAccount, MemoryBackend, MemoryVicinity};
 mod memory;
 
 /// Basic account information.
+///
 #[derive(Clone, Eq, PartialEq, Debug, Default)]
 #[cfg_attr(
 	feature = "with-codec",

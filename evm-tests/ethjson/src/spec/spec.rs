@@ -64,9 +64,9 @@ pub enum ForkSpec {
 	Paris,
 	/// Shanghai (#17,034,870, 2023-04-12)
 	Shanghai,
-	/// Cancun (2024-03-13)
+	/// Cancun (28,750,000, 2024-03-13)
 	Cancun,
-	/// Prague-Electra—aka Pectra
+	/// Prague (future)
 	Prague,
 }
 
@@ -118,6 +118,7 @@ impl TryFrom<String> for ForkSpec {
 			"paris" => Self::Paris,
 			"shanghai" => Self::Shanghai,
 			"cancun" => Self::Cancun,
+			"prague" => Self::Prague,
 			other => return Err(format!("Unknown hard fork spec {other}")),
 		};
 		Ok(res)

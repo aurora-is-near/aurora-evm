@@ -16,6 +16,7 @@
 
 //! Transaction deserialization.
 
+use crate::test_helpers::state::AuthorizationList;
 use crate::{
 	bytes::Bytes,
 	hash::{Address, H256},
@@ -33,6 +34,9 @@ pub struct Transaction {
 	/// Transaction access list (see EIP-2930).
 	#[serde(default)]
 	pub access_list: Vec<(Address, Vec<H256>)>,
+	/// Transaction authorization list (see EIP-7702`s).
+	#[serde(default)]
+	pub authorization_list: AuthorizationList,
 	/// Gas limit.
 	pub gas_limit: Uint,
 	/// To.
