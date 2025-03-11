@@ -47,11 +47,6 @@ macro_rules! try_or_fail {
 }
 
 const DEFAULT_CALL_STACK_CAPACITY: usize = 4;
-// For EIP-7702 Hash of `EF01` bytes that is used for `EXTCODEHASH` when called from delegated address.
-const EIP7702_MAGIC_HASH: [u8; 32] = [
-	0xEA, 0xDC, 0xDB, 0xA6, 0x6A, 0x79, 0xAB, 0x5D, 0xCE, 0x91, 0x62, 0x2D, 0x1D, 0x75, 0xC8, 0xCF,
-	0xF5, 0xCF, 0xF0, 0xB9, 0x69, 0x44, 0xC3, 0xBF, 0x10, 0x72, 0xCD, 0x08, 0xCE, 0x01, 0x83, 0x29,
-];
 
 const fn l64(gas: u64) -> u64 {
 	gas - gas / 64
@@ -150,6 +145,11 @@ impl Accessed {
 	/// Add authority to the accessed authority list (EIP-7702).
 	pub fn add_authority(&mut self, authority: H160, address: H160) {
 		self.authority.insert(authority, address);
+	}
+
+	/// Remove authority from the accessed authority list (EIP-7702).
+	pub fn remove_authority(&mut self, authority: H160) {
+		self.authority.remove(&authority);
 	}
 
 	/// Get authority from the accessed authority list (EIP-7702).
@@ -302,6 +302,13 @@ impl<'config> StackSubstateMetadata<'config> {
 	pub fn add_authority(&mut self, authority: H160, address: H160) {
 		if let Some(accessed) = &mut self.accessed {
 			accessed.add_authority(authority, address);
+		}
+	}
+
+	/// Remove authority from accessed list (related to EIP-7702)
+	pub fn remove_authority(&mut self, authority: H160) {
+		if let Some(accessed) = &mut self.accessed {
+			accessed.remove_authority(authority);
 		}
 	}
 }
@@ -859,7 +866,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 		self.state.basic(address).nonce
 	}
 
-	/// Check if the existing account is "create collision".    
+	/// Check if the existing account is "create collision".
 	/// [EIP-7610](https://eips.ethereum.org/EIPS/eip-7610)
 	pub fn is_create_collision(&self, address: H160) -> bool {
 		!self.code(address).is_empty()
@@ -1013,8 +1020,10 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 			// 9. Increase the nonce of authority by one.
 			state.inc_nonce(authority.authority)?;
 
-			// Add to authority access list cache
-			if !delegation_clearing {
+			// Add/Remove to authority access list cache
+			if delegation_clearing {
+				state.metadata_mut().remove_authority(authority.authority);
+			} else {
 				state
 					.metadata_mut()
 					.add_authority(authority.authority, authority.address);
@@ -1474,33 +1483,25 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
 	/// Provide a default implementation by fetching the code.
 	///
 	/// According to EIP-7702, the code size of an address is the size of the
-	/// `0xef01` - `2`.
+	/// delegated address code size.
 	/// <https://eips.ethereum.org/EIPS/eip-7702#delegation-designation>
 	fn code_size(&mut self, address: H160) -> U256 {
-		//  If deleted account, return size equal to 2 bytes
-		if self.get_authority_target(address).is_some() {
-			U256::from(2)
-		} else {
-			let target_code = self.authority_code(address);
-			U256::from(target_code.len())
-		}
+		let target_code = self.code(address);
+		U256::from(target_code.len())
 	}
 
 	/// Fetch the code hash of an address.
 	/// Provide a default implementation by fetching the code.
 	///
 	/// According to EIP-7702, the code hash of an address is the hash of the
-	/// `keccak256(0xef01): 0xeadcdba66a79ab5dce91622d1d75c8cff5cff0b96944c3bf1072cd08ce018329`.
+	/// delegated address code hash.
 	/// <https://eips.ethereum.org/EIPS/eip-7702#delegation-designation>
 	fn code_hash(&mut self, address: H160) -> H256 {
 		if !self.exists(address) {
 			return H256::default();
 		}
-		if self.get_authority_target(address).is_some() {
-			H256::from(EIP7702_MAGIC_HASH)
-		} else {
-			H256::from_slice(Keccak256::digest(self.code(address)).as_slice())
-		}
+		let code = self.code(address);
+		H256::from_slice(Keccak256::digest(code).as_slice())
 	}
 
 	/// Get account code
@@ -1953,16 +1954,5 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
 	/// Retrieve the gas limit of this call.
 	fn gas_limit(&self) -> Option<u64> {
 		self.gas_limit
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::EIP7702_MAGIC_HASH;
-	use sha3::{Digest, Keccak256};
-	#[test]
-	fn test_ef01_hash() {
-		let hash = Keccak256::digest([0xEF, 0x01]);
-		assert_eq!(hash.as_slice(), EIP7702_MAGIC_HASH);
 	}
 }
