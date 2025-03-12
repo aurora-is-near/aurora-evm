@@ -1,7 +1,7 @@
 use crate::state::{TestExecutionResult, VerboseOutput};
-use aurora_evm::Config;
 use aurora_evm::backend::{ApplyBackend, MemoryAccount, MemoryBackend, MemoryVicinity};
 use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
+use aurora_evm::Config;
 use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
 use std::collections::BTreeMap;

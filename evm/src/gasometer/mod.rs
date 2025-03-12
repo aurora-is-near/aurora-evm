@@ -1218,6 +1218,10 @@ impl MemoryCost {
         let self_end = self.offset.saturating_add(self.len);
         let other_end = other.offset.saturating_add(other.len);
 
-        if self_end >= other_end { self } else { other }
+        if self_end >= other_end {
+            self
+        } else {
+            other
+        }
     }
 }
