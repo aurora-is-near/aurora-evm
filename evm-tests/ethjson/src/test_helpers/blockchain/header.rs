@@ -17,9 +17,9 @@
 //! Blockchain test header deserializer.
 
 use crate::{
-	bytes::Bytes,
-	hash::{Address, Bloom, H256, H64},
-	uint::Uint,
+    bytes::Bytes,
+    hash::{Address, Bloom, H256, H64},
+    uint::Uint,
 };
 use serde::Deserialize;
 
@@ -27,51 +27,51 @@ use serde::Deserialize;
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Header {
-	/// Blocks bloom.
-	pub bloom: Bloom,
-	/// Blocks author.
-	#[serde(rename = "coinbase")]
-	pub author: Address,
-	/// Difficulty.
-	pub difficulty: Uint,
-	/// Extra data.
-	pub extra_data: Bytes,
-	/// Gas limit.
-	pub gas_limit: Uint,
-	/// Gas used.
-	pub gas_used: Uint,
-	/// Hash.
-	pub hash: H256,
-	/// Mix hash.
-	pub mix_hash: H256,
-	/// Seal nonce.
-	pub nonce: H64,
-	/// Block number.
-	pub number: Uint,
-	/// Parent hash.
-	pub parent_hash: H256,
-	/// Receipt root.
-	#[serde(rename = "receiptTrie")]
-	pub receipts_root: H256,
-	/// State root.
-	pub state_root: H256,
-	/// Timestamp.
-	pub timestamp: Uint,
-	/// Transactions root.
-	#[serde(rename = "transactionsTrie")]
-	pub transactions_root: H256,
-	/// Uncles hash.
-	#[serde(rename = "uncleHash")]
-	pub uncles_hash: H256,
+    /// Blocks bloom.
+    pub bloom: Bloom,
+    /// Blocks author.
+    #[serde(rename = "coinbase")]
+    pub author: Address,
+    /// Difficulty.
+    pub difficulty: Uint,
+    /// Extra data.
+    pub extra_data: Bytes,
+    /// Gas limit.
+    pub gas_limit: Uint,
+    /// Gas used.
+    pub gas_used: Uint,
+    /// Hash.
+    pub hash: H256,
+    /// Mix hash.
+    pub mix_hash: H256,
+    /// Seal nonce.
+    pub nonce: H64,
+    /// Block number.
+    pub number: Uint,
+    /// Parent hash.
+    pub parent_hash: H256,
+    /// Receipt root.
+    #[serde(rename = "receiptTrie")]
+    pub receipts_root: H256,
+    /// State root.
+    pub state_root: H256,
+    /// Timestamp.
+    pub timestamp: Uint,
+    /// Transactions root.
+    #[serde(rename = "transactionsTrie")]
+    pub transactions_root: H256,
+    /// Uncles hash.
+    #[serde(rename = "uncleHash")]
+    pub uncles_hash: H256,
 }
 
 #[cfg(test)]
 mod tests {
-	use super::Header;
+    use super::Header;
 
-	#[test]
-	fn header_deserialization() {
-		let s = r#"{
+    #[test]
+    fn header_deserialization() {
+        let s = r#"{
 			"bloom" : "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 			"coinbase" : "8888f1f195afa192cfee860698584c030f4c9db1",
 			"difficulty" : "0x020000",
@@ -89,7 +89,7 @@ mod tests {
 			"transactionsTrie" : "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
 			"uncleHash" : "1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
 		}"#;
-		let _deserialized: Header = serde_json::from_str(s).unwrap();
-		// TODO: validate all fields
-	}
+        let _deserialized: Header = serde_json::from_str(s).unwrap();
+        // TODO: validate all fields
+    }
 }

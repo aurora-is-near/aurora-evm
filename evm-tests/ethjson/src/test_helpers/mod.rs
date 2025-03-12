@@ -32,6 +32,6 @@ pub mod transaction;
 pub mod trie;
 /// Vm test helpers
 pub mod vm {
-	/// Type for running `vm` tests
-	pub type Test = super::tester::GenericTester<String, crate::vm::Vm>;
+    /// Type for running `vm` tests
+    pub type Test = super::tester::GenericTester<String, crate::vm::Vm>;
 }

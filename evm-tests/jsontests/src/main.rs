@@ -1,4 +1,4 @@
-use clap::{arg, command, value_parser, ArgAction, Command};
+use clap::{ArgAction, Command, arg, command, value_parser};
 use ethjson::spec::ForkSpec;
 use evm_jsontests::state as statetests;
 use evm_jsontests::state::{TestExecutionResult, VerboseOutput};
@@ -11,301 +11,301 @@ use std::path::{Path, PathBuf};
 
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), String> {
-	let matches = command!()
-		.version(env!("CARGO_PKG_VERSION"))
-		.subcommand_required(true)
-		.subcommand(
-			Command::new("vm")
-				.about("vm tests runner")
-				.arg(
-					arg!([PATH] "json file or directory for tests run")
-						.action(ArgAction::Append)
-						.required(true)
-						.value_parser(value_parser!(PathBuf)),
-				)
-				.arg(
-					arg!(-v --verbose "Verbose output")
-						.default_value("false")
-						.action(ArgAction::SetTrue),
-				)
-				.arg(
-					arg!(-f --verbose_failed "Verbose failed only output")
-						.default_value("false")
-						.action(ArgAction::SetTrue),
-				),
-		)
-		.subcommand(
-			Command::new("state")
-				.about("state tests runner")
-				.arg(
-					arg!([PATH] "json file or directory for tests run")
-						.action(ArgAction::Append)
-						.required(true)
-						.value_parser(value_parser!(PathBuf)),
-				)
-				.arg(arg!(-s --spec <SPEC> "Ethereum hard fork"))
-				.arg(
-					arg!(-v --verbose "Verbose output")
-						.default_value("false")
-						.action(ArgAction::SetTrue),
-				)
-				.arg(
-					arg!(-f --verbose_failed "Verbose failed only output")
-						.default_value("false")
-						.action(ArgAction::SetTrue),
-				)
-				.arg(
-					arg!(-w --very_verbose "Very verbose output")
-						.default_value("false")
-						.action(ArgAction::SetTrue),
-				)
-				.arg(
-					arg!(-p --print_state "When test failed print state")
-						.default_value("false")
-						.action(ArgAction::SetTrue),
-				),
-		)
-		.get_matches();
+    let matches = command!()
+        .version(env!("CARGO_PKG_VERSION"))
+        .subcommand_required(true)
+        .subcommand(
+            Command::new("vm")
+                .about("vm tests runner")
+                .arg(
+                    arg!([PATH] "json file or directory for tests run")
+                        .action(ArgAction::Append)
+                        .required(true)
+                        .value_parser(value_parser!(PathBuf)),
+                )
+                .arg(
+                    arg!(-v --verbose "Verbose output")
+                        .default_value("false")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    arg!(-f --verbose_failed "Verbose failed only output")
+                        .default_value("false")
+                        .action(ArgAction::SetTrue),
+                ),
+        )
+        .subcommand(
+            Command::new("state")
+                .about("state tests runner")
+                .arg(
+                    arg!([PATH] "json file or directory for tests run")
+                        .action(ArgAction::Append)
+                        .required(true)
+                        .value_parser(value_parser!(PathBuf)),
+                )
+                .arg(arg!(-s --spec <SPEC> "Ethereum hard fork"))
+                .arg(
+                    arg!(-v --verbose "Verbose output")
+                        .default_value("false")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    arg!(-f --verbose_failed "Verbose failed only output")
+                        .default_value("false")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    arg!(-w --very_verbose "Very verbose output")
+                        .default_value("false")
+                        .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    arg!(-p --print_state "When test failed print state")
+                        .default_value("false")
+                        .action(ArgAction::SetTrue),
+                ),
+        )
+        .get_matches();
 
-	if let Some(matches) = matches.subcommand_matches("vm") {
-		let verbose_output = VerboseOutput {
-			verbose: matches.get_flag("verbose"),
-			verbose_failed: matches.get_flag("verbose_failed"),
-			very_verbose: false,
-			print_state: false,
-		};
-		let mut tests_result = TestExecutionResult::new();
-		for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
-			let path = Path::new(src_name);
-			assert!(path.exists(), "data source is not exist");
-			if path.is_file() {
-				run_vm_test_for_file(&verbose_output, path, &mut tests_result);
-			} else if path.is_dir() {
-				run_vm_test_for_dir(&verbose_output, path, &mut tests_result);
-			}
-		}
-		println!("\nTOTAL: {}", tests_result.total);
-		println!("FAILED: {}\n", tests_result.failed);
-		if tests_result.failed != 0 {
-			return Err(format!("tests failed: {}", tests_result.failed));
-		}
-	}
+    if let Some(matches) = matches.subcommand_matches("vm") {
+        let verbose_output = VerboseOutput {
+            verbose: matches.get_flag("verbose"),
+            verbose_failed: matches.get_flag("verbose_failed"),
+            very_verbose: false,
+            print_state: false,
+        };
+        let mut tests_result = TestExecutionResult::new();
+        for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
+            let path = Path::new(src_name);
+            assert!(path.exists(), "data source is not exist");
+            if path.is_file() {
+                run_vm_test_for_file(&verbose_output, path, &mut tests_result);
+            } else if path.is_dir() {
+                run_vm_test_for_dir(&verbose_output, path, &mut tests_result);
+            }
+        }
+        println!("\nTOTAL: {}", tests_result.total);
+        println!("FAILED: {}\n", tests_result.failed);
+        if tests_result.failed != 0 {
+            return Err(format!("tests failed: {}", tests_result.failed));
+        }
+    }
 
-	if let Some(matches) = matches.subcommand_matches("state") {
-		let spec: Option<ForkSpec> = matches
-			.get_one::<String>("spec")
-			.and_then(|spec| spec.clone().try_into().ok());
+    if let Some(matches) = matches.subcommand_matches("state") {
+        let spec: Option<ForkSpec> = matches
+            .get_one::<String>("spec")
+            .and_then(|spec| spec.clone().try_into().ok());
 
-		let verbose_output = VerboseOutput {
-			verbose: matches.get_flag("verbose"),
-			verbose_failed: matches.get_flag("verbose_failed"),
-			very_verbose: matches.get_flag("very_verbose"),
-			print_state: matches.get_flag("print_state"),
-		};
-		let mut tests_result = TestExecutionResult::new();
-		for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
-			let path = Path::new(src_name);
-			assert!(path.exists(), "data source is not exist");
-			if path.is_file() {
-				run_test_for_file(&spec, &verbose_output, path, &mut tests_result);
-			} else if path.is_dir() {
-				run_test_for_dir(&spec, &verbose_output, path, &mut tests_result);
-			}
-		}
-		println!("\nTOTAL: {}", tests_result.total);
-		println!("FAILED: {}\n", tests_result.failed);
-		if tests_result.failed != 0 {
-			return Err(format!("tests failed: {}", tests_result.failed));
-		}
-	}
-	Ok(())
+        let verbose_output = VerboseOutput {
+            verbose: matches.get_flag("verbose"),
+            verbose_failed: matches.get_flag("verbose_failed"),
+            very_verbose: matches.get_flag("very_verbose"),
+            print_state: matches.get_flag("print_state"),
+        };
+        let mut tests_result = TestExecutionResult::new();
+        for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
+            let path = Path::new(src_name);
+            assert!(path.exists(), "data source is not exist");
+            if path.is_file() {
+                run_test_for_file(&spec, &verbose_output, path, &mut tests_result);
+            } else if path.is_dir() {
+                run_test_for_dir(&spec, &verbose_output, path, &mut tests_result);
+            }
+        }
+        println!("\nTOTAL: {}", tests_result.total);
+        println!("FAILED: {}\n", tests_result.failed);
+        if tests_result.failed != 0 {
+            return Err(format!("tests failed: {}", tests_result.failed));
+        }
+    }
+    Ok(())
 }
 
 fn run_vm_test_for_dir(
-	verbose_output: &VerboseOutput,
-	dir_name: &Path,
-	tests_result: &mut TestExecutionResult,
+    verbose_output: &VerboseOutput,
+    dir_name: &Path,
+    tests_result: &mut TestExecutionResult,
 ) {
-	for entry in fs::read_dir(dir_name).unwrap() {
-		let entry = entry.unwrap();
-		if let Some(s) = entry.file_name().to_str() {
-			if s.starts_with('.') {
-				continue;
-			}
-		}
-		let path = entry.path();
-		if path.is_dir() {
-			run_vm_test_for_dir(verbose_output, path.as_path(), tests_result);
-		} else {
-			run_vm_test_for_file(verbose_output, path.as_path(), tests_result);
-		}
-	}
+    for entry in fs::read_dir(dir_name).unwrap() {
+        let entry = entry.unwrap();
+        if let Some(s) = entry.file_name().to_str() {
+            if s.starts_with('.') {
+                continue;
+            }
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            run_vm_test_for_dir(verbose_output, path.as_path(), tests_result);
+        } else {
+            run_vm_test_for_file(verbose_output, path.as_path(), tests_result);
+        }
+    }
 }
 
 fn run_vm_test_for_file(
-	verbose_output: &VerboseOutput,
-	file_name: &Path,
-	tests_result: &mut TestExecutionResult,
+    verbose_output: &VerboseOutput,
+    file_name: &Path,
+    tests_result: &mut TestExecutionResult,
 ) {
-	if verbose_output.verbose {
-		println!(
-			"RUN for: {}",
-			short_test_file_name(file_name.to_str().unwrap())
-		);
-	}
-	let file = File::open(file_name).expect("Open file failed");
+    if verbose_output.verbose {
+        println!(
+            "RUN for: {}",
+            short_test_file_name(file_name.to_str().unwrap())
+        );
+    }
+    let file = File::open(file_name).expect("Open file failed");
 
-	let reader = BufReader::new(file);
-	let test_suite = serde_json::from_reader::<_, HashMap<String, vmtests::Test>>(reader)
-		.expect("Parse test cases failed");
+    let reader = BufReader::new(file);
+    let test_suite = serde_json::from_reader::<_, HashMap<String, vmtests::Test>>(reader)
+        .expect("Parse test cases failed");
 
-	for (name, test) in test_suite {
-		let test_res = vmtests::test(verbose_output, &name, test);
+    for (name, test) in test_suite {
+        let test_res = vmtests::test(verbose_output, &name, test);
 
-		if test_res.failed > 0 {
-			if verbose_output.verbose {
-				println!("Tests count:\t{}", test_res.total);
-				println!(
-					"Failed:\t\t{} - {}\n",
-					test_res.failed,
-					short_test_file_name(file_name.to_str().unwrap())
-				);
-			} else if verbose_output.verbose_failed {
-				println!(
-					"RUN for: {}",
-					short_test_file_name(file_name.to_str().unwrap())
-				);
-				println!("Tests count:\t{}", test_res.total);
-				println!(
-					"Failed:\t\t{} - {}\n",
-					test_res.failed,
-					short_test_file_name(file_name.to_str().unwrap())
-				);
-			}
-		} else if verbose_output.verbose {
-			println!("Tests count: {}\n", test_res.total);
-		}
+        if test_res.failed > 0 {
+            if verbose_output.verbose {
+                println!("Tests count:\t{}", test_res.total);
+                println!(
+                    "Failed:\t\t{} - {}\n",
+                    test_res.failed,
+                    short_test_file_name(file_name.to_str().unwrap())
+                );
+            } else if verbose_output.verbose_failed {
+                println!(
+                    "RUN for: {}",
+                    short_test_file_name(file_name.to_str().unwrap())
+                );
+                println!("Tests count:\t{}", test_res.total);
+                println!(
+                    "Failed:\t\t{} - {}\n",
+                    test_res.failed,
+                    short_test_file_name(file_name.to_str().unwrap())
+                );
+            }
+        } else if verbose_output.verbose {
+            println!("Tests count: {}\n", test_res.total);
+        }
 
-		tests_result.merge(test_res);
-	}
+        tests_result.merge(test_res);
+    }
 }
 
 fn run_test_for_dir(
-	spec: &Option<ForkSpec>,
-	verbose_output: &VerboseOutput,
-	dir_name: &Path,
-	tests_result: &mut TestExecutionResult,
+    spec: &Option<ForkSpec>,
+    verbose_output: &VerboseOutput,
+    dir_name: &Path,
+    tests_result: &mut TestExecutionResult,
 ) {
-	if should_skip(dir_name) {
-		println!("Skipping test case {:?}", dir_name);
-		return;
-	}
-	for entry in fs::read_dir(dir_name).unwrap() {
-		let entry = entry.unwrap();
-		if let Some(s) = entry.file_name().to_str() {
-			if s.starts_with('.') {
-				continue;
-			}
-		}
-		let path = entry.path();
-		if path.is_dir() {
-			run_test_for_dir(spec, verbose_output, path.as_path(), tests_result);
-		} else {
-			run_test_for_file(spec, verbose_output, path.as_path(), tests_result);
-		}
-	}
+    if should_skip(dir_name) {
+        println!("Skipping test case {:?}", dir_name);
+        return;
+    }
+    for entry in fs::read_dir(dir_name).unwrap() {
+        let entry = entry.unwrap();
+        if let Some(s) = entry.file_name().to_str() {
+            if s.starts_with('.') {
+                continue;
+            }
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            run_test_for_dir(spec, verbose_output, path.as_path(), tests_result);
+        } else {
+            run_test_for_file(spec, verbose_output, path.as_path(), tests_result);
+        }
+    }
 }
 
 fn run_test_for_file(
-	spec: &Option<ForkSpec>,
-	verbose_output: &VerboseOutput,
-	file_name: &Path,
-	tests_result: &mut TestExecutionResult,
+    spec: &Option<ForkSpec>,
+    verbose_output: &VerboseOutput,
+    file_name: &Path,
+    tests_result: &mut TestExecutionResult,
 ) {
-	if should_skip(file_name) {
-		if verbose_output.verbose {
-			println!("Skipping test case {:?}", file_name);
-		}
-		return;
-	}
-	if verbose_output.verbose {
-		println!(
-			"RUN for: {}",
-			short_test_file_name(file_name.to_str().unwrap())
-		);
-	}
-	let file = File::open(file_name).expect("Open file failed");
+    if should_skip(file_name) {
+        if verbose_output.verbose {
+            println!("Skipping test case {:?}", file_name);
+        }
+        return;
+    }
+    if verbose_output.verbose {
+        println!(
+            "RUN for: {}",
+            short_test_file_name(file_name.to_str().unwrap())
+        );
+    }
+    let file = File::open(file_name).expect("Open file failed");
 
-	let reader = BufReader::new(file);
-	let test_suite = serde_json::from_reader::<_, HashMap<String, statetests::Test>>(reader)
-		.expect("Parse test cases failed");
+    let reader = BufReader::new(file);
+    let test_suite = serde_json::from_reader::<_, HashMap<String, statetests::Test>>(reader)
+        .expect("Parse test cases failed");
 
-	for (name, test) in test_suite {
-		let test_res = statetests::test(verbose_output.clone(), &name, test, spec.clone());
+    for (name, test) in test_suite {
+        let test_res = statetests::test(verbose_output.clone(), &name, test, spec.clone());
 
-		if test_res.failed > 0 {
-			if verbose_output.verbose {
-				println!("Tests count:\t{}", test_res.total);
-				println!(
-					"Failed:\t\t{} - {}\n",
-					test_res.failed,
-					short_test_file_name(file_name.to_str().unwrap())
-				);
-			} else if verbose_output.verbose_failed {
-				println!(
-					"RUN for: {}",
-					short_test_file_name(file_name.to_str().unwrap())
-				);
-				println!("Tests count:\t{}", test_res.total);
-				println!(
-					"Failed:\t\t{} - {}\n",
-					test_res.failed,
-					short_test_file_name(file_name.to_str().unwrap())
-				);
-			}
-		} else if verbose_output.verbose {
-			println!("Tests count: {}\n", test_res.total);
-		}
+        if test_res.failed > 0 {
+            if verbose_output.verbose {
+                println!("Tests count:\t{}", test_res.total);
+                println!(
+                    "Failed:\t\t{} - {}\n",
+                    test_res.failed,
+                    short_test_file_name(file_name.to_str().unwrap())
+                );
+            } else if verbose_output.verbose_failed {
+                println!(
+                    "RUN for: {}",
+                    short_test_file_name(file_name.to_str().unwrap())
+                );
+                println!("Tests count:\t{}", test_res.total);
+                println!(
+                    "Failed:\t\t{} - {}\n",
+                    test_res.failed,
+                    short_test_file_name(file_name.to_str().unwrap())
+                );
+            }
+        } else if verbose_output.verbose {
+            println!("Tests count: {}\n", test_res.total);
+        }
 
-		tests_result.merge(test_res);
-	}
+        tests_result.merge(test_res);
+    }
 }
 
 fn short_test_file_name(name: &str) -> String {
-	let res: Vec<_> = name.split("GeneralStateTests/").collect();
-	if res.len() > 1 {
-		res[1].to_string()
-	} else {
-		res[0].to_string()
-	}
+    let res: Vec<_> = name.split("GeneralStateTests/").collect();
+    if res.len() > 1 {
+        res[1].to_string()
+    } else {
+        res[0].to_string()
+    }
 }
 
 #[cfg(feature = "enable-slow-tests")]
 const SKIPPED_CASES: &[&str] = &[
-	// funky test with `bigint 0x00` value in json :) not possible to happen on mainnet and require
-	// custom json parser. https://github.com/ethereum/tests/issues/971
-	"stTransactionTest/ValueOverflow",
-	"stTransactionTest/ValueOverflowParis",
-	// It's impossible touch storage by precompiles
-	// NOTE: this tests related to hard forks: London and before London
-	"stRevertTest/RevertPrecompiledTouch",
-	"stRevertTest/RevertPrecompiledTouch_storage",
+    // funky test with `bigint 0x00` value in json :) not possible to happen on mainnet and require
+    // custom json parser. https://github.com/ethereum/tests/issues/971
+    "stTransactionTest/ValueOverflow",
+    "stTransactionTest/ValueOverflowParis",
+    // It's impossible touch storage by precompiles
+    // NOTE: this tests related to hard forks: London and before London
+    "stRevertTest/RevertPrecompiledTouch",
+    "stRevertTest/RevertPrecompiledTouch_storage",
 ];
 
 #[cfg(not(feature = "enable-slow-tests"))]
 const SKIPPED_CASES: &[&str] = &[
-	// funky test with `bigint 0x00` value in json :) not possible to happen on mainnet and require
-	// custom json parser. https://github.com/ethereum/tests/issues/971
-	"stTransactionTest/ValueOverflow",
-	"stTransactionTest/ValueOverflowParis",
-	// It's impossible touch storage by precompiles
-	// NOTE: this tests related to hard forks: London and before London
-	"stRevertTest/RevertPrecompiledTouch",
-	"stRevertTest/RevertPrecompiledTouch_storage",
-	// These tests are passing, but they take a lot of time to execute so can going to skip them.
-	"stTimeConsuming/static_Call50000_sha256",
-	"vmPerformance/loopMul",
-	"stTimeConsuming/CALLBlake2f_MaxRounds",
+    // funky test with `bigint 0x00` value in json :) not possible to happen on mainnet and require
+    // custom json parser. https://github.com/ethereum/tests/issues/971
+    "stTransactionTest/ValueOverflow",
+    "stTransactionTest/ValueOverflowParis",
+    // It's impossible touch storage by precompiles
+    // NOTE: this tests related to hard forks: London and before London
+    "stRevertTest/RevertPrecompiledTouch",
+    "stRevertTest/RevertPrecompiledTouch_storage",
+    // These tests are passing, but they take a lot of time to execute so can going to skip them.
+    "stTimeConsuming/static_Call50000_sha256",
+    "vmPerformance/loopMul",
+    "stTimeConsuming/CALLBlake2f_MaxRounds",
 ];
 
 /// Check if a path should be skipped.
@@ -313,47 +313,48 @@ const SKIPPED_CASES: &[&str] = &[
 /// - path/and_file_stem - check path and file name (without extention)
 /// - path/with/sub/path - recursively check path
 fn should_skip(path: &Path) -> bool {
-	let matches = |case: &str| {
-		let case_path = Path::new(case);
-		let case_path_components: Vec<_> = case_path.components().collect();
-		let path_components: Vec<_> = path.components().collect();
-		let case_path_len = case_path_components.len();
-		let path_len = path_components.len();
+    let matches = |case: &str| {
+        let case_path = Path::new(case);
+        let case_path_components: Vec<_> = case_path.components().collect();
+        let path_components: Vec<_> = path.components().collect();
+        let case_path_len = case_path_components.len();
+        let path_len = path_components.len();
 
-		// Check path length without file name
-		if case_path_len > path_len {
-			return false;
-		}
-		// Check stem file name (without extension)
-		if let (Some(file_path_stem), Some(case_file_path_stem)) =
-			(path.file_stem(), case_path.file_stem())
-		{
-			if file_path_stem == case_file_path_stem {
-				// If case path contains only file name
-				if case_path_len == 1 {
-					return true;
-				}
-				// Check sub path without file names
-				if case_path_len > 1
-					&& path_len > 1 && case_path_components[..case_path_len - 1]
-					== path_components[path_len - case_path_len..path_len - 1]
-				{
-					return true;
-				}
-			}
-		}
-		// Check recursively path from the end without file name
-		if case_path_len < path_len && path_len > 1 {
-			for i in 1..=path_len - case_path_len {
-				if case_path_components
-					== path_components[path_len - case_path_len - i..path_len - i]
-				{
-					return true;
-				}
-			}
-		}
-		false
-	};
+        // Check path length without file name
+        if case_path_len > path_len {
+            return false;
+        }
+        // Check stem file name (without extension)
+        if let (Some(file_path_stem), Some(case_file_path_stem)) =
+            (path.file_stem(), case_path.file_stem())
+        {
+            if file_path_stem == case_file_path_stem {
+                // If case path contains only file name
+                if case_path_len == 1 {
+                    return true;
+                }
+                // Check sub path without file names
+                if case_path_len > 1
+                    && path_len > 1
+                    && case_path_components[..case_path_len - 1]
+                        == path_components[path_len - case_path_len..path_len - 1]
+                {
+                    return true;
+                }
+            }
+        }
+        // Check recursively path from the end without file name
+        if case_path_len < path_len && path_len > 1 {
+            for i in 1..=path_len - case_path_len {
+                if case_path_components
+                    == path_components[path_len - case_path_len - i..path_len - i]
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    };
 
-	SKIPPED_CASES.iter().any(|case| matches(case))
+    SKIPPED_CASES.iter().any(|case| matches(case))
 }

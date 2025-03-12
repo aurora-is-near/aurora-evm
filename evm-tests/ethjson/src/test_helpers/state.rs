@@ -20,13 +20,13 @@
 pub type Test = super::tester::GenericTester<String, State>;
 
 use crate::{
-	bytes::Bytes,
-	hash::{Address, H256},
-	maybe::MaybeEmpty,
-	spec::{ForkSpec, State as AccountState},
-	transaction::Transaction,
-	uint::Uint,
-	vm::Env,
+    bytes::Bytes,
+    hash::{Address, H256},
+    maybe::MaybeEmpty,
+    spec::{ForkSpec, State as AccountState},
+    transaction::Transaction,
+    uint::Uint,
+    vm::Env,
 };
 use ethereum_types::U256;
 use serde::Deserialize;
@@ -35,82 +35,82 @@ use std::collections::BTreeMap;
 /// State test deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct State {
-	/// Environment.
-	pub env: Env,
-	/// Pre state.
-	#[serde(rename = "pre")]
-	pub pre_state: AccountState,
-	/// Post state.
-	#[serde(rename = "post")]
-	pub post_states: BTreeMap<ForkSpec, Vec<PostStateResult>>,
-	/// Transaction.
-	pub transaction: MultiTransaction,
+    /// Environment.
+    pub env: Env,
+    /// Pre state.
+    #[serde(rename = "pre")]
+    pub pre_state: AccountState,
+    /// Post state.
+    #[serde(rename = "post")]
+    pub post_states: BTreeMap<ForkSpec, Vec<PostStateResult>>,
+    /// Transaction.
+    pub transaction: MultiTransaction,
 }
 
 /// State test transaction deserialization.
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MultiTransaction {
-	/// Transaction data set.
-	pub data: Vec<Bytes>,
-	/// Access lists (see EIP-2930)
-	#[serde(default)]
-	pub access_lists: Vec<Option<AccessList>>,
-	/// Gas limit set.
-	pub gas_limit: Vec<Uint>,
-	/// Gas price.
-	pub gas_price: Option<Uint>,
-	/// for details on `maxFeePerGas` see EIP-1559
-	pub max_fee_per_gas: Option<Uint>,
-	/// for details on `maxPriorityFeePerGas` see EIP-1559
-	pub max_priority_fee_per_gas: Option<Uint>,
-	/// Nonce.
-	pub nonce: Uint,
-	/// Secret key.
-	#[serde(rename = "secretKey")]
-	pub secret: Option<H256>,
-	/// To.
-	pub to: MaybeEmpty<Address>,
-	/// Value set.
-	pub value: Vec<Uint>,
+    /// Transaction data set.
+    pub data: Vec<Bytes>,
+    /// Access lists (see EIP-2930)
+    #[serde(default)]
+    pub access_lists: Vec<Option<AccessList>>,
+    /// Gas limit set.
+    pub gas_limit: Vec<Uint>,
+    /// Gas price.
+    pub gas_price: Option<Uint>,
+    /// for details on `maxFeePerGas` see EIP-1559
+    pub max_fee_per_gas: Option<Uint>,
+    /// for details on `maxPriorityFeePerGas` see EIP-1559
+    pub max_priority_fee_per_gas: Option<Uint>,
+    /// Nonce.
+    pub nonce: Uint,
+    /// Secret key.
+    #[serde(rename = "secretKey")]
+    pub secret: Option<H256>,
+    /// To.
+    pub to: MaybeEmpty<Address>,
+    /// Value set.
+    pub value: Vec<Uint>,
 
-	/// EIP-4844
-	#[serde(default)]
-	pub blob_versioned_hashes: Vec<U256>,
-	/// EIP-4844
-	pub max_fee_per_blob_gas: Option<Uint>,
+    /// EIP-4844
+    #[serde(default)]
+    pub blob_versioned_hashes: Vec<U256>,
+    /// EIP-4844
+    pub max_fee_per_blob_gas: Option<Uint>,
 }
 
 impl MultiTransaction {
-	/// Build transaction with given indexes.
-	pub fn select(&self, indexes: &PostStateIndexes) -> Transaction {
-		let data_index = indexes.data as usize;
-		let access_list = if data_index < self.access_lists.len() {
-			self.access_lists
-				.get(data_index)
-				.unwrap()
-				.as_ref()
-				.cloned()
-				.unwrap_or_default()
-				.into_iter()
-				.map(|a| (a.address, a.storage_keys))
-				.collect()
-		} else {
-			Vec::new()
-		};
+    /// Build transaction with given indexes.
+    pub fn select(&self, indexes: &PostStateIndexes) -> Transaction {
+        let data_index = indexes.data as usize;
+        let access_list = if data_index < self.access_lists.len() {
+            self.access_lists
+                .get(data_index)
+                .unwrap()
+                .as_ref()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| (a.address, a.storage_keys))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
-		Transaction {
-			data: self.data[data_index].clone(),
-			gas_limit: self.gas_limit[indexes.gas as usize],
-			to: self.to.clone(),
-			value: self.value[indexes.value as usize],
-			r: Default::default(),
-			s: Default::default(),
-			v: Default::default(),
-			secret: self.secret,
-			access_list,
-		}
-	}
+        Transaction {
+            data: self.data[data_index].clone(),
+            gas_limit: self.gas_limit[indexes.gas as usize],
+            to: self.to.clone(),
+            value: self.value[indexes.value as usize],
+            r: Default::default(),
+            s: Default::default(),
+            v: Default::default(),
+            secret: self.secret,
+            access_list,
+        }
+    }
 }
 
 /// Type alias for access lists (see EIP-2930)
@@ -121,44 +121,44 @@ pub type AccessList = Vec<AccessListTuple>;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessListTuple {
-	/// Address to access
-	pub address: Address,
-	/// Keys (slots) to access at that address
-	pub storage_keys: Vec<H256>,
+    /// Address to access
+    pub address: Address,
+    /// Keys (slots) to access at that address
+    pub storage_keys: Vec<H256>,
 }
 
 /// State test indexes deserialization.
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct PostStateIndexes {
-	/// Index into transaction data set.
-	pub data: u64,
-	/// Index into transaction gas limit set.
-	pub gas: u64,
-	/// Index into transaction value set.
-	pub value: u64,
+    /// Index into transaction data set.
+    pub data: u64,
+    /// Index into transaction gas limit set.
+    pub gas: u64,
+    /// Index into transaction value set.
+    pub value: u64,
 }
 
 /// State test indexed state result deserialization.
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PostStateResult {
-	/// Post state hash
-	pub hash: H256,
-	/// Indexes
-	pub indexes: PostStateIndexes,
-	/// Expected error if the test is meant to fail
-	pub expect_exception: Option<String>,
-	/// Transaction bytes
-	pub txbytes: Bytes,
+    /// Post state hash
+    pub hash: H256,
+    /// Indexes
+    pub indexes: PostStateIndexes,
+    /// Expected error if the test is meant to fail
+    pub expect_exception: Option<String>,
+    /// Transaction bytes
+    pub txbytes: Bytes,
 }
 
 #[cfg(test)]
 mod tests {
-	use super::{MultiTransaction, State};
+    use super::{MultiTransaction, State};
 
-	#[test]
-	fn multi_transaction_deserialization() {
-		let s = r#"{
+    #[test]
+    fn multi_transaction_deserialization() {
+        let s = r#"{
 			"data": [ "" ],
 			"gasLimit": [ "0x2dc6c0", "0x222222" ],
 			"gasPrice": "0x01",
@@ -167,12 +167,12 @@ mod tests {
 			"to": "1000000000000000000000000000000000000000",
 			"value": [ "0x00", "0x01", "0x02" ]
 		}"#;
-		let _deserialized: MultiTransaction = serde_json::from_str(s).unwrap();
-	}
+        let _deserialized: MultiTransaction = serde_json::from_str(s).unwrap();
+    }
 
-	#[test]
-	fn state_deserialization() {
-		let s = r#"{
+    #[test]
+    fn state_deserialization() {
+        let s = r#"{
 			"env": {
 				"currentCoinbase": "2adc25665018aa1fe0e6bc666dac8fc2697ff9ba",
 				"currentDifficulty": "0x0100",
@@ -247,7 +247,7 @@ mod tests {
 				"value": [ "10", "0" ]
 			}
 		}"#;
-		let _deserialized: State = serde_json::from_str(s).unwrap();
-		// TODO: validate all fields
-	}
+        let _deserialized: State = serde_json::from_str(s).unwrap();
+        // TODO: validate all fields
+    }
 }
