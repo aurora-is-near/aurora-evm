@@ -7,7 +7,7 @@ members = [
 
 [workspace.package]
 authors = ["Aurora Labs <hello@aurora.dev>"]
-edition = "2021"
+edition = "2024"
 version = "1.0.0"
 description = "Aurora Ethereum Virtual Machine implementation written in pure Rust"
 categories = ["no-std", "blockchain", "cryptography::cryptocurrencies"]

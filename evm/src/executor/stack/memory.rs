@@ -67,10 +67,7 @@ impl<'config> MemoryStackSubstate<'config> {
     pub fn deconstruct<B: Backend>(
         mut self,
         backend: &B,
-    ) -> (
-        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
-        impl IntoIterator<Item = Log>,
-    ) {
+    ) -> (Vec<Apply<BTreeMap<H256, H256>>>, Vec<Log>) {
         assert!(self.parent.is_none());
 
         let mut applies = Vec::<Apply<BTreeMap<H256, H256>>>::new();
@@ -689,12 +686,7 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
     }
 
     #[must_use]
-    pub fn deconstruct(
-        self,
-    ) -> (
-        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
-        impl IntoIterator<Item = Log>,
-    ) {
+    pub fn deconstruct(self) -> (Vec<Apply<BTreeMap<H256, H256>>>, Vec<Log>) {
         self.substate.deconstruct(self.backend)
     }
 
