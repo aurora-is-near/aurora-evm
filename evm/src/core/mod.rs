@@ -26,7 +26,7 @@ pub use stack::Stack;
 pub use valids::Valids;
 
 use core::ops::Range;
-use eval::{eval, Control};
+use eval::{Control, eval};
 use prelude::*;
 use primitive_types::{H160, U256};
 use utils::USIZE_MAX;

@@ -152,10 +152,12 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H>
     // Cast to `usize` after length checking to avoid overflow
     let memory_offset = as_usize_or_fail!(memory_offset);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(memory_offset, len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(memory_offset, len)
+    );
     match runtime.machine.memory_mut().copy_large(
         memory_offset,
         code_offset,
@@ -195,10 +197,12 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     };
     let len = as_usize_or_fail!(len);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(memory_offset, len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(memory_offset, len)
+    );
     if data_offset
         .checked_add(len.into())
         .is_none_or(|l| l > U256::from(runtime.return_data_buffer.len()))
@@ -331,10 +335,12 @@ pub fn mcopy<H: Handler>(runtime: &mut Runtime, _handler: &mut H) -> Control<H> 
     let dst = as_usize_or_fail!(dst, ExitError::OutOfGas);
     let src = as_usize_or_fail!(src, ExitError::OutOfGas);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(max(src, dst), len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(max(src, dst), len)
+    );
 
     // copy memory
     match runtime.machine.memory_mut().copy(src, dst, len) {
@@ -498,14 +504,18 @@ pub fn call<H: Handler>(runtime: &mut Runtime, scheme: CallScheme, handler: &mut
     };
     let out_len = as_usize_or_fail!(out_len);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(in_offset, in_len));
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(out_offset, out_len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(in_offset, in_len)
+    );
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(out_offset, out_len)
+    );
 
     let input = if in_len == 0 {
         Vec::new()

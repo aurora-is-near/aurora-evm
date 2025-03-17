@@ -1,4 +1,4 @@
-use clap::{arg, command, value_parser, ArgAction, Command};
+use clap::{ArgAction, Command, arg, command, value_parser};
 use ethjson::spec::ForkSpec;
 use evm_jsontests::state as statetests;
 use evm_jsontests::state::{TestExecutionResult, VerboseOutput};

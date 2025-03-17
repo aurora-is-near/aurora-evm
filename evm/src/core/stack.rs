@@ -1,6 +1,6 @@
+use super::ExitError;
 use super::prelude::*;
 use super::utils::USIZE_MAX;
-use super::ExitError;
 use primitive_types::{H256, U256};
 
 /// EVM stack.
