@@ -235,7 +235,6 @@ fn run_test_for_file(
         );
     }
     let file = File::open(file_name).expect("Open file failed");
-
     let reader = BufReader::new(file);
     let test_suite = serde_json::from_reader::<_, HashMap<String, statetests::Test>>(reader)
         .expect("Parse test cases failed");

@@ -1,6 +1,6 @@
-use super::prelude::*;
-use super::utils::USIZE_MAX;
-use super::ExitError;
+use crate::prelude::Vec;
+use crate::utils::USIZE_MAX;
+use crate::ExitError;
 use primitive_types::{H256, U256};
 
 /// EVM stack.

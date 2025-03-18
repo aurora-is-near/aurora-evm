@@ -2,8 +2,8 @@ use crate::utils::eip_4844;
 use crate::utils::transaction::InvalidTxReason;
 use aurora_evm::backend::{ApplyBackend, MemoryAccount, MemoryBackend, MemoryVicinity};
 use aurora_evm::executor::stack::{
-    MemoryStackState, PrecompileFailure, PrecompileFn, PrecompileOutput, StackExecutor,
-    StackSubstateMetadata,
+    Authorization, MemoryStackState, PrecompileFailure, PrecompileFn, PrecompileOutput,
+    StackExecutor, StackSubstateMetadata,
 };
 use aurora_evm::utils::U64_MAX;
 use aurora_evm::{Config, Context, ExitError, ExitReason, ExitSucceed};
@@ -12,13 +12,13 @@ use ethjson::spec::builtin::{AltBn128ConstOperations, AltBn128Pairing, PricingAt
 use ethjson::spec::{ForkSpec, Pricing};
 use ethjson::test_helpers::state::PostStateResult;
 use ethjson::uint::Uint;
-use lazy_static::lazy_static;
 use libsecp256k1::SecretKey;
 use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
 use sha3::{Digest, Keccak256};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 #[derive(Default, Debug, Clone)]
 pub struct VerboseOutput {
@@ -152,17 +152,11 @@ impl Test {
     }
 }
 
-lazy_static! {
-    static ref ISTANBUL_BUILTINS: BTreeMap<H160, ethcore_builtin::Builtin> = istanbul_builtins();
-}
-
-lazy_static! {
-    static ref BERLIN_BUILTINS: BTreeMap<H160, ethcore_builtin::Builtin> = berlin_builtins();
-}
-
-lazy_static! {
-    static ref CANCUN_BUILTINS: BTreeMap<H160, ethcore_builtin::Builtin> = cancun_builtins();
-}
+type LazyPrecompiles = LazyLock<BTreeMap<H160, ethcore_builtin::Builtin>>;
+static ISTANBUL_BUILTINS: LazyPrecompiles = LazyLock::new(istanbul_builtins);
+static BERLIN_BUILTINS: LazyPrecompiles = LazyLock::new(berlin_builtins);
+static CANCUN_BUILTINS: LazyPrecompiles = LazyLock::new(cancun_builtins);
+static PRAGUE_BUILTINS: LazyPrecompiles = LazyLock::new(prague_builtins);
 
 macro_rules! precompile_entry {
     ($map:expr, $builtins:expr, $index:expr) => {
@@ -226,6 +220,29 @@ impl JsonPrecompile {
                 precompile_entry!(map, CANCUN_BUILTINS, 8);
                 precompile_entry!(map, CANCUN_BUILTINS, 9);
                 precompile_entry!(map, CANCUN_BUILTINS, 0xA);
+                Some(map)
+            }
+            ForkSpec::Prague => {
+                let mut map = BTreeMap::new();
+                precompile_entry!(map, PRAGUE_BUILTINS, 1);
+                precompile_entry!(map, PRAGUE_BUILTINS, 2);
+                precompile_entry!(map, PRAGUE_BUILTINS, 3);
+                precompile_entry!(map, PRAGUE_BUILTINS, 4);
+                precompile_entry!(map, PRAGUE_BUILTINS, 5);
+                precompile_entry!(map, PRAGUE_BUILTINS, 6);
+                precompile_entry!(map, PRAGUE_BUILTINS, 7);
+                precompile_entry!(map, PRAGUE_BUILTINS, 8);
+                precompile_entry!(map, PRAGUE_BUILTINS, 9);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0A);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0B);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0C);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0D);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0E);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0F);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x10);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x11);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x12);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x13);
                 Some(map)
             }
             _ => None,
@@ -508,136 +525,148 @@ fn berlin_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
 }
 
 fn cancun_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
-    use ethjson::spec::builtin::{BuiltinCompat, Linear, Modexp, PricingCompat};
+    use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
 
-    let builtins: BTreeMap<Address, BuiltinCompat> = BTreeMap::from([
-        (
-            Address(H160::from_low_u64_be(1)),
-            BuiltinCompat {
-                name: "ecrecover".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                    base: 3000,
-                    word: 0,
-                })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(2)),
-            BuiltinCompat {
-                name: "sha256".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 60, word: 12 })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(3)),
-            BuiltinCompat {
-                name: "ripemd160".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                    base: 600,
-                    word: 120,
-                })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(4)),
-            BuiltinCompat {
-                name: "identity".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 15, word: 3 })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(5)),
-            BuiltinCompat {
-                name: "modexp".to_string(),
-                pricing: PricingCompat::Single(Pricing::Modexp(Modexp {
-                    divisor: 3,
-                    is_eip_2565: true,
-                })),
-                activate_at: Some(Uint(U256::zero())),
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(6)),
-            BuiltinCompat {
-                name: "alt_bn128_add".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128ConstOperations(AltBn128ConstOperations {
-                            price: 150,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(7)),
-            BuiltinCompat {
-                name: "alt_bn128_mul".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128ConstOperations(AltBn128ConstOperations {
-                            price: 6000,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(8)),
-            BuiltinCompat {
-                name: "alt_bn128_pairing".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128Pairing(AltBn128Pairing {
-                            base: 45000,
-                            pair: 34000,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(9)),
-            BuiltinCompat {
-                name: "blake2_f".to_string(),
-                pricing: PricingCompat::Single(Pricing::Blake2F { gas_per_round: 1 }),
-                activate_at: Some(Uint(U256::zero())),
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(0xA)),
-            BuiltinCompat {
-                name: "kzg".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                    base: 50_000,
-                    word: 0,
-                })),
-                activate_at: None,
-            },
-        ),
-    ]);
-    builtins
-        .into_iter()
-        .map(|(address, builtin)| {
-            (
-                address.into(),
-                ethjson::spec::Builtin::from(builtin).try_into().unwrap(),
-            )
+    let mut builtins = berlin_builtins();
+    builtins.insert(
+        Address(H160::from_low_u64_be(0xA)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "kzg".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
         })
-        .collect()
+        .try_into()
+        .unwrap(),
+    );
+    builtins
+}
+
+fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
+    use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
+
+    let mut builtins = berlin_builtins();
+    builtins.insert(
+        Address(H160::from_low_u64_be(0xB)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_g1_add".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0xC)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_g1_mul".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0xD)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_g1_multiexp".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0xE)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_g2_add".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0xF)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_g2_mul".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0x10)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_g2_multiexp".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0x11)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_pairing".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0x12)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_fp_to_g1".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+    builtins.insert(
+        Address(H160::from_low_u64_be(0x13)).into(),
+        ethjson::spec::Builtin::from(BuiltinCompat {
+            name: "bls12_381_fp2_to_g2".to_string(),
+            pricing: PricingCompat::Single(Pricing::Linear(Linear {
+                base: 50_000,
+                word: 0,
+            })),
+            activate_at: None,
+        })
+        .try_into()
+        .unwrap(),
+    );
+
+    builtins
 }
 
 pub fn test(
@@ -696,18 +725,25 @@ fn check_create_exit_reason(
                         let check_result = exception == "TR_InitCodeLimitExceeded"
                             || exception == "TransactionException.INITCODE_SIZE_EXCEEDED";
                         assert!(
-                            check_result,
-                            "unexpected exception {exception:?} for CreateContractLimit error for test: {name}"
-                        );
+							check_result,
+							"unexpected exception {exception:?} for CreateContractLimit error for test: {name}"
+						);
                         return true;
                     }
                     ExitError::MaxNonce => {
                         let check_result = exception == "TR_NonceHasMaxValue"
                             || exception == "TransactionException.NONCE_IS_MAX";
-                        assert!(
-                            check_result,
-                            "unexpected exception {exception:?} for MaxNonce error for test: {name}"
-                        );
+                        assert!(check_result,
+								"unexpected exception {exception:?} for MaxNonce error for test: {name}"
+						);
+                        return true;
+                    }
+                    ExitError::OutOfGas => {
+                        let check_result =
+                            exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
+                        assert!(check_result,
+								"unexpected exception {exception:?} for OutOfGas error for test: {name}"
+						);
                         return true;
                     }
                     _ => {
@@ -743,9 +779,10 @@ fn assert_vicinity_validation(
         ForkSpec::Istanbul | ForkSpec::Berlin => match reason {
             InvalidTxReason::GasPriseEip1559 => {
                 for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: [{spec:?}] {name}:{i}")
-                    });
+                    let expected = state
+                        .expect_exception
+                        .as_deref()
+                        .expect("expected error message for test: [{spec}] {name}:{i}");
                     let is_checked =
                         expected == "TR_TypeNotSupported" || expected == "TR_TypeNotSupportedBlob";
                     assert!(
@@ -756,114 +793,138 @@ fn assert_vicinity_validation(
             }
             _ => panic!("Unexpected validation reason: {reason:?} [{name}]"),
         },
-        ForkSpec::London => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
-                    });
-                    let is_checked = expected == "tipTooHigh" || expected == "TR_TipGtFeeCap";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+        ForkSpec::London => {
+            match reason {
+                InvalidTxReason::PriorityFeeTooLarge => {
+                    for (i, state) in states.iter().enumerate() {
+                        let expected = state.expect_exception.as_deref().expect(
+                            "expected error message for test: {reason:?} [{spec}] {name}:{i}",
+                        );
+                        let is_checked = expected == "tipTooHigh" || expected == "TR_TipGtFeeCap";
+                        assert!(
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
+                    }
                 }
-            }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
-                    });
-                    let is_checked =
-                        expected == "lowFeeCap" || expected == "TR_FeeCapLessThanBlocks";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+                InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+                    for (i, state) in states.iter().enumerate() {
+                        let expected = state.expect_exception.as_deref().expect(
+                            "expected error message for test: {reason:?} [{spec}] {name}:{i}",
+                        );
+                        let is_checked =
+                            expected == "lowFeeCap" || expected == "TR_FeeCapLessThanBlocks";
+                        assert!(
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
+                    }
                 }
+                _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
             }
-            _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
-        },
-        ForkSpec::Paris => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
-                    });
-                    let is_checked = expected == "TR_TipGtFeeCap";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+        }
+        ForkSpec::Paris => {
+            match reason {
+                InvalidTxReason::PriorityFeeTooLarge => {
+                    for (i, state) in states.iter().enumerate() {
+                        let expected = state.expect_exception.as_deref().expect(
+                            "expected error message for test: {reason:?} [{spec}] {name}:{i}",
+                        );
+                        let is_checked = expected == "TR_TipGtFeeCap";
+                        assert!(
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
+                    }
                 }
-            }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
-                    });
-                    let is_checked = expected == "TR_FeeCapLessThanBlocks";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+                InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+                    for (i, state) in states.iter().enumerate() {
+                        let expected = state.expect_exception.as_deref().expect(
+                            "expected error message for test: {reason:?} [{spec}] {name}:{i}",
+                        );
+                        let is_checked = expected == "TR_FeeCapLessThanBlocks";
+                        assert!(
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
+                    }
                 }
+                _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
             }
-            _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
-        },
-        ForkSpec::Shanghai => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
-                    });
-                    let is_checked = expected == "TR_TipGtFeeCap";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+        }
+        ForkSpec::Shanghai => {
+            match reason {
+                InvalidTxReason::PriorityFeeTooLarge => {
+                    for (i, state) in states.iter().enumerate() {
+                        let expected = state.expect_exception.as_deref().expect(
+                            "expected error message for test: {reason:?} [{spec}] {name}:{i}",
+                        );
+                        let is_checked = expected == "TR_TipGtFeeCap";
+                        assert!(
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
+                    }
                 }
-            }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}",)
-                    });
-                    let is_checked = expected == "TR_FeeCapLessThanBlocks";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+                InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+                    for (i, state) in states.iter().enumerate() {
+                        let expected = state.expect_exception.as_deref().expect(
+                            "expected error message for test: {reason:?} [{spec}] {name}:{i}",
+                        );
+                        let is_checked = expected == "TR_FeeCapLessThanBlocks";
+                        assert!(
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
+                    }
                 }
+                _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
             }
-            _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
-        },
+        }
         ForkSpec::Cancun => match reason {
             InvalidTxReason::PriorityFeeTooLarge => {
                 for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
-                    });
-
+                    let expected = state
+                        .expect_exception
+                        .as_deref()
+                        .expect("expected error message for test: {reason:?} [{spec}] {name}:{i}");
                     let is_checked = expected == "TR_TipGtFeeCap"
                         || expected == "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS";
                     assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
                 }
             }
             InvalidTxReason::GasPriceLessThenBlockBaseFee => {
                 for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}")
-                    });
+                    let expected = state
+                        .expect_exception
+                        .as_deref()
+                        .expect("expected error message for test: {reason:?} [{spec}] {name}:{i}");
                     let is_checked = expected == "TR_FeeCapLessThanBlocks"
                         || expected == "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS";
                     assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
-                    );
+							is_checked,
+							"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+						);
+                }
+            }
+            _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
+        },
+        ForkSpec::Prague => match reason {
+            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+                for (i, state) in states.iter().enumerate() {
+                    let expected = state
+                        .expect_exception
+                        .as_deref()
+                        .expect("expected error message for test: {reason:?} [{spec}] {name}:{i}");
+                    let is_checked = expected == "TR_FeeCapLessThanBlocks"
+                        || expected == "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS";
+                    assert!(
+						is_checked,
+						"unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}",
+					);
                 }
             }
             _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}"),
@@ -972,6 +1033,27 @@ fn check_validate_exit_reason(
 						check_result,
 						"unexpected exception {exception:?} for BlobVersionedHashesNotSupported for test: [{spec:?}] {name}"
 					);
+				},
+				InvalidTxReason::InvalidAuthorizationSignature => {
+					let check_result = exception == "TransactionException.TYPE_4_INVALID_AUTHORITY_SIGNATURE";
+					assert!(
+						check_result,
+						"unexpected exception {exception:?} for InvalidAuthorizationSignature for test: [{spec:?}] {name}"
+					);
+				 }
+				InvalidTxReason::AuthorizationListNotExist => {
+					 let check_result = exception == "TransactionException.TYPE_4_EMPTY_AUTHORIZATION_LIST";
+					assert!(
+						check_result,
+						"unexpected exception {exception:?} for AuthorizationListNotExist for test: [{spec:?}] {name}"
+					);
+				}
+				InvalidTxReason::CreateTransaction => {
+					let check_result =  exception == "TransactionException.TYPE_4_TX_CONTRACT_CREATION";
+					assert!(
+						check_result,
+						"unexpected exception {exception:?} for CreateTransaction for test: [{spec:?}] {name}"
+					);
 				}
 				_ => {
 					panic!(
@@ -1000,6 +1082,7 @@ fn test_run(
                 continue;
             }
         }
+
         let (gasometer_config, delete_empty) = match spec {
             ForkSpec::Istanbul => (Config::istanbul(), true),
             ForkSpec::Berlin => (Config::berlin(), true),
@@ -1008,6 +1091,7 @@ fn test_run(
             ForkSpec::Paris => (Config::merge(), true),
             ForkSpec::Shanghai => (Config::shanghai(), true),
             ForkSpec::Cancun => (Config::cancun(), true),
+            ForkSpec::Prague => (Config::prague(), true),
             _ => {
                 continue;
             }
@@ -1087,6 +1171,11 @@ fn test_run(
         let caller_code = original_state
             .get(&caller)
             .map_or_else(Vec::new, |acc| acc.code.clone());
+        // EIP-7702 - check if it's delegated designation. If it's delegation designation then
+        // even if `caller_code` is non-empty transaction should be executed.
+        let is_delegated = original_state
+            .get(&caller)
+            .map_or(false, |c| Authorization::is_delegated(&c.code));
 
         for (i, state) in states.iter().enumerate() {
             let transaction = test_tx.select(&state.indexes);
@@ -1115,7 +1204,6 @@ fn test_run(
 
             let gas_limit: u64 = transaction.gas_limit.into();
             let data: Vec<u8> = transaction.data.clone().into();
-
             let valid_tx = crate::utils::transaction::validate(
                 &transaction,
                 test.0.env.gas_limit.0,
@@ -1126,12 +1214,15 @@ fn test_run(
                 blob_gas_price,
                 data_max_fee,
                 spec,
+                state,
             );
+            // Only execute valid transactions
             if let Err(err) = &valid_tx {
                 if check_validate_exit_reason(err, &state.expect_exception, name, spec) {
                     continue;
                 }
             }
+            let authorization_list = valid_tx.unwrap();
 
             // We do not check overflow after TX validation
             let total_fee = if let Some(data_fee) = data_fee {
@@ -1140,123 +1231,118 @@ fn test_run(
                 vicinity.effective_gas_price * gas_limit
             };
 
-            // Only execute valid transactions
-            if valid_tx.is_ok() {
-                let metadata =
-                    StackSubstateMetadata::new(transaction.gas_limit.into(), &gasometer_config);
-                let executor_state = MemoryStackState::new(metadata, &backend);
-                let precompile = JsonPrecompile::precompile(spec).unwrap();
-                let mut executor = StackExecutor::new_with_precompiles(
-                    executor_state,
-                    &gasometer_config,
-                    &precompile,
-                );
-                executor.state_mut().withdraw(caller, total_fee).unwrap();
+            let metadata =
+                StackSubstateMetadata::new(transaction.gas_limit.into(), &gasometer_config);
+            let executor_state = MemoryStackState::new(metadata, &backend);
+            let precompile = JsonPrecompile::precompile(spec).unwrap();
+            let mut executor =
+                StackExecutor::new_with_precompiles(executor_state, &gasometer_config, &precompile);
+            executor.state_mut().withdraw(caller, total_fee).unwrap();
 
-                let access_list = transaction
-                    .access_list
-                    .into_iter()
-                    .map(|(address, keys)| (address.0, keys.into_iter().map(|k| k.0).collect()))
-                    .collect();
+            let access_list = transaction
+                .access_list
+                .into_iter()
+                .map(|(address, keys)| (address.0, keys.into_iter().map(|k| k.0).collect()))
+                .collect();
 
-                // EIP-3607: Reject transactions from senders with deployed code
-                if caller_code.is_empty() {
-                    match transaction.to {
-                        ethjson::maybe::MaybeEmpty::Some(to) => {
-                            let value = transaction.value.into();
+            // EIP-3607: Reject transactions from senders with deployed code
+            // EIP-7702: Accept transaction even if caller has code.
+            if caller_code.is_empty() || is_delegated {
+                match transaction.to {
+                    ethjson::maybe::MaybeEmpty::Some(to) => {
+                        let value = transaction.value.into();
 
-                            // Exit reason for Call do not analyzed as it mostly do not expect exceptions
-                            let _reason = executor.transact_call(
-                                caller,
-                                to.into(),
-                                value,
-                                data,
-                                gas_limit,
-                                access_list,
-                            );
-                            assert_call_exit_exception(&state.expect_exception);
-                        }
-                        ethjson::maybe::MaybeEmpty::None => {
-                            let code = data;
-                            let value = transaction.value.into();
+                        // Exit reason for Call do not analyzed as it mostly do not expect exceptions
+                        let _reason = executor.transact_call(
+                            caller,
+                            to.into(),
+                            value,
+                            data,
+                            gas_limit,
+                            access_list,
+                            authorization_list,
+                        );
+                        assert_call_exit_exception(&state.expect_exception);
+                    }
+                    ethjson::maybe::MaybeEmpty::None => {
+                        let code = data;
+                        let value = transaction.value.into();
 
-                            let reason = executor.transact_create(
-                                caller,
-                                value,
-                                code,
-                                gas_limit,
-                                access_list,
-                            );
-                            if check_create_exit_reason(
-                                &reason.0,
-                                &state.expect_exception,
-                                &format!("{spec:?}-{name}-{i}"),
-                            ) {
-                                continue;
-                            }
+                        let reason =
+                            executor.transact_create(caller, value, code, gas_limit, access_list);
+                        if check_create_exit_reason(
+                            &reason.0,
+                            &state.expect_exception,
+                            &format!("{spec:?}-{name}-{i}"),
+                        ) {
+                            continue;
                         }
                     }
-                } else {
-                    assert_empty_create_caller(&state.expect_exception, name);
-                }
-
-                if verbose_output.print_state {
-                    println!(
-                        "gas_limit: {gas_limit}\nused_gas: {:?}",
-                        executor.used_gas()
-                    );
-                }
-
-                let actual_fee = executor.fee(vicinity.effective_gas_price);
-                // Forks after London burn miner rewards and thus have different gas fee
-                // calculation (see EIP-1559)
-                let miner_reward = if spec.is_eth2() {
-                    let coinbase_gas_price = vicinity
-                        .effective_gas_price
-                        .saturating_sub(vicinity.block_base_fee_per_gas);
-                    executor.fee(coinbase_gas_price)
-                } else {
-                    actual_fee
-                };
-
-                executor
-                    .state_mut()
-                    .deposit(vicinity.block_coinbase, miner_reward);
-
-                let amount_to_return_for_caller = data_fee.map_or_else(
-                    || total_fee - actual_fee,
-                    |data_fee| total_fee - actual_fee - data_fee,
-                );
-                executor
-                    .state_mut()
-                    .deposit(caller, amount_to_return_for_caller);
-
-                let (values, logs) = executor.into_state().deconstruct();
-
-                backend.apply(values, logs, delete_empty);
-                // It's special case for hard forks: London or before London
-                // According to EIP-160 empty account should be removed. But in that particular test - original test state
-                // contains account 0x03 (it's precompile), and when precompile 0x03 was called it exit with
-                // OutOfGas result. And after exit of substate account not marked as touched, as exit reason
-                // is not success. And it means, that it doesn't appear in Apply::Modify, then as untouched it
-                // can't be removed by backend.apply event. In that particular case we should manage it manually.
-                // NOTE: it's not realistic situation for real life flow.
-                if *spec <= ForkSpec::London && delete_empty && name == "failed_tx_xcf416c53" {
-                    let state = backend.state_mut();
-                    state.retain(|addr, account| {
-                        // Check is account empty for precompile 0x03
-                        !(addr == &H160::from_low_u64_be(3)
-                            && account.balance == U256::zero()
-                            && account.nonce == U256::zero()
-                            && account.code.is_empty())
-                    });
                 }
             } else {
-                if let Some(e) = state.expect_exception.as_ref() {
-                    panic!("unexpected exception: {e} for test {name}-{i}");
+                // According to EIP7702 - https://eips.ethereum.org/EIPS/eip-7702#transaction-origination:
+                // allow EOAs whose code is a valid delegation designation, i.e. `0xef0100 || address`,
+                // to continue to originate transactions.
+                #[allow(clippy::collapsible_if)]
+                if !(*spec >= ForkSpec::Prague
+                    && TxType::from_txbytes(&state.txbytes) == TxType::EOAAccountCode)
+                {
+                    assert_empty_create_caller(&state.expect_exception, name);
                 }
-                panic!("unexpected validation for test {name}-{i}")
             }
+
+            if verbose_output.print_state {
+                println!(
+                    "gas_limit: {gas_limit}\nused_gas: {:?}",
+                    executor.used_gas()
+                );
+            }
+
+            let actual_fee = executor.fee(vicinity.effective_gas_price);
+            // Forks after London burn miner rewards and thus have different gas fee
+            // calculation (see EIP-1559)
+            let miner_reward = if spec.is_eth2() {
+                let coinbase_gas_price = vicinity
+                    .effective_gas_price
+                    .saturating_sub(vicinity.block_base_fee_per_gas);
+                executor.fee(coinbase_gas_price)
+            } else {
+                actual_fee
+            };
+
+            executor
+                .state_mut()
+                .deposit(vicinity.block_coinbase, miner_reward);
+
+            let amount_to_return_for_caller = data_fee.map_or_else(
+                || total_fee - actual_fee,
+                |data_fee| total_fee - actual_fee - data_fee,
+            );
+            executor
+                .state_mut()
+                .deposit(caller, amount_to_return_for_caller);
+
+            let (values, logs) = executor.into_state().deconstruct();
+
+            backend.apply(values, logs, delete_empty);
+            // It's special case for hard forks: London or before London
+            // According to EIP-160 empty account should be removed. But in that particular test - original test state
+            // contains account 0x03 (it's precompile), and when precompile 0x03 was called it exit with
+            // OutOfGas result. And after exit of substate account not marked as touched, as exit reason
+            // is not success. And it mean, that it don't appeared in Apply::Modify, then as untouched it
+            // can't be removed by backend.apply event. In that particular case we should manage it manually.
+            // NOTE: it's not realistic situation for real life flow.
+            if *spec <= ForkSpec::London && delete_empty && name == "failed_tx_xcf416c53" {
+                let state = backend.state_mut();
+                state.retain(|addr, account| {
+                    // Check is account empty for precompile 0x03
+                    !(addr == &H160::from_low_u64_be(3)
+                        && account.balance == U256::zero()
+                        && account.nonce == U256::zero()
+                        && account.code.is_empty())
+                });
+            }
+
             let (is_valid_hash, actual_hash) =
                 crate::utils::check_valid_hash(&state.hash.0, backend.state());
             if !is_valid_hash {
@@ -1304,8 +1390,8 @@ fn test_run(
 }
 
 /// Denotes the type of transaction.
-#[derive(Debug, PartialEq)]
-enum TxType {
+#[derive(Debug, PartialEq, Eq)]
+pub enum TxType {
     /// All transactions before EIP-2718 are legacy.
     Legacy,
     /// https://eips.ethereum.org/EIPS/eip-2718
@@ -1314,18 +1400,21 @@ enum TxType {
     DynamicFee,
     /// https://eips.ethereum.org/EIPS/eip-4844
     ShardBlob,
+    /// https://eips.ethereum.org/EIPS/eip-7702
+    EOAAccountCode,
 }
 
 impl TxType {
     /// Whether this is a legacy, access list, dynamic fee, etc transaction
     // Taken from geth's core/types/transaction.go/UnmarshalBinary, but we only detect the transaction
     // type rather than unmarshal the entire payload.
-    const fn from_txbytes(txbytes: &[u8]) -> Self {
+    pub const fn from_txbytes(txbytes: &[u8]) -> Self {
         match txbytes[0] {
             b if b > 0x7f => Self::Legacy,
             1 => Self::AccessList,
             2 => Self::DynamicFee,
             3 => Self::ShardBlob,
+            4 => Self::EOAAccountCode,
             _ => panic!(
                 "Unknown tx type. \
 You may need to update the TxType enum if Ethereum introduced new enveloped transaction types."

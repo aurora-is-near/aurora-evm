@@ -84,12 +84,21 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Download Ethereum spec tests fixtures
+        run: |
+          wget https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-3%40v1.5.0/fixtures_pectra-devnet-3.tar.gz
+          mkdir ethereum-spec-tests
+          tar -xzf fixtures_pectra-devnet-3.tar.gz -C ethereum-spec-tests
+          tree ethereum-spec-tests/fixtures/state_tests/prague/eip7702_set_code_tx
+
       - name: Run Ethereum state tests
         run: |
           cargo run -r -p evm-jsontests -F enable-slow-tests -- state -f \
           ethtests/GeneralStateTests/ \
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-          ethtests/EIPTests/StateTests/
+          ethereum-spec-tests/fixtures/state_tests/prague/eip7702_set_code_tx/
+          # Temporally disable as EOFv1 not implemented
+          # ethtests/EIPTests/StateTests/
 
       - name: Run Ethereum vm tests
         run: |
@@ -135,8 +144,9 @@ jobs:
             export PATH="$PATH:$HOME/.cargo/bin"
             cargo run -r -p evm-jsontests -F enable-slow-tests -- state -f \
               ethtests/GeneralStateTests/ \
-              ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-              ethtests/EIPTests/StateTests/
+              ethtests/LegacyTests/Cancun/GeneralStateTests/
+              # Temporally disable as EOFv1 not implemented
+              # ethtests/EIPTests/StateTests/
             cargo run -r -p evm-jsontests -F enable-slow-tests -- vm -f \
               ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
               ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \

@@ -1,0 +1,16 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+    name: sputnikvm-core
+    title: SputnikVM core
+    description: Core library defining the basic execution rules
+    tags:
+        - ethereum
+    links: []
+    annotations:
+        aurora.dev/security-tier: "1"
+spec:
+    owner: engine-team
+    type: library
+    lifecycle: production
+    subcomponentOf: sputnikvm-evm
