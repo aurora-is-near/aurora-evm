@@ -1,4 +1,4 @@
-use crate::core::utils::{I256, Sign};
+use crate::core::utils::{Sign, I256};
 use primitive_types::U256;
 
 #[inline]

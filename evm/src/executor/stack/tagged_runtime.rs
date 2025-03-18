@@ -1,8 +1,8 @@
 //! A module containing data types for keeping track of the kinds of calls
 //! (CALL vs CREATE) in the EVM call stack.
 
-use crate::Runtime;
 use crate::maybe_borrowed::MaybeBorrowed;
+use crate::Runtime;
 use primitive_types::H160;
 
 pub struct TaggedRuntime<'borrow> {

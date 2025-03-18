@@ -310,7 +310,9 @@ impl<'config> MemoryStackSubstate<'config> {
         if local_is_accessed {
             false
         } else {
-            self.parent.as_ref().is_none_or(|p| p.recursive_is_cold(f))
+            self.parent
+                .as_ref()
+                .map_or(true, |p| p.recursive_is_cold(f))
         }
     }
 

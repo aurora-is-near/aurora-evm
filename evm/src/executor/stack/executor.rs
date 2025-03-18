@@ -16,7 +16,7 @@ use crate::{
 use core::{cmp::min, convert::Infallible};
 use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 
 macro_rules! emit_exit {
     ($reason:expr) => {{

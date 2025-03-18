@@ -172,7 +172,7 @@ impl Backend for MemoryBackend<'_> {
     fn is_empty_storage(&self, address: H160) -> bool {
         self.state
             .get(&address)
-            .is_none_or(|v| v.storage.is_empty())
+            .map_or(true, |v| v.storage.is_empty())
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {

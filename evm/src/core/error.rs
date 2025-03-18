@@ -1,5 +1,5 @@
-use super::Opcode;
 use super::prelude::*;
+use super::Opcode;
 
 /// Trap which indicates that an `ExternalOpcode` has to be handled.
 pub type Trap = Opcode;

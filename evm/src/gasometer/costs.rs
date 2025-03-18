@@ -1,7 +1,7 @@
 use super::consts;
-use crate::Config;
-use crate::core::ExitError;
 use crate::core::utils::U64_MAX;
+use crate::core::ExitError;
+use crate::Config;
 use primitive_types::{H256, U256};
 
 pub fn call_extra_check(gas: U256, after_gas: u64, config: &Config) -> Result<(), ExitError> {
