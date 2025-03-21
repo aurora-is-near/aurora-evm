@@ -16,11 +16,12 @@
 
 //! Transaction deserialization.
 
+use crate::test_helpers::state::AuthorizationList;
 use crate::{
-	bytes::Bytes,
-	hash::{Address, H256},
-	maybe::MaybeEmpty,
-	uint::Uint,
+    bytes::Bytes,
+    hash::{Address, H256},
+    maybe::MaybeEmpty,
+    uint::Uint,
 };
 use serde::Deserialize;
 
@@ -28,39 +29,42 @@ use serde::Deserialize;
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
-	/// Transaction data.
-	pub data: Bytes,
-	/// Transaction access list (see EIP-2930).
-	#[serde(default)]
-	pub access_list: Vec<(Address, Vec<H256>)>,
-	/// Gas limit.
-	pub gas_limit: Uint,
-	/// To.
-	pub to: MaybeEmpty<Address>,
-	/// Value.
-	pub value: Uint,
-	/// R.
-	#[serde(default)]
-	pub r: MaybeEmpty<Uint>,
-	/// S.
-	#[serde(default)]
-	pub s: MaybeEmpty<Uint>,
-	/// V.
-	#[serde(default)]
-	pub v: MaybeEmpty<Uint>,
-	/// Secret
-	#[serde(rename = "secretKey")]
-	pub secret: Option<H256>,
+    /// Transaction data.
+    pub data: Bytes,
+    /// Transaction access list (see EIP-2930).
+    #[serde(default)]
+    pub access_list: Vec<(Address, Vec<H256>)>,
+    /// Transaction authorization list (see EIP-7702`s).
+    #[serde(default)]
+    pub authorization_list: AuthorizationList,
+    /// Gas limit.
+    pub gas_limit: Uint,
+    /// To.
+    pub to: MaybeEmpty<Address>,
+    /// Value.
+    pub value: Uint,
+    /// R.
+    #[serde(default)]
+    pub r: MaybeEmpty<Uint>,
+    /// S.
+    #[serde(default)]
+    pub s: MaybeEmpty<Uint>,
+    /// V.
+    #[serde(default)]
+    pub v: MaybeEmpty<Uint>,
+    /// Secret
+    #[serde(rename = "secretKey")]
+    pub secret: Option<H256>,
 }
 
 #[cfg(test)]
 mod tests {
-	use super::{Bytes, MaybeEmpty, Transaction, Uint, H256};
-	use ethereum_types::{H256 as Eth256, U256};
+    use super::{Bytes, MaybeEmpty, Transaction, Uint, H256};
+    use ethereum_types::{H256 as Eth256, U256};
 
-	#[test]
-	fn transaction_deserialization() {
-		let s = r#"{
+    #[test]
+    fn transaction_deserialization() {
+        let s = r#"{
 			"data" : "0x",
 			"gasLimit" : "0xf388",
 			"gasPrice" : "0x09184e72a000",
@@ -72,13 +76,13 @@ mod tests {
 			"v": "2",
 			"secretKey": "0x0000000000000000000000000000000000000000000000000000000000000000"
 		}"#;
-		let tx: Transaction = serde_json::from_str(s).expect("JSON string is valid");
-		assert_eq!(tx.data, Bytes::new(Vec::new()));
-		assert_eq!(tx.gas_limit, Uint(U256::from(0xf388)));
-		assert_eq!(tx.to, MaybeEmpty::None);
-		assert_eq!(tx.r, Uint(U256::zero()).into());
-		assert_eq!(tx.s, Uint(U256::one()).into());
-		assert_eq!(tx.v, Uint(U256::from(2)).into());
-		assert_eq!(tx.secret, Some(H256(Eth256::zero())));
-	}
+        let tx: Transaction = serde_json::from_str(s).expect("JSON string is valid");
+        assert_eq!(tx.data, Bytes::new(Vec::new()));
+        assert_eq!(tx.gas_limit, Uint(U256::from(0xf388)));
+        assert_eq!(tx.to, MaybeEmpty::None);
+        assert_eq!(tx.r, Uint(U256::zero()).into());
+        assert_eq!(tx.s, Uint(U256::one()).into());
+        assert_eq!(tx.v, Uint(U256::from(2)).into());
+        assert_eq!(tx.secret, Some(H256(Eth256::zero())));
+    }
 }

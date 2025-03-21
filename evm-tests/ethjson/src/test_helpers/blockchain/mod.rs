@@ -17,9 +17,9 @@
 //! Blockchain test deserialization.
 
 use crate::{
-	bytes::Bytes,
-	hash::H256,
-	spec::{Ethereum, ForkSpec, Genesis, Seal, State},
+    bytes::Bytes,
+    hash::H256,
+    spec::{Ethereum, ForkSpec, Genesis, Seal, State},
 };
 use serde::Deserialize;
 
@@ -35,75 +35,75 @@ pub type Test = super::tester::GenericTester<String, BlockChain>;
 /// Json Block test possible engine kind.
 #[derive(Debug, Default, PartialEq, Eq, Deserialize)]
 pub enum Engine {
-	/// Default (old) behaviour.
-	#[default]
-	Ethash,
-	/// No check of block's difficulty and nonce for tests.
-	NoProof,
+    /// Default (old) behaviour.
+    #[default]
+    Ethash,
+    /// No check of block's difficulty and nonce for tests.
+    NoProof,
 }
 
 /// Blockchain deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockChain {
-	/// Genesis block header.
-	#[serde(rename = "genesisBlockHeader")]
-	pub genesis_block: Header,
-	/// Genesis block rlp.
-	#[serde(rename = "genesisRLP")]
-	pub genesis_rlp: Option<Bytes>,
-	/// Blocks.
-	pub blocks: Vec<Block>,
-	/// Post state.
-	pub post_state: Option<State>,
-	/// Pre state.
-	#[serde(rename = "pre")]
-	pub pre_state: State,
-	/// Hash of best block.
-	#[serde(rename = "lastblockhash")]
-	pub best_block: H256,
-	/// Network.
-	pub network: ForkSpec,
-	#[serde(default)]
-	#[serde(rename = "sealEngine")]
-	/// Engine
-	pub engine: Engine,
+    /// Genesis block header.
+    #[serde(rename = "genesisBlockHeader")]
+    pub genesis_block: Header,
+    /// Genesis block rlp.
+    #[serde(rename = "genesisRLP")]
+    pub genesis_rlp: Option<Bytes>,
+    /// Blocks.
+    pub blocks: Vec<Block>,
+    /// Post state.
+    pub post_state: Option<State>,
+    /// Pre state.
+    #[serde(rename = "pre")]
+    pub pre_state: State,
+    /// Hash of best block.
+    #[serde(rename = "lastblockhash")]
+    pub best_block: H256,
+    /// Network.
+    pub network: ForkSpec,
+    #[serde(default)]
+    #[serde(rename = "sealEngine")]
+    /// Engine
+    pub engine: Engine,
 }
 
 impl BlockChain {
-	/// Returns blocks rlp.
-	pub fn blocks_rlp(&self) -> Vec<Vec<u8>> {
-		self.blocks.iter().map(|block| block.rlp()).collect()
-	}
+    /// Returns blocks rlp.
+    pub fn blocks_rlp(&self) -> Vec<Vec<u8>> {
+        self.blocks.iter().map(|block| block.rlp()).collect()
+    }
 
-	/// Returns spec compatible genesis struct.
-	pub fn genesis(&self) -> Genesis {
-		Genesis {
-			seal: Seal::Ethereum(Ethereum {
-				nonce: self.genesis_block.nonce,
-				mix_hash: self.genesis_block.mix_hash,
-			}),
-			difficulty: self.genesis_block.difficulty,
-			author: Some(self.genesis_block.author),
-			timestamp: Some(self.genesis_block.timestamp),
-			parent_hash: Some(self.genesis_block.parent_hash),
-			gas_limit: self.genesis_block.gas_limit,
-			transactions_root: Some(self.genesis_block.transactions_root),
-			receipts_root: Some(self.genesis_block.receipts_root),
-			state_root: Some(self.genesis_block.state_root),
-			gas_used: Some(self.genesis_block.gas_used),
-			extra_data: Some(self.genesis_block.extra_data.clone()),
-		}
-	}
+    /// Returns spec compatible genesis struct.
+    pub fn genesis(&self) -> Genesis {
+        Genesis {
+            seal: Seal::Ethereum(Ethereum {
+                nonce: self.genesis_block.nonce,
+                mix_hash: self.genesis_block.mix_hash,
+            }),
+            difficulty: self.genesis_block.difficulty,
+            author: Some(self.genesis_block.author),
+            timestamp: Some(self.genesis_block.timestamp),
+            parent_hash: Some(self.genesis_block.parent_hash),
+            gas_limit: self.genesis_block.gas_limit,
+            transactions_root: Some(self.genesis_block.transactions_root),
+            receipts_root: Some(self.genesis_block.receipts_root),
+            state_root: Some(self.genesis_block.state_root),
+            gas_used: Some(self.genesis_block.gas_used),
+            extra_data: Some(self.genesis_block.extra_data.clone()),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::BlockChain;
+    use super::BlockChain;
 
-	#[test]
-	fn blockchain_deserialization() {
-		let s = r#"{
+    #[test]
+    fn blockchain_deserialization() {
+        let s = r#"{
 			"blocks" : [{
 				"blockHeader" : {
 					"bloom" : "00000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000000000000800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000040000000000000000000000000000000000000000000000000000000",
@@ -201,7 +201,7 @@ mod tests {
 				}
 			}
 		}"#;
-		let _deserialized: BlockChain = serde_json::from_str(s).unwrap();
-		// TODO: validate all fields
-	}
+        let _deserialized: BlockChain = serde_json::from_str(s).unwrap();
+        // TODO: validate all fields
+    }
 }

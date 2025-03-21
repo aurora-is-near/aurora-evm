@@ -25,103 +25,104 @@ use std::io::Read;
 /// Fork spec definition
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 pub enum ForkSpec {
-	/// Byzantium transition test-net
-	EIP158ToByzantiumAt5,
-	/// Homestead transition test-net
-	FrontierToHomesteadAt5,
-	/// Homestead transition test-net
-	HomesteadToDaoAt5,
-	/// EIP158/EIP161 transition test-net
-	HomesteadToEIP150At5,
-	/// ConstantinopleFix transition test-net
-	ByzantiumToConstantinopleFixAt5,
-	/// Istanbul transition test-net
-	ConstantinopleFixToIstanbulAt5,
-	/// EIP 150 Tangerine Whistle: Gas cost changes for IO-heavy operations (#2,463,000, 2016-10-18)
-	EIP150,
-	/// EIP 158/EIP 161 Spurious Dragon: State trie clearing (#2,675,000, 2016-11-22)
-	EIP158,
-	/// Frontier (#1, 2015-07-30)
-	Frontier,
-	/// Homestead (#1,150,000, 2016-03-14)
-	Homestead,
-	/// Byzantium Metropolis phase 1 (#4,370,000, 2017-10-16)
-	Byzantium,
-	/// Constantinople Metropolis phase 2 (#7,280,000, 2019-02-28)
-	Constantinople,
-	/// Constantinople transition test-net
-	ConstantinopleFix,
-	/// Istanbul (#9,069,000, 2019-12-08)
-	Istanbul,
-	/// Berlin (#12,244,000, 2021-04-15)
-	Berlin,
+    /// Byzantium transition test-net
+    EIP158ToByzantiumAt5,
+    /// Homestead transition test-net
+    FrontierToHomesteadAt5,
+    /// Homestead transition test-net
+    HomesteadToDaoAt5,
+    /// EIP158/EIP161 transition test-net
+    HomesteadToEIP150At5,
+    /// ConstantinopleFix transition test-net
+    ByzantiumToConstantinopleFixAt5,
+    /// Istanbul transition test-net
+    ConstantinopleFixToIstanbulAt5,
+    /// EIP 150 Tangerine Whistle: Gas cost changes for IO-heavy operations (#2,463,000, 2016-10-18)
+    EIP150,
+    /// EIP 158/EIP 161 Spurious Dragon: State trie clearing (#2,675,000, 2016-11-22)
+    EIP158,
+    /// Frontier (#1, 2015-07-30)
+    Frontier,
+    /// Homestead (#1,150,000, 2016-03-14)
+    Homestead,
+    /// Byzantium Metropolis phase 1 (#4,370,000, 2017-10-16)
+    Byzantium,
+    /// Constantinople Metropolis phase 2 (#7,280,000, 2019-02-28)
+    Constantinople,
+    /// Constantinople transition test-net
+    ConstantinopleFix,
+    /// Istanbul (#9,069,000, 2019-12-08)
+    Istanbul,
+    /// Berlin (#12,244,000, 2021-04-15)
+    Berlin,
 
-	/// London (#12,965,000, 2021-08-05)
-	London,
-	/// Paris - The Merge (#15,537,394, 2022-09-15)
-	Merge,
-	/// Paris - The Merge (#15,537,394, 2022-09-15)
-	Paris,
-	/// Shanghai (#17,034,870, 2023-04-12)
-	Shanghai,
-	/// Cancun (2024-03-13)
-	Cancun,
-	/// Prague-Electra—aka Pectra
-	Prague,
+    /// London (#12,965,000, 2021-08-05)
+    London,
+    /// Paris - The Merge (#15,537,394, 2022-09-15)
+    Merge,
+    /// Paris - The Merge (#15,537,394, 2022-09-15)
+    Paris,
+    /// Shanghai (#17,034,870, 2023-04-12)
+    Shanghai,
+    /// Cancun (28,750,000, 2024-03-13)
+    Cancun,
+    /// Prague (future)
+    Prague,
 }
 
 impl ForkSpec {
-	/// Returns true if the fork is at or after the merge.
-	pub const fn is_eth2(&self) -> bool {
-		!matches!(
-			*self,
-			Self::EIP158ToByzantiumAt5
-				| Self::FrontierToHomesteadAt5
-				| Self::HomesteadToDaoAt5
-				| Self::HomesteadToEIP150At5
-				| Self::ByzantiumToConstantinopleFixAt5
-				| Self::ConstantinopleFixToIstanbulAt5
-				| Self::EIP150
-				| Self::EIP158
-				| Self::Frontier
-				| Self::Homestead
-				| Self::Byzantium
-				| Self::Constantinople
-				| Self::ConstantinopleFix
-				| Self::Istanbul
-				| Self::Berlin
-		)
-	}
+    /// Returns true if the fork is at or after the merge.
+    pub const fn is_eth2(&self) -> bool {
+        !matches!(
+            *self,
+            Self::EIP158ToByzantiumAt5
+                | Self::FrontierToHomesteadAt5
+                | Self::HomesteadToDaoAt5
+                | Self::HomesteadToEIP150At5
+                | Self::ByzantiumToConstantinopleFixAt5
+                | Self::ConstantinopleFixToIstanbulAt5
+                | Self::EIP150
+                | Self::EIP158
+                | Self::Frontier
+                | Self::Homestead
+                | Self::Byzantium
+                | Self::Constantinople
+                | Self::ConstantinopleFix
+                | Self::Istanbul
+                | Self::Berlin
+        )
+    }
 }
 
 impl TryFrom<String> for ForkSpec {
-	type Error = String;
-	fn try_from(value: String) -> Result<Self, Self::Error> {
-		let res = match value.to_lowercase().as_str() {
-			"eip158tobyzantiumat5" => Self::EIP158ToByzantiumAt5,
-			"frontiertohomesteadat5" => Self::FrontierToHomesteadAt5,
-			"homesteadtodaoat5" => Self::HomesteadToDaoAt5,
-			"homesteadtoeip150at5" => Self::HomesteadToEIP150At5,
-			"byzantiumtoconstantinoplefixat5" => Self::ByzantiumToConstantinopleFixAt5,
-			"constantinoplefixtoistanbulat5" => Self::ConstantinopleFixToIstanbulAt5,
-			"eip150" => Self::EIP150,
-			"eip158" => Self::EIP158,
-			"frontier" => Self::Frontier,
-			"homestead" => Self::Homestead,
-			"byzantium" => Self::Byzantium,
-			"constantinople" => Self::Constantinople,
-			"constantinoplefix" => Self::ConstantinopleFix,
-			"istanbul" => Self::Istanbul,
-			"berlin" => Self::Berlin,
-			"london" => Self::London,
-			"merge" => Self::Merge,
-			"paris" => Self::Paris,
-			"shanghai" => Self::Shanghai,
-			"cancun" => Self::Cancun,
-			other => return Err(format!("Unknown hard fork spec {other}")),
-		};
-		Ok(res)
-	}
+    type Error = String;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let res = match value.to_lowercase().as_str() {
+            "eip158tobyzantiumat5" => Self::EIP158ToByzantiumAt5,
+            "frontiertohomesteadat5" => Self::FrontierToHomesteadAt5,
+            "homesteadtodaoat5" => Self::HomesteadToDaoAt5,
+            "homesteadtoeip150at5" => Self::HomesteadToEIP150At5,
+            "byzantiumtoconstantinoplefixat5" => Self::ByzantiumToConstantinopleFixAt5,
+            "constantinoplefixtoistanbulat5" => Self::ConstantinopleFixToIstanbulAt5,
+            "eip150" => Self::EIP150,
+            "eip158" => Self::EIP158,
+            "frontier" => Self::Frontier,
+            "homestead" => Self::Homestead,
+            "byzantium" => Self::Byzantium,
+            "constantinople" => Self::Constantinople,
+            "constantinoplefix" => Self::ConstantinopleFix,
+            "istanbul" => Self::Istanbul,
+            "berlin" => Self::Berlin,
+            "london" => Self::London,
+            "merge" => Self::Merge,
+            "paris" => Self::Paris,
+            "shanghai" => Self::Shanghai,
+            "cancun" => Self::Cancun,
+            "prague" => Self::Prague,
+            other => return Err(format!("Unknown hard fork spec {other}")),
+        };
+        Ok(res)
+    }
 }
 
 /// Spec deserialization.
@@ -129,41 +130,41 @@ impl TryFrom<String> for ForkSpec {
 #[serde(deny_unknown_fields)]
 #[serde(rename_all = "camelCase")]
 pub struct Spec {
-	/// Spec name.
-	pub name: String,
-	/// Special fork name.
-	pub data_dir: Option<String>,
-	/// Engine.
-	pub engine: Engine,
-	/// Spec params.
-	pub params: Params,
-	/// Genesis header.
-	pub genesis: Genesis,
-	/// Genesis state.
-	pub accounts: State,
-	/// Boot nodes.
-	pub nodes: Option<Vec<String>>,
-	/// Hardcoded synchronization for the light client.
-	pub hardcoded_sync: Option<HardcodedSync>,
+    /// Spec name.
+    pub name: String,
+    /// Special fork name.
+    pub data_dir: Option<String>,
+    /// Engine.
+    pub engine: Engine,
+    /// Spec params.
+    pub params: Params,
+    /// Genesis header.
+    pub genesis: Genesis,
+    /// Genesis state.
+    pub accounts: State,
+    /// Boot nodes.
+    pub nodes: Option<Vec<String>>,
+    /// Hardcoded synchronization for the light client.
+    pub hardcoded_sync: Option<HardcodedSync>,
 }
 
 impl Spec {
-	/// Loads test from json.
-	pub fn load<R>(reader: R) -> Result<Self, Error>
-	where
-		R: Read,
-	{
-		serde_json::from_reader(reader)
-	}
+    /// Loads test from json.
+    pub fn load<R>(reader: R) -> Result<Self, Error>
+    where
+        R: Read,
+    {
+        serde_json::from_reader(reader)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::Spec;
+    use super::Spec;
 
-	#[test]
-	fn should_error_on_unknown_fields() {
-		let s = r#"{
+    #[test]
+    fn should_error_on_unknown_fields() {
+        let s = r#"{
 		"name": "Null Morden",
 		"dataDir": "morden",
 		"engine": {
@@ -222,13 +223,13 @@ mod tests {
 			]
 		}
 		}"#;
-		let result: Result<Spec, _> = serde_json::from_str(s);
-		assert!(result.is_err());
-	}
+        let result: Result<Spec, _> = serde_json::from_str(s);
+        assert!(result.is_err());
+    }
 
-	#[test]
-	fn spec_deserialization() {
-		let s = r#"{
+    #[test]
+    fn spec_deserialization() {
+        let s = r#"{
 		"name": "Null Morden",
 		"dataDir": "morden",
 		"engine": {
@@ -334,7 +335,7 @@ mod tests {
 			]
 		}
 		}"#;
-		let _deserialized: Spec = serde_json::from_str(s).unwrap();
-		// TODO: validate all fields
-	}
+        let _deserialized: Spec = serde_json::from_str(s).unwrap();
+        // TODO: validate all fields
+    }
 }

@@ -29,9 +29,9 @@ use serde::Deserialize;
 /// Trie test deserialization.
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 pub struct Trie {
-	/// Trie test input.
-	#[serde(rename = "in")]
-	pub input: Input,
-	/// Trie root hash.
-	pub root: H256,
+    /// Trie test input.
+    #[serde(rename = "in")]
+    pub input: Input,
+    /// Trie root hash.
+    pub root: H256,
 }
