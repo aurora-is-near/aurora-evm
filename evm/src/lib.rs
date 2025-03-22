@@ -30,10 +30,6 @@ pub mod prelude {
     };
 }
 
-pub mod core;
-pub mod gasometer;
-pub mod runtime;
-
 pub use core::*;
 pub use runtime::*;
 
@@ -54,5 +50,8 @@ macro_rules! event {
 }
 
 pub mod backend;
+pub mod core;
 pub mod executor;
+pub mod gasometer;
 pub mod maybe_borrowed;
+pub mod runtime;

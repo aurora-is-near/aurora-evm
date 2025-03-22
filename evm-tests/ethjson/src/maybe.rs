@@ -28,126 +28,126 @@ use crate::uint::Uint;
 /// Deserializer of empty string values into optionals.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum MaybeEmpty<T> {
-	/// Some.
-	Some(T),
-	/// None.
-	None,
+    /// Some.
+    Some(T),
+    /// None.
+    None,
 }
 
 impl<'a, T> Deserialize<'a> for MaybeEmpty<T>
 where
-	T: Deserialize<'a>,
+    T: Deserialize<'a>,
 {
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-	where
-		D: Deserializer<'a>,
-	{
-		deserializer.deserialize_any(MaybeEmptyVisitor::new())
-	}
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'a>,
+    {
+        deserializer.deserialize_any(MaybeEmptyVisitor::new())
+    }
 }
 
 struct MaybeEmptyVisitor<T> {
-	_phantom: PhantomData<T>,
+    _phantom: PhantomData<T>,
 }
 
 impl<T> MaybeEmptyVisitor<T> {
-	const fn new() -> Self {
-		Self {
-			_phantom: PhantomData,
-		}
-	}
+    const fn new() -> Self {
+        Self {
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<'a, T> Visitor<'a> for MaybeEmptyVisitor<T>
 where
-	T: Deserialize<'a>,
+    T: Deserialize<'a>,
 {
-	type Value = MaybeEmpty<T>;
+    type Value = MaybeEmpty<T>;
 
-	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-		write!(formatter, "an empty string or string-encoded type")
-	}
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "an empty string or string-encoded type")
+    }
 
-	fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-	where
-		E: Error,
-	{
-		self.visit_string(value.to_owned())
-	}
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        self.visit_string(value.to_owned())
+    }
 
-	fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-	where
-		E: Error,
-	{
-		if value.is_empty() {
-			Ok(MaybeEmpty::None)
-		} else {
-			T::deserialize(value.into_deserializer()).map(MaybeEmpty::Some)
-		}
-	}
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        if value.is_empty() {
+            Ok(MaybeEmpty::None)
+        } else {
+            T::deserialize(value.into_deserializer()).map(MaybeEmpty::Some)
+        }
+    }
 }
 
 impl<T> From<MaybeEmpty<T>> for Option<T> {
-	fn from(val: MaybeEmpty<T>) -> Self {
-		match val {
-			MaybeEmpty::Some(s) => Some(s),
-			MaybeEmpty::None => None,
-		}
-	}
+    fn from(val: MaybeEmpty<T>) -> Self {
+        match val {
+            MaybeEmpty::Some(s) => Some(s),
+            MaybeEmpty::None => None,
+        }
+    }
 }
 
 #[cfg(test)]
 impl From<Uint> for MaybeEmpty<Uint> {
-	fn from(uint: Uint) -> Self {
-		Self::Some(uint)
-	}
+    fn from(uint: Uint) -> Self {
+        Self::Some(uint)
+    }
 }
 
 impl From<MaybeEmpty<Uint>> for U256 {
-	fn from(maybe: MaybeEmpty<Uint>) -> Self {
-		match maybe {
-			MaybeEmpty::Some(v) => v.0,
-			MaybeEmpty::None => Self::zero(),
-		}
-	}
+    fn from(maybe: MaybeEmpty<Uint>) -> Self {
+        match maybe {
+            MaybeEmpty::Some(v) => v.0,
+            MaybeEmpty::None => Self::zero(),
+        }
+    }
 }
 
 impl From<MaybeEmpty<Uint>> for u64 {
-	fn from(maybe: MaybeEmpty<Uint>) -> Self {
-		match maybe {
-			MaybeEmpty::Some(v) => v.0.low_u64(),
-			MaybeEmpty::None => 0u64,
-		}
-	}
+    fn from(maybe: MaybeEmpty<Uint>) -> Self {
+        match maybe {
+            MaybeEmpty::Some(v) => v.0.low_u64(),
+            MaybeEmpty::None => 0u64,
+        }
+    }
 }
 
 impl Default for MaybeEmpty<Uint> {
-	fn default() -> Self {
-		Self::Some(Uint::default())
-	}
+    fn default() -> Self {
+        Self::Some(Uint::default())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-	use super::MaybeEmpty;
-	use crate::hash::H256;
-	use std::str::FromStr;
+    use super::MaybeEmpty;
+    use crate::hash::H256;
+    use std::str::FromStr;
 
-	#[test]
-	fn maybe_deserialization() {
-		let s = r#"["", "5a39ed1020c04d4d84539975b893a4e7c53eab6c2965db8bc3468093a31bc5ae"]"#;
-		let deserialized: Vec<MaybeEmpty<H256>> = serde_json::from_str(s).unwrap();
-		assert_eq!(
-			deserialized,
-			vec![
-				MaybeEmpty::None,
-				MaybeEmpty::Some(H256(
-					ethereum_types::H256::from_str(
-						"5a39ed1020c04d4d84539975b893a4e7c53eab6c2965db8bc3468093a31bc5ae"
-					)
-					.unwrap()
-				))
-			]
-		);
-	}
+    #[test]
+    fn maybe_deserialization() {
+        let s = r#"["", "5a39ed1020c04d4d84539975b893a4e7c53eab6c2965db8bc3468093a31bc5ae"]"#;
+        let deserialized: Vec<MaybeEmpty<H256>> = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            deserialized,
+            vec![
+                MaybeEmpty::None,
+                MaybeEmpty::Some(H256(
+                    ethereum_types::H256::from_str(
+                        "5a39ed1020c04d4d84539975b893a4e7c53eab6c2965db8bc3468093a31bc5ae"
+                    )
+                    .unwrap()
+                ))
+            ]
+        );
+    }
 }

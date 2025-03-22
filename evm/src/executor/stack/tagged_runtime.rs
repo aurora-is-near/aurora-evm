@@ -6,14 +6,14 @@ use crate::Runtime;
 use primitive_types::H160;
 
 pub struct TaggedRuntime<'borrow> {
-	pub kind: RuntimeKind,
-	pub inner: MaybeBorrowed<'borrow, Runtime>,
+    pub kind: RuntimeKind,
+    pub inner: MaybeBorrowed<'borrow, Runtime>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeKind {
-	Create(H160),
-	Call(H160),
-	/// Special variant used only in `StackExecutor::execute`
-	Execute,
+    Create(H160),
+    Call(H160),
+    /// Special variant used only in `StackExecutor::execute`
+    Execute,
 }

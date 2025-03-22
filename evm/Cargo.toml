@@ -1,0 +1,53 @@
+[package]
+name = "aurora-evm"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+description.workspace = true
+categories.workspace = true
+keywords.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
+
+[dependencies]
+auto_impl.workspace = true
+primitive-types = { workspace = true, features = ["rlp"] }
+rlp = { workspace = true, features = ["derive"] }
+sha3.workspace = true
+serde = { workspace = true, optional = true }
+
+log = { version = "0.4", default-features = false }
+smallvec = "1.13"
+
+# Optional dependencies
+environmental = { version = "1.1.2", default-features = false, optional = true }
+scale-codec = { package = "parity-scale-codec", version = "3.2", default-features = false, features = ["derive"], optional = true }
+scale-info = { version = "2.11", default-features = false, features = ["derive"], optional = true }
+
+[features]
+default = ["std"]
+std = [
+    "log/std",
+    "primitive-types/std",
+    "rlp/std",
+    "sha3/std",
+    "environmental/std",
+    "scale-codec/std",
+    "scale-info/std",
+    "serde/std",
+]
+with-codec = [
+    "scale-codec",
+    "scale-info",
+    "primitive-types/codec",
+    "primitive-types/scale-info",
+]
+with-serde = [
+    "serde",
+    "primitive-types/impl-serde",
+]
+tracing = ["environmental"]
+force-debug = []
+create-fixed = []
+print-debug = []

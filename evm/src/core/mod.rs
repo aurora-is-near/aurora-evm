@@ -18,18 +18,18 @@ mod stack;
 pub mod utils;
 mod valids;
 
-pub use crate::error::{Capture, ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Trap};
-pub use crate::external::ExternalOperation;
-pub use crate::memory::Memory;
-pub use crate::opcode::Opcode;
-pub use crate::stack::Stack;
-pub use crate::valids::Valids;
+pub use error::{Capture, ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Trap};
+pub use external::ExternalOperation;
+pub use memory::Memory;
+pub use opcode::Opcode;
+pub use stack::Stack;
+pub use valids::Valids;
 
-use crate::eval::{eval, Control};
-use crate::prelude::*;
-use crate::utils::USIZE_MAX;
 use core::ops::Range;
+use eval::{eval, Control};
+use prelude::*;
 use primitive_types::{H160, U256};
+use utils::USIZE_MAX;
 
 /// Core execution layer for EVM.
 pub struct Machine {

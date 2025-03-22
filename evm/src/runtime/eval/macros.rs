@@ -1,10 +1,10 @@
 macro_rules! try_or_fail {
-	( $e:expr ) => {
-		match $e {
-			Ok(v) => v,
-			Err(e) => return Control::Exit(e.into()),
-		}
-	};
+    ( $e:expr ) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => return Control::Exit(e.into()),
+        }
+    };
 }
 
 macro_rules! pop_h256 {
@@ -52,19 +52,19 @@ macro_rules! push_u256 {
 }
 
 macro_rules! as_usize_or_fail {
-	( $v:expr ) => {{
-		if $v > crate::utils::USIZE_MAX {
-			return Control::Exit(ExitError::UsizeOverflow.into());
-		}
+    ( $v:expr ) => {{
+        if $v > crate::utils::USIZE_MAX {
+            return Control::Exit(ExitError::UsizeOverflow.into());
+        }
 
-		$v.as_usize()
-	}};
+        $v.as_usize()
+    }};
 
-	( $v:expr, $reason:expr ) => {{
-		if $v > crate::utils::USIZE_MAX {
-			return Control::Exit($reason.into());
-		}
+    ( $v:expr, $reason:expr ) => {{
+        if $v > crate::utils::USIZE_MAX {
+            return Control::Exit($reason.into());
+        }
 
-		$v.as_usize()
-	}};
+        $v.as_usize()
+    }};
 }

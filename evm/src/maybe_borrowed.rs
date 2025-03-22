@@ -10,26 +10,26 @@
 /// `Vec<B> where B: BorrowMut<T>` would need to consist of all owned or all borrowed data).
 #[derive(Debug)]
 pub enum MaybeBorrowed<'a, T> {
-	Borrowed(&'a mut T),
-	Owned(T),
+    Borrowed(&'a mut T),
+    Owned(T),
 }
 
 impl<T> core::ops::Deref for MaybeBorrowed<'_, T> {
-	type Target = T;
+    type Target = T;
 
-	fn deref(&self) -> &Self::Target {
-		match self {
-			Self::Borrowed(x) => x,
-			Self::Owned(x) => x,
-		}
-	}
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(x) => x,
+            Self::Owned(x) => x,
+        }
+    }
 }
 
 impl<T> core::ops::DerefMut for MaybeBorrowed<'_, T> {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		match self {
-			Self::Borrowed(x) => x,
-			Self::Owned(x) => x,
-		}
-	}
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Borrowed(x) => x,
+            Self::Owned(x) => x,
+        }
+    }
 }

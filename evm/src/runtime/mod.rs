@@ -15,8 +15,8 @@ pub mod tracing;
 #[cfg(feature = "tracing")]
 macro_rules! event {
     ($x:expr) => {
-        use crate::tracing::Event::*;
-        crate::tracing::with(|listener| listener.event($x));
+        use crate::runtime::tracing::Event::*;
+        crate::runtime::tracing::with(|listener| listener.event($x));
     };
 }
 
@@ -32,9 +32,9 @@ mod interrupt;
 
 pub use crate::core::*;
 
-pub use crate::context::{CallScheme, Context, CreateScheme};
-pub use crate::handler::{Handler, Transfer};
-pub use crate::interrupt::{Resolve, ResolveCall, ResolveCreate};
+pub use self::context::{CallScheme, Context, CreateScheme};
+pub use self::handler::{Handler, Transfer};
+pub use self::interrupt::{Resolve, ResolveCall, ResolveCreate};
 
 use prelude::*;
 use primitive_types::H160;

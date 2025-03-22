@@ -1,4 +1,4 @@
-use crate::consts;
+use super::consts;
 use crate::core::ExitError;
 
 pub fn memory_gas(a: usize) -> Result<u64, ExitError> {

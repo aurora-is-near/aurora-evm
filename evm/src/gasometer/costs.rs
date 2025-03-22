@@ -1,6 +1,6 @@
-use crate::consts;
 use crate::core::utils::U64_MAX;
 use crate::core::ExitError;
+use crate::gasometer::consts;
 use crate::Config;
 use primitive_types::{H256, U256};
 
@@ -88,7 +88,7 @@ pub fn exp_cost(power: U256, config: &Config) -> Result<u64, ExitError> {
         let gas = U256::from(consts::G_EXP)
             .checked_add(
                 U256::from(config.gas_expbyte)
-                    .checked_mul(U256::from(crate::utils::log2floor(power) / 8 + 1))
+                    .checked_mul(U256::from(super::utils::log2floor(power) / 8 + 1))
                     .ok_or(ExitError::OutOfGas)?,
             )
             .ok_or(ExitError::OutOfGas)?;

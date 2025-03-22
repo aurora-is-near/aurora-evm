@@ -19,9 +19,9 @@
 //! Transaction test deserialization.
 
 use crate::{
-	bytes::Bytes,
-	hash::{Address, H256},
-	spec::ForkSpec,
+    bytes::Bytes,
+    hash::{Address, H256},
+    spec::ForkSpec,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -32,32 +32,32 @@ pub type Test = super::tester::GenericTester<String, TransactionTest>;
 /// Transaction test deserialization.
 #[derive(Debug, Deserialize)]
 pub struct TransactionTest {
-	/// RLP of the transaction
-	pub rlp: Bytes,
-	#[allow(missing_docs)]
-	pub _info: serde::de::IgnoredAny,
-	/// State of the transaction after the test runs
-	#[serde(flatten)]
-	pub post_state: BTreeMap<ForkSpec, PostState>,
+    /// RLP of the transaction
+    pub rlp: Bytes,
+    #[allow(missing_docs)]
+    pub _info: serde::de::IgnoredAny,
+    /// State of the transaction after the test runs
+    #[serde(flatten)]
+    pub post_state: BTreeMap<ForkSpec, PostState>,
 }
 
 /// TransactionTest post state.
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostState {
-	/// Transaction sender.
-	pub sender: Option<Address>,
-	/// Transaction hash.
-	pub hash: Option<H256>,
+    /// Transaction sender.
+    pub sender: Option<Address>,
+    /// Transaction hash.
+    pub hash: Option<H256>,
 }
 
 #[cfg(test)]
 mod tests {
-	use super::TransactionTest;
+    use super::TransactionTest;
 
-	#[test]
-	fn transaction_deserialization() {
-		let s = r#"{
+    #[test]
+    fn transaction_deserialization() {
+        let s = r#"{
 			"Byzantium" : {
 				"hash" : "4782cb5edcaeda1f0aef204b161214f124cefade9e146245183abbb9ca01bca5",
 				"sender" : "2ea991808ba979ba103147edfd72304ebd95c028"
@@ -86,7 +86,7 @@ mod tests {
 			"rlp" : "0xf865808698852840a46f82d6d894095e7baea6a6c7c4c2dfeb977efac326af552d87808025a098ff921201554726367d2be8c804a7ff89ccf285ebc57dff8ae4c44b9c19ac4aa01887321be575c8095f789dd4c743dfe42c1820f9231f98a962b210e3ac2452a3"
 		}"#;
 
-		let _deserialized: TransactionTest = serde_json::from_str(s).unwrap();
-		// TODO: validate all fields
-	}
+        let _deserialized: TransactionTest = serde_json::from_str(s).unwrap();
+        // TODO: validate all fields
+    }
 }

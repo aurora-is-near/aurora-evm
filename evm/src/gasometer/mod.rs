@@ -16,8 +16,8 @@ pub mod tracing;
 #[cfg(feature = "tracing")]
 macro_rules! event {
     ($x:expr) => {
-        use crate::tracing::Event::*;
-        crate::tracing::with(|listener| listener.event($x));
+        use self::tracing::Event::*;
+        self::tracing::with(|listener| listener.event($x));
     };
 }
 #[cfg(feature = "force-debug")]
