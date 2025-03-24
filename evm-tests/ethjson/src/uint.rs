@@ -27,170 +27,170 @@ use std::str::FromStr;
 pub struct Uint(pub U256);
 
 impl From<Uint> for U256 {
-	fn from(val: Uint) -> Self {
-		val.0
-	}
+    fn from(val: Uint) -> Self {
+        val.0
+    }
 }
 
 impl From<Uint> for u64 {
-	fn from(val: Uint) -> Self {
-		val.0.low_u64()
-	}
+    fn from(val: Uint) -> Self {
+        val.0.low_u64()
+    }
 }
 
 impl From<Uint> for usize {
-	fn from(val: Uint) -> Self {
-		val.0.low_u64() as Self
-	}
+    fn from(val: Uint) -> Self {
+        val.0.low_u64() as Self
+    }
 }
 
 impl Serialize for Uint {
-	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-	where
-		S: Serializer,
-	{
-		self.0.to_string().serialize(serializer)
-	}
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.to_string().serialize(serializer)
+    }
 }
 
 impl<'a> Deserialize<'a> for Uint {
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-	where
-		D: Deserializer<'a>,
-	{
-		deserializer.deserialize_any(UintVisitor)
-	}
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'a>,
+    {
+        deserializer.deserialize_any(UintVisitor)
+    }
 }
 
 struct UintVisitor;
 
 impl Visitor<'_> for UintVisitor {
-	type Value = Uint;
+    type Value = Uint;
 
-	fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-		write!(formatter, "a hex encoded or decimal uint")
-	}
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "a hex encoded or decimal uint")
+    }
 
-	fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-	where
-		E: Error,
-	{
-		Ok(Uint(U256::from(value)))
-	}
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        Ok(Uint(U256::from(value)))
+    }
 
-	fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-	where
-		E: Error,
-	{
-		let parse = |value: &str| {
-			if value.len() > 64 {
-				return Err(Error::custom(
-					format!(
-						"Invalid hex value 0x{value}: value too big (length={})",
-						value.len()
-					)
-					.as_str(),
-				));
-			}
-			U256::from_str(value)
-				.map_err(|e| Error::custom(format!("Invalid hex value 0x{value}: {e}").as_str()))
-		};
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        let parse = |value: &str| {
+            if value.len() > 64 {
+                return Err(Error::custom(
+                    format!(
+                        "Invalid hex value 0x{value}: value too big (length={})",
+                        value.len()
+                    )
+                    .as_str(),
+                ));
+            }
+            U256::from_str(value)
+                .map_err(|e| Error::custom(format!("Invalid hex value 0x{value}: {e}").as_str()))
+        };
 
-		let value = match value.len() {
-			0 => U256::from(0),
-			2 if value.starts_with("0x") => U256::from(0),
-			_ if value.starts_with("0x:bigint 0x") => parse(&value[12..])?,
-			_ if value.starts_with("0x") => parse(&value[2..])?,
-			_ => U256::from_dec_str(value).map_err(|e| {
-				Error::custom(format!("Invalid decimal value {}: {:?}", value, e).as_str())
-			})?,
-		};
+        let value = match value.len() {
+            0 => U256::from(0),
+            2 if value.starts_with("0x") => U256::from(0),
+            _ if value.starts_with("0x:bigint 0x") => parse(&value[12..])?,
+            _ if value.starts_with("0x") => parse(&value[2..])?,
+            _ => U256::from_dec_str(value).map_err(|e| {
+                Error::custom(format!("Invalid decimal value {}: {:?}", value, e).as_str())
+            })?,
+        };
 
-		Ok(Uint(value))
-	}
+        Ok(Uint(value))
+    }
 
-	fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-	where
-		E: Error,
-	{
-		self.visit_str(value.as_ref())
-	}
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        self.visit_str(value.as_ref())
+    }
 }
 
 /// Deserialize and validate that the value is non-zero
 pub fn validate_non_zero<'de, D>(d: D) -> Result<Uint, D::Error>
 where
-	D: Deserializer<'de>,
+    D: Deserializer<'de>,
 {
-	let value = Uint::deserialize(d)?;
+    let value = Uint::deserialize(d)?;
 
-	if value == Uint(U256::from(0)) {
-		return Err(Error::invalid_value(
-			Unexpected::Unsigned(0),
-			&"a non-zero value",
-		));
-	}
+    if value == Uint(U256::from(0)) {
+        return Err(Error::invalid_value(
+            Unexpected::Unsigned(0),
+            &"a non-zero value",
+        ));
+    }
 
-	Ok(value)
+    Ok(value)
 }
 
 /// Deserialize and validate that the value is non-zero
 pub fn validate_optional_non_zero<'de, D>(d: D) -> Result<Option<Uint>, D::Error>
 where
-	D: Deserializer<'de>,
+    D: Deserializer<'de>,
 {
-	let value: Option<Uint> = Option::deserialize(d)?;
+    let value: Option<Uint> = Option::deserialize(d)?;
 
-	if let Some(value) = value {
-		if value == Uint(U256::from(0)) {
-			return Err(Error::invalid_value(
-				Unexpected::Unsigned(0),
-				&"a non-zero value",
-			));
-		}
-	}
+    if let Some(value) = value {
+        if value == Uint(U256::from(0)) {
+            return Err(Error::invalid_value(
+                Unexpected::Unsigned(0),
+                &"a non-zero value",
+            ));
+        }
+    }
 
-	Ok(value)
+    Ok(value)
 }
 
 #[cfg(test)]
 mod test {
-	use super::Uint;
-	use ethereum_types::U256;
+    use super::Uint;
+    use ethereum_types::U256;
 
-	#[test]
-	fn uint_deserialization() {
-		let s = r#"["0xa", "10", "", "0x", 0]"#;
-		let deserialized: Vec<Uint> = serde_json::from_str(s).unwrap();
-		assert_eq!(
-			deserialized,
-			vec![
-				Uint(U256::from(10)),
-				Uint(U256::from(10)),
-				Uint(U256::from(0)),
-				Uint(U256::from(0)),
-				Uint(U256::from(0))
-			]
-		);
-	}
+    #[test]
+    fn uint_deserialization() {
+        let s = r#"["0xa", "10", "", "0x", 0]"#;
+        let deserialized: Vec<Uint> = serde_json::from_str(s).unwrap();
+        assert_eq!(
+            deserialized,
+            vec![
+                Uint(U256::from(10)),
+                Uint(U256::from(10)),
+                Uint(U256::from(0)),
+                Uint(U256::from(0)),
+                Uint(U256::from(0))
+            ]
+        );
+    }
 
-	#[test]
-	fn uint_deserialization_error_for_hex_too_large() {
-		let hex = format!("0x{}", "1".repeat(65));
-		let result: Result<Uint, _> = serde_json::from_str(&format!(r#""{}""#, hex));
-		let err = result.unwrap_err();
-		assert!(err.is_data());
-		assert_eq!(
-			err.to_string(),
-			format!(
-				"Invalid hex value {}: value too big (length=65) at line 1 column 69",
-				hex
-			)
-		);
-	}
+    #[test]
+    fn uint_deserialization_error_for_hex_too_large() {
+        let hex = format!("0x{}", "1".repeat(65));
+        let result: Result<Uint, _> = serde_json::from_str(&format!(r#""{}""#, hex));
+        let err = result.unwrap_err();
+        assert!(err.is_data());
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Invalid hex value {}: value too big (length=65) at line 1 column 69",
+                hex
+            )
+        );
+    }
 
-	#[test]
-	fn uint_into() {
-		assert_eq!(U256::from(10), Uint(U256::from(10)).into());
-	}
+    #[test]
+    fn uint_into() {
+        assert_eq!(U256::from(10), Uint(U256::from(10)).into());
+    }
 }

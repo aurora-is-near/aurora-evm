@@ -29,8 +29,8 @@ use crate::uint::Uint;
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum StepDuration {
-	/// Duration of all steps.
-	Single(Uint),
-	/// Step duration transitions: a mapping of timestamp to step durations.
-	Transitions(BTreeMap<Uint, Uint>),
+    /// Duration of all steps.
+    Single(Uint),
+    /// Step duration transitions: a mapping of timestamp to step durations.
+    Transitions(BTreeMap<Uint, Uint>),
 }
