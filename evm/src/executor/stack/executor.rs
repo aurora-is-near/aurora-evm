@@ -147,6 +147,11 @@ impl Accessed {
         self.authority.insert(authority, address);
     }
 
+    /// Remove authority from the accessed authority list (EIP-7702).
+    pub fn remove_authority(&mut self, authority: H160) {
+        self.authority.remove(&authority);
+    }
+
     /// Get authority from the accessed authority list (EIP-7702).
     #[must_use]
     pub fn get_authority_target(&self, authority: H160) -> Option<H160> {
@@ -297,6 +302,13 @@ impl<'config> StackSubstateMetadata<'config> {
     pub fn add_authority(&mut self, authority: H160, address: H160) {
         if let Some(accessed) = &mut self.accessed {
             accessed.add_authority(authority, address);
+        }
+    }
+
+    /// Remove authority from accessed list (related to EIP-7702)
+    pub fn remove_authority(&mut self, authority: H160) {
+        if let Some(accessed) = &mut self.accessed {
+            accessed.remove_authority(authority);
         }
     }
 }
@@ -826,11 +838,20 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         // Avoid uncontrolled `u64` casting
         let refunded_gas =
             u64::try_from(self.state.metadata().gasometer.refunded_gas()).unwrap_or_default();
-        self.state.metadata().gasometer.total_used_gas()
+        let total_used_gas = self.state.metadata().gasometer.total_used_gas();
+        let total_used_gas_refunded = self.state.metadata().gasometer.total_used_gas()
             - min(
-                self.state.metadata().gasometer.total_used_gas() / self.config.max_refund_quotient,
+                total_used_gas / self.config.max_refund_quotient,
                 refunded_gas,
-            )
+            );
+        // EIP-7623: max(total_used_gas, floor_gas)
+        if self.config.has_floor_gas
+            && total_used_gas_refunded < self.state.metadata().gasometer.floor_gas()
+        {
+            self.state.metadata().gasometer.floor_gas()
+        } else {
+            total_used_gas_refunded
+        }
     }
 
     /// Get fee needed for the current executor, given the price.
@@ -845,7 +866,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         self.state.basic(address).nonce
     }
 
-    /// Check if the existing account is "create collision".    
+    /// Check if the existing account is "create collision".
     /// [EIP-7610](https://eips.ethereum.org/EIPS/eip-7610)
     pub fn is_create_collision(&self, address: H160) -> bool {
         !self.code(address).is_empty()
@@ -930,16 +951,18 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
     /// Authorized accounts behavior.
     ///
     /// According to `EIP-7702` behavior section should be several steps of verifications.
-    /// Current function includes steps 3-8 from the spec:
-    /// 3. Add `authority` to `accessed_addresses`
-    /// 4. Verify the code of `authority` is either empty or already delegated.
-    /// 5. Verify the `nonce` of `authority` is equal to `nonce` (of address).
-    /// 7. Set the code of `authority` to be `0xef0100 || address`. This is a delegation designation.
-    /// 8. Increase the `nonce` of `authority` by one.
+    /// Current function includes steps 2.4-9 from the spec:
+    /// 2. Verify the `nonce` is less than `2**64 - 1`.
+    /// 4. Add `authority` to `accessed_addresses`
+    /// 5. Verify the code of `authority` is either empty or already delegated.
+    /// 6. Verify the `nonce` of `authority` is equal to `nonce` (of address).
+    /// 7. Add `PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST` gas to the global refund counter if authority exists in the trie.
+    /// 8. Set the code of `authority` to be `0xef0100 || address`. This is a delegation designation.
+    /// 9. Increase the `nonce` of `authority` by one.
     ///
-    /// It means, that steps 1-2 of spec must be passed before calling this function:
-    /// 1 Verify the chain id is either 0 or the chain’s current ID.
-    /// 2. `authority = ecrecover(...)`
+    /// It means, that steps 1,3 of spec must be passed before calling this function:
+    /// 1. Verify the chain id is either 0 or the chain’s current ID.
+    /// 3. `authority = ecrecover(...)`
     ///
     /// See: [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702#behavior)
     ///
@@ -957,38 +980,56 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         let state = self.state_mut();
         let mut warm_authority: Vec<H160> = Vec::with_capacity(authorization_list.len());
         for authority in authorization_list {
-            // If EIP-7703 Spec validation steps 1 or 2 return false.
+            // If EIP-7702 Spec validation steps 1, 3 return false.
             if !authority.is_valid {
                 continue;
             }
-            // 3. Add authority to accessed_addresses (as defined in EIP-2929)
+
+            // 2. Verify the `nonce` is less than `2**64 - 1`.
+            if U256::from(authority.nonce) >= U64_MAX {
+                continue;
+            }
+
+            // 4. Add authority to accessed_addresses (as defined in EIP-2929)
             warm_authority.push(authority.authority);
-            // 4. Verify the code of authority is either empty or already delegated.
+            // 5. Verify the code of authority is either empty or already delegated.
             let authority_code = state.code(authority.authority);
             if !authority_code.is_empty() && !Authorization::is_delegated(&authority_code) {
                 continue;
             }
 
-            // 5. Verify the nonce of authority is equal to nonce.
+            // 6. Verify the nonce of authority is equal to nonce.
             if state.basic(authority.authority).nonce != U256::from(authority.nonce) {
                 continue;
             }
 
-            // 6. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
+            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
             if !state.is_empty(authority.authority) {
                 refunded_accounts += 1;
             }
-            // 7. Set the code of authority to be `0xef0100 || address`. This is a delegation designation.
-            state.set_code(authority.authority, authority.delegation_code());
-            // 8. Increase the nonce of authority by one.
+            // 8. Set the code of authority to be `0xef0100 || address`. This is a delegation designation.
+            // * As a special case, if address is 0x0000000000000000000000000000000000000000 do not write the designation.
+            //   Clear the account’s code.
+            let delegation_clearing = if authority.address.is_zero() {
+                state.set_code(authority.authority, Vec::new());
+                true
+            } else {
+                state.set_code(authority.authority, authority.delegation_code());
+                false
+            };
+            // 9. Increase the nonce of authority by one.
             state.inc_nonce(authority.authority)?;
 
-            // Add to authority access list cache
-            state
-                .metadata_mut()
-                .add_authority(authority.authority, authority.address);
+            // Add/Remove to authority access list cache
+            if delegation_clearing {
+                state.metadata_mut().remove_authority(authority.authority);
+            } else {
+                state
+                    .metadata_mut()
+                    .add_authority(authority.authority, authority.address);
+            }
         }
-        // Warm addresses for [Step 3].
+        // Warm addresses for [Step 4].
         self.state
             .metadata_mut()
             .access_addresses(warm_authority.into_iter());
@@ -1342,8 +1383,8 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
     }
 }
 
-impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
-    for StackExecutor<'config, 'precompiles, S, P>
+impl<'config, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
+    for StackExecutor<'config, '_, S, P>
 {
     #[inline]
     fn before_eval(&mut self) {}
@@ -1424,8 +1465,8 @@ pub struct StackExecutorCallInterrupt<'borrow>(TaggedRuntime<'borrow>);
 
 pub struct StackExecutorCreateInterrupt<'borrow>(TaggedRuntime<'borrow>);
 
-impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet> Handler
-    for StackExecutor<'config, 'precompiles, S, P>
+impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
+    for StackExecutor<'config, '_, S, P>
 {
     type CreateInterrupt = StackExecutorCreateInterrupt<'static>;
     type CreateFeedback = Infallible;
@@ -1443,8 +1484,9 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet> Handler
     ///
     /// According to EIP-7702, the code size of an address is the size of the
     /// delegated address code size.
+    /// <https://eips.ethereum.org/EIPS/eip-7702#delegation-designation>
     fn code_size(&mut self, address: H160) -> U256 {
-        let target_code = self.authority_code(address);
+        let target_code = self.code(address);
         U256::from(target_code.len())
     }
 
@@ -1453,16 +1495,12 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet> Handler
     ///
     /// According to EIP-7702, the code hash of an address is the hash of the
     /// delegated address code hash.
+    /// <https://eips.ethereum.org/EIPS/eip-7702#delegation-designation>
     fn code_hash(&mut self, address: H160) -> H256 {
         if !self.exists(address) {
             return H256::default();
         }
-        if let Some(target) = self.get_authority_target(address) {
-            if !self.exists(target) {
-                return H256::default();
-            }
-        }
-        let code = self.authority_code(address);
+        let code = self.code(address);
         H256::from_slice(Keccak256::digest(code).as_slice())
     }
 
@@ -1772,8 +1810,8 @@ struct StackExecutorHandle<'inner, 'config, 'precompiles, S, P> {
     is_static: bool,
 }
 
-impl<'inner, 'config, 'precompiles, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
-    for StackExecutorHandle<'inner, 'config, 'precompiles, S, P>
+impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
+    for StackExecutorHandle<'_, 'config, '_, S, P>
 {
     // Perform subcall in provided context.
     /// Precompile specifies in which context the subcall is executed.

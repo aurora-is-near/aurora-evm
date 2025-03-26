@@ -126,6 +126,7 @@ pub fn blob_hash<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     Control::Continue
 }
 
+/// NOTE: For EIP-7702 should return 2 (size of `0xEF01`)
 pub fn extcodesize<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
     pop_h256!(runtime, address);
     push_u256!(runtime, handler.code_size(address.into()));
@@ -133,6 +134,7 @@ pub fn extcodesize<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
     Control::Continue
 }
 
+/// NOTE: For EIP-7702 should return  `keccak(0xEF01)`
 pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
     pop_h256!(runtime, address);
     push_h256!(runtime, handler.code_hash(address.into()));
@@ -140,7 +142,8 @@ pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
     Control::Continue
 }
 
-pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
+/// NOTE: For EIP-7702 should not copy from designated address
+pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     pop_h256!(runtime, address);
     pop_u256!(runtime, memory_offset, code_offset, len);
 
@@ -160,7 +163,7 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
         memory_offset,
         code_offset,
         len,
-        &handler.authority_code(address.into()),
+        &handler.code(address.into()),
     ) {
         Ok(()) => (),
         Err(e) => return Control::Exit(e.into()),

@@ -8,6 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v14.1
+  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-6%40v1.0.0/fixtures_pectra-devnet-6.tar.gz
 
 jobs:
   lint:
@@ -25,6 +26,8 @@ jobs:
         run: cargo clippy --no-default-features -- -D clippy::all -D clippy::nursery
       - name: Clippy with features
         run: cargo clippy --features tracing,create-fixed -- -D clippy::all -D clippy::nursery
+      - name: Clippy with features for evm-jsontests
+        run: cargo clippy -p evm-jsontests --features dump-state -- -D clippy::all -D clippy::nursery
 
   build:
     runs-on: ubuntu-latest
@@ -86,17 +89,16 @@ jobs:
 
       - name: Download Ethereum spec tests fixtures
         run: |
-          wget https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-3%40v1.5.0/fixtures_pectra-devnet-3.tar.gz
+          curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
           mkdir ethereum-spec-tests
-          tar -xzf fixtures_pectra-devnet-3.tar.gz -C ethereum-spec-tests
-          tree ethereum-spec-tests/fixtures/state_tests/prague/eip7702_set_code_tx
+          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
       - name: Run Ethereum state tests
         run: |
           cargo run -r -p evm-jsontests -F enable-slow-tests -- state -f \
           ethtests/GeneralStateTests/ \
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-          ethereum-spec-tests/fixtures/state_tests/prague/eip7702_set_code_tx/
+          ethereum-spec-tests/fixtures/state_tests/
           # Temporally disable as EOFv1 not implemented
           # ethtests/EIPTests/StateTests/
 
@@ -139,12 +141,16 @@ jobs:
           distro: bullseye
           githubToken: ${{ github.token }}
           run: |
-            apt-get update && apt-get install -y curl clang llvm
+            apt-get update && apt-get install -y curl wget clang llvm
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             export PATH="$PATH:$HOME/.cargo/bin"
+            curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
+            mkdir ethereum-spec-tests
+            tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests         
             cargo run -r -p evm-jsontests -F enable-slow-tests -- state -f \
               ethtests/GeneralStateTests/ \
-              ethtests/LegacyTests/Cancun/GeneralStateTests/
+              ethtests/LegacyTests/Cancun/GeneralStateTests/ \
+              ethereum-spec-tests/fixtures/state_tests/
               # Temporally disable as EOFv1 not implemented
               # ethtests/EIPTests/StateTests/
             cargo run -r -p evm-jsontests -F enable-slow-tests -- vm -f \

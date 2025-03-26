@@ -24,8 +24,9 @@ ethjson = { path = "../ethjson", features = ["test-helpers"] }
 libsecp256k1 = "0.7"
 ethcore-builtin = { path = "../ethcore-builtin" }
 parity-bytes = "0.1"
-env_logger = "0.11"
 hex-literal = "0.4"
 
 [features]
 enable-slow-tests = []
+print-debug = ["aurora-evm/print-debug"]
+dump-state = ["aurora-evm/with-serde"]

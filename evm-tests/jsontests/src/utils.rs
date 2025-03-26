@@ -139,6 +139,32 @@ pub fn flush() {
     io::stdout().flush().expect("Could not flush stdout");
 }
 
+/// EIP-7623 form Prague hard fork
+pub mod eip7623 {
+    /// The standard cost of calldata token.
+    pub const STANDARD_TOKEN_COST: usize = 4;
+    /// The cost of a non-zero byte in calldata adjusted by [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028).
+    pub const NON_ZERO_BYTE_DATA_COST: usize = 16;
+    /// The multiplier for a non zero byte in calldata adjusted by [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028).
+    pub const NON_ZERO_BYTE_MULTIPLIER: usize = NON_ZERO_BYTE_DATA_COST / STANDARD_TOKEN_COST;
+    // The cost floor per token
+    pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+
+    /// Retrieve the total number of tokens in calldata.
+    #[must_use]
+    pub fn get_tokens_in_calldata(input: &[u8]) -> u64 {
+        let zero_data_len = input.iter().filter(|v| **v == 0).count();
+        let non_zero_data_len = input.len() - zero_data_len;
+        u64::try_from(zero_data_len + non_zero_data_len * NON_ZERO_BYTE_MULTIPLIER).unwrap()
+    }
+
+    /// Calculate the transaction cost floor as specified in EIP-7623.
+    #[must_use]
+    pub const fn calc_tx_floor_cost(tokens_in_calldata: u64) -> u64 {
+        tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN + 21_000
+    }
+}
+
 /// EIP-7702
 pub mod eip7702 {
     use super::{Digest, Keccak256, H160, H256, U256};
@@ -233,12 +259,11 @@ pub mod eip_4844 {
     /// EIP-4844 constants
     /// Gas consumption of a single data blob (== blob byte size).
     pub const GAS_PER_BLOB: u64 = 1 << 17;
-    /// Target number of the blob per block.
-    pub const TARGET_BLOB_NUMBER_PER_BLOCK: u64 = 3;
-    /// Max number of blobs per block
-    pub const MAX_BLOB_NUMBER_PER_BLOCK: u64 = 2 * TARGET_BLOB_NUMBER_PER_BLOCK;
-    /// Target consumable blob gas for data blobs per block (for 1559-like pricing).
-    pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = TARGET_BLOB_NUMBER_PER_BLOCK * GAS_PER_BLOB;
+    /// Max number of blobs per block: EIP-7691
+    pub const MAX_BLOBS_PER_BLOCK_ELECTRA: u64 = 9;
+    pub const MAX_BLOBS_PER_BLOCK_CANCUN: u64 = 6;
+    /// Target consumable blob gas for data blobs per block: EIP-7691
+    pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 786432;
     /// Minimum gas price for data blobs.
     pub const MIN_BLOB_GASPRICE: u64 = 1;
     /// Controls the maximum rate of change for blob gas price.
@@ -331,7 +356,7 @@ pub mod eip_4844 {
 
 pub mod transaction {
     use crate::state::TxType;
-    use crate::utils::eip7702;
+    use crate::utils::{eip7623, eip7702};
     use aurora_evm::backend::MemoryVicinity;
     use aurora_evm::executor::stack::Authorization;
     use aurora_evm::gasometer::{self, Gasometer};
@@ -423,9 +448,13 @@ pub mod transaction {
 
                 // ensure the total blob gas spent is at most equal to the limit
                 // assert blob_gas_used <= MAX_BLOB_GAS_PER_BLOCK
-                if test_tx.blob_versioned_hashes.len()
-                    > super::eip_4844::MAX_BLOB_NUMBER_PER_BLOCK as usize
-                {
+                // EIP-7691
+                let max_blob_len = if *spec == ForkSpec::Cancun {
+                    super::eip_4844::MAX_BLOBS_PER_BLOCK_CANCUN
+                } else {
+                    super::eip_4844::MAX_BLOBS_PER_BLOCK_ELECTRA
+                };
+                if test_tx.blob_versioned_hashes.len() > max_blob_len as usize {
                     return Err(InvalidTxReason::TooManyBlobs);
                 }
             }
@@ -439,6 +468,12 @@ pub mod transaction {
         }
 
         if *spec >= ForkSpec::Prague {
+            // EIP-7623 validation
+            let floor_gas = eip7623::calc_tx_floor_cost(eip7623::get_tokens_in_calldata(&tx.data));
+            if floor_gas > tx.gas_limit.into() {
+                return Err(InvalidTxReason::GasFloorMoreThanGasLimit);
+            }
+
             // EIP-7702 - if transaction type is EOAAccountCode then
             // `authorization_list` must be present
             if TxType::from_txbytes(&tx_state.txbytes) == TxType::EOAAccountCode
@@ -447,35 +482,24 @@ pub mod transaction {
                 return Err(InvalidTxReason::AuthorizationListNotExist);
             }
 
-            // The field `to` deviates slightly from the semantics with the exception
-            // that it MUST NOT be nil and therefore must always represent
-            // a 20-byte address. This means that blob transactions cannot
-            // have the form of a create transaction.
-            let to_address: Option<Address> = test_tx.to.clone().into();
-            if to_address.is_none() {
-                return Err(InvalidTxReason::CreateTransaction);
-            }
-
             // Check EIP-7702 Spec validation steps: 1 and 2
             // Other validation step inside EVM transact logic.
             for auth in test_tx.authorization_list.iter() {
                 // 1. Verify the chain id is either 0 or the chain’s current ID.
-                let mut is_valid =
-                    auth.chain_id.0 == U256::from(0) || auth.chain_id.0 == vicinity.chain_id;
-                // 2. `authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]`
+                let mut is_valid = auth.chain_id.0 <= U256::from(u64::MAX)
+                    && (auth.chain_id.0 == U256::from(0) || auth.chain_id.0 == vicinity.chain_id);
 
+                // 3. `authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s]`
                 // Validate the signature, as in tests it is possible to have invalid signatures values.
-                let v = auth.v.0 .0;
-                if !(v[0] < u64::from(u8::MAX) && v[1..4].iter().all(|&elem| elem == 0)) {
-                    return Err(InvalidTxReason::InvalidAuthorizationSignature);
-                }
                 // Value `v` shouldn't be greater then 1
-                if v[0] > 1 {
-                    return Err(InvalidTxReason::InvalidAuthorizationSignature);
+                let v = auth.v.0;
+                if v > U256::from(1) {
+                    is_valid = false;
                 }
+
                 // EIP-2 validation
                 if auth.s.0 > eip7702::SECP256K1N_HALF {
-                    return Err(InvalidTxReason::InvalidAuthorizationSignature);
+                    is_valid = false;
                 }
 
                 let auth_address = eip7702::SignedAuthorization::new(
@@ -549,8 +573,10 @@ pub mod transaction {
         GasPriseEip1559,
         AuthorizationListNotExist,
         AuthorizationListNotSupported,
+        InvalidAuthorizationChain,
         InvalidAuthorizationSignature,
         CreateTransaction,
+        GasFloorMoreThanGasLimit,
     }
 }
 

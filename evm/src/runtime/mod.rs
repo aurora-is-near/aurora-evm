@@ -285,6 +285,10 @@ pub struct Config {
     pub gas_per_empty_account_cost: u64,
     /// EIP-7702
     pub gas_per_auth_base_cost: u64,
+    /// EIP-7623
+    pub has_floor_gas: bool,
+    /// EIP-7623
+    pub total_cost_floor_per_token: u64,
 }
 
 impl Config {
@@ -348,6 +352,8 @@ impl Config {
             has_authorization_list: false,
             gas_per_empty_account_cost: 0,
             gas_per_auth_base_cost: 0,
+            has_floor_gas: false,
+            total_cost_floor_per_token: 0,
         }
     }
 
@@ -411,6 +417,8 @@ impl Config {
             has_authorization_list: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
+            has_floor_gas: false,
+            total_cost_floor_per_token: 0,
         }
     }
 
@@ -469,6 +477,8 @@ impl Config {
             has_authorization_list,
             gas_per_empty_account_cost,
             gas_per_auth_base_cost,
+            has_floor_gas,
+            total_cost_floor_per_token,
         } = inputs;
 
         // See https://eips.ethereum.org/EIPS/eip-2929
@@ -542,6 +552,8 @@ impl Config {
             has_authorization_list,
             gas_per_empty_account_cost,
             gas_per_auth_base_cost,
+            has_floor_gas,
+            total_cost_floor_per_token,
         }
     }
 }
@@ -568,6 +580,8 @@ struct DerivedConfigInputs {
     has_authorization_list: bool,
     gas_per_empty_account_cost: u64,
     gas_per_auth_base_cost: u64,
+    has_floor_gas: bool,
+    total_cost_floor_per_token: u64,
 }
 
 impl DerivedConfigInputs {
@@ -590,6 +604,8 @@ impl DerivedConfigInputs {
             has_authorization_list: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
+            has_floor_gas: false,
+            total_cost_floor_per_token: 0,
         }
     }
 
@@ -612,6 +628,8 @@ impl DerivedConfigInputs {
             has_authorization_list: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
+            has_floor_gas: false,
+            total_cost_floor_per_token: 0,
         }
     }
 
@@ -634,6 +652,8 @@ impl DerivedConfigInputs {
             has_authorization_list: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
+            has_floor_gas: false,
+            total_cost_floor_per_token: 0,
         }
     }
 
@@ -657,6 +677,8 @@ impl DerivedConfigInputs {
             has_authorization_list: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
+            has_floor_gas: false,
+            total_cost_floor_per_token: 0,
         }
     }
 
@@ -674,7 +696,9 @@ impl DerivedConfigInputs {
         let mut config = Self::cancun();
         config.has_authorization_list = true;
         config.gas_per_empty_account_cost = 25000;
-        config.gas_per_auth_base_cost = 2500;
+        config.gas_per_auth_base_cost = 12500;
+        config.has_floor_gas = true;
+        config.total_cost_floor_per_token = 10;
         config
     }
 }
