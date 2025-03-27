@@ -1,0 +1,43 @@
+name: Lint
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D clippy::all -D clippy::nursery
+      - name: Clippy no_std
+        run: cargo clippy --no-default-features -- -D clippy::all -D clippy::nursery
+      - name: Clippy with features
+        run: cargo clippy --features tracing,create-fixed -- -D clippy::all -D clippy::nursery
+      - name: Clippy with features for evm-jsontests
+        run: cargo clippy -p evm-jsontests --features dump-state -- -D clippy::all -D clippy::nursery
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Build NoStd
+        run: cargo build --no-default-features
+
+      - name: Build for feature (tracing)
+        run: cargo build --features tracing

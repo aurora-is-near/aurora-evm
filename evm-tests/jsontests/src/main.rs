@@ -8,6 +8,7 @@ use std::fs;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), String> {
@@ -239,8 +240,15 @@ fn run_test_for_file(
     let test_suite = serde_json::from_reader::<_, HashMap<String, statetests::Test>>(reader)
         .expect("Parse test cases failed");
 
+    let file_name = Arc::new(file_name.to_path_buf());
     for (name, test) in test_suite {
-        let test_res = statetests::test(verbose_output.clone(), &name, test, spec.clone());
+        let test_res = statetests::test(
+            verbose_output.clone(),
+            &name,
+            test,
+            spec.clone(),
+            file_name.clone(),
+        );
 
         if test_res.failed > 0 {
             if verbose_output.verbose {
