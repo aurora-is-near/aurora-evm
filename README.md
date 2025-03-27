@@ -1,6 +1,6 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](sLICENSE)
-[![Build & Lint Status](https://github.com/rust-blockchain/evm/workflows/Rust/badge.svg)](https://github.com/rust-blockchain/evm/actions?query=workflow%3ARust)
-[![Ethereum tests Status](https://github.com/rust-blockchain/evm/workflows/Rust/badge.svg)](https://github.com/rust-blockchain/evm/actions?query=workflow%3ARust)
+[![Build & Lint Status](https://github.com/aurora-is-near/aurora-evm/actions/workflows/lint.yml/badge.svg)](https://github.com/aurora-is-near/aurora-evm/actions/workflows/lint.yml)
+[![Ethereum tests Status](https://github.com/aurora-is-near/aurora-evm/actions/workflows/rust.yml/badge.svg)](https://github.com/aurora-is-near/aurora-evm/actions/workflows/rust.yml)
 [![Crates.io version](https://img.shields.io/crates/v/aurora-evm.svg?style=flat-square)](https://crates.io/crates/aurora-evm)
 [![Crates.io Total Downloads](https://img.shields.io/crates/d/aurora-evm?style=flat-square&label=crates.io%20downloads)](https://crates.io/crates/aurora-evm)
 
