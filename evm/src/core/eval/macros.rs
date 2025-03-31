@@ -74,9 +74,11 @@ macro_rules! op1_u256_fn {
 
 macro_rules! op2_u256_bool_ref {
     ( $machine:expr, $op:ident ) => {{
+        use crate::utils::{U256_ONE, U256_ZERO};
+
         pop_u256!($machine, op1, op2);
         let ret = op1.$op(&op2);
-        push_u256!($machine, if ret { U256::one() } else { U256::zero() });
+        push_u256!($machine, if ret { U256_ONE } else { U256_ZERO });
         trace_op!("{} {}, {}: {}", stringify!($op), op1, op2, ret);
 
         Control::Continue(1)

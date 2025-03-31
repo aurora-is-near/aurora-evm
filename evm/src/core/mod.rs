@@ -25,6 +25,7 @@ pub use opcode::Opcode;
 pub use stack::Stack;
 pub use valids::Valids;
 
+use crate::utils::U256_ZERO;
 use core::ops::Range;
 use eval::{eval, Control};
 use prelude::*;
@@ -107,7 +108,7 @@ impl Machine {
             data,
             code,
             position: Ok(0),
-            return_range: U256::zero()..U256::zero(),
+            return_range: U256_ZERO..U256_ZERO,
             valids,
             memory: Memory::new(memory_limit),
             stack: Stack::new(stack_limit),

@@ -1,12 +1,13 @@
 use crate::core::utils::I256;
+use crate::utils::{U256_ONE, U256_ZERO};
 use core::convert::TryInto;
 use core::ops::Rem;
 use primitive_types::{U256, U512};
 
 #[inline]
 pub fn div(op1: U256, op2: U256) -> U256 {
-    if op2 == U256::zero() {
-        U256::zero()
+    if op2 == U256_ZERO {
+        U256_ZERO
     } else {
         op1 / op2
     }
@@ -22,8 +23,8 @@ pub fn sdiv(op1: U256, op2: U256) -> U256 {
 
 #[inline]
 pub fn rem(op1: U256, op2: U256) -> U256 {
-    if op2 == U256::zero() {
-        U256::zero()
+    if op2 == U256_ZERO {
+        U256_ZERO
     } else {
         op1.rem(op2)
     }
@@ -31,8 +32,8 @@ pub fn rem(op1: U256, op2: U256) -> U256 {
 
 #[inline]
 pub fn srem(op1: U256, op2: U256) -> U256 {
-    if op2 == U256::zero() {
-        U256::zero()
+    if op2 == U256_ZERO {
+        U256_ZERO
     } else {
         let op1: I256 = op1.into();
         let op2: I256 = op2.into();
@@ -48,7 +49,7 @@ pub fn addmod(op1: U256, op2: U256, op3: U256) -> U256 {
     let op3: U512 = op3.into();
 
     if op3 == U512::zero() {
-        U256::zero()
+        U256_ZERO
     } else {
         let v = (op1 + op2) % op3;
         v.try_into()
@@ -63,7 +64,7 @@ pub fn mulmod(op1: U256, op2: U256, op3: U256) -> U256 {
     let op3: U512 = op3.into();
 
     if op3 == U512::zero() {
-        U256::zero()
+        U256_ZERO
     } else {
         let v = (op1 * op2) % op3;
         v.try_into()
@@ -110,7 +111,7 @@ pub fn signextend(op1: U256, op2: U256) -> U256 {
         #[allow(clippy::as_conversions)]
         let bit_index = (8 * op1.low_u32() + 7) as usize;
         let bit = op2.bit(bit_index);
-        let mask = (U256::one() << bit_index) - U256::one();
+        let mask = (U256::one() << bit_index) - U256_ONE;
         if bit {
             op2 | !mask
         } else {
