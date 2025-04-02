@@ -1,4 +1,5 @@
 use super::{Apply, ApplyBackend, Backend, Basic, Log};
+use crate::core::utils::{U256_ONE, U256_ZERO};
 use crate::prelude::*;
 use primitive_types::{H160, H256, U256};
 
@@ -106,12 +107,12 @@ impl Backend for MemoryBackend<'_> {
     }
     fn block_hash(&self, number: U256) -> H256 {
         if number >= self.vicinity.block_number
-            || self.vicinity.block_number - number - U256::one()
+            || self.vicinity.block_number - number - U256_ONE
                 >= U256::from(self.vicinity.block_hashes.len())
         {
             H256::default()
         } else {
-            let index = (self.vicinity.block_number - number - U256::one()).as_usize();
+            let index = (self.vicinity.block_number - number - U256_ONE).as_usize();
             self.vicinity.block_hashes[index]
         }
     }
@@ -233,8 +234,8 @@ impl ApplyBackend for MemoryBackend<'_> {
                             }
                         }
 
-                        account.balance == U256::zero()
-                            && account.nonce == U256::zero()
+                        account.balance == U256_ZERO
+                            && account.nonce == U256_ZERO
                             && account.code.is_empty()
                     };
 

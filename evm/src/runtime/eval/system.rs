@@ -1,5 +1,5 @@
 use super::Control;
-use crate::core::utils::{U64_MAX, USIZE_MAX};
+use crate::core::utils::{U256_ZERO, U64_MAX, USIZE_MAX};
 use crate::prelude::*;
 use crate::{
     CallScheme, Capture, Context, CreateScheme, ExitError, ExitSucceed, Handler, Runtime, Transfer,
@@ -12,7 +12,7 @@ pub fn sha3<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     pop_u256!(runtime, from, len);
 
     // Cast to `usize` after length checking to avoid overflow
-    let from = if len == U256::zero() {
+    let from = if len == U256_ZERO {
         usize::MAX
     } else {
         as_usize_or_fail!(from)
@@ -118,7 +118,7 @@ pub fn blob_hash<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     // Get blob_hash from `tx.blob_versioned_hashes[index]`
     // as described:
     // - https://eips.ethereum.org/EIPS/eip-4844#opcode-to-get-versioned-hashes
-    let blob_hash = handler.get_blob_hash(index).unwrap_or(U256::zero());
+    let blob_hash = handler.get_blob_hash(index).unwrap_or(U256_ZERO);
     // Set top stack index with `blob_hash` value
     if let Err(e) = runtime.machine.stack_mut().set(0, blob_hash) {
         return Control::Exit(e.into());
@@ -147,7 +147,7 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H>
     pop_h256!(runtime, address);
     pop_u256!(runtime, memory_offset, code_offset, len);
 
-    if len == U256::zero() {
+    if len == U256_ZERO {
         return Control::Continue;
     }
     let len = as_usize_or_fail!(len);
@@ -159,7 +159,7 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H>
         .machine
         .memory_mut()
         .resize_offset(memory_offset, len));
-    match runtime.machine.memory_mut().copy_large(
+    match runtime.machine.memory_mut().copy_data(
         memory_offset,
         code_offset,
         len,
@@ -187,7 +187,7 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     // from the stack might be larger than `usize::MAX`, hence why the
     // `as_usize` cast is not always safe. But because the value does
     // not matter when `len == 0` we can safely set it equal to zero instead.
-    let memory_offset = if len == U256::zero() {
+    let memory_offset = if len == U256_ZERO {
         0
     } else {
         // SAFETY: this cast is safe because if `len > 0` then gas cost of memory
@@ -209,7 +209,7 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
         return Control::Exit(ExitError::OutOfOffset.into());
     }
 
-    match runtime.machine.memory_mut().copy_large(
+    match runtime.machine.memory_mut().copy_data(
         memory_offset,
         data_offset,
         len,
@@ -327,7 +327,7 @@ pub fn tstore<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> 
 /// EIP-5656: MCOPY - Memory copying instruction
 pub fn mcopy<H: Handler>(runtime: &mut Runtime, _handler: &mut H) -> Control<H> {
     pop_u256!(runtime, dst, src, len);
-    if len == U256::zero() {
+    if len == U256_ZERO {
         return Control::Continue;
     }
     let len = as_usize_or_fail!(len, ExitError::OutOfGas);
@@ -358,7 +358,7 @@ pub fn log<H: Handler>(runtime: &mut Runtime, n: u8, handler: &mut H) -> Control
     pop_u256!(runtime, offset, len);
 
     // Cast to `usize` after length checking to avoid overflow
-    let offset = if len == U256::zero() {
+    let offset = if len == U256_ZERO {
         usize::MAX
     } else {
         as_usize_or_fail!(offset)
@@ -416,7 +416,7 @@ pub fn create<H: Handler>(runtime: &mut Runtime, is_create2: bool, handler: &mut
     pop_u256!(runtime, value, code_offset, len);
 
     // Cast to `usize` after length checking to avoid overflow
-    let code_offset = if len == U256::zero() {
+    let code_offset = if len == U256_ZERO {
         usize::MAX
     } else {
         as_usize_or_fail!(code_offset)
@@ -480,21 +480,21 @@ pub fn call<H: Handler>(runtime: &mut Runtime, scheme: CallScheme, handler: &mut
             pop_u256!(runtime, value);
             value
         }
-        CallScheme::DelegateCall | CallScheme::StaticCall => U256::zero(),
+        CallScheme::DelegateCall | CallScheme::StaticCall => U256_ZERO,
     };
 
     pop_u256!(runtime, in_offset, in_len);
     pop_u256!(runtime, out_offset, out_len);
 
     // Cast to `usize` after length checking to avoid overflow
-    let in_offset = if in_len == U256::zero() {
+    let in_offset = if in_len == U256_ZERO {
         usize::MAX
     } else {
         as_usize_or_fail!(in_offset)
     };
     let in_len = as_usize_or_fail!(in_len);
     // Cast to `usize` after length checking to avoid overflow
-    let out_offset = if out_len == U256::zero() {
+    let out_offset = if out_len == U256_ZERO {
         usize::MAX
     } else {
         as_usize_or_fail!(out_offset)

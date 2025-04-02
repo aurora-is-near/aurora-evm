@@ -1,5 +1,5 @@
 use crate::backend::Backend;
-use crate::core::utils::U64_MAX;
+use crate::core::utils::{U256_ZERO, U64_MAX};
 use crate::core::{ExitFatal, InterpreterHandler, Machine, Trap};
 use crate::executor::stack::precompile::{
     PrecompileFailure, PrecompileHandle, PrecompileOutput, PrecompileSet,
@@ -870,7 +870,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
     /// [EIP-7610](https://eips.ethereum.org/EIPS/eip-7610)
     pub fn is_create_collision(&self, address: H160) -> bool {
         !self.code(address).is_empty()
-            || self.nonce(address) > U256::zero()
+            || self.nonce(address) > U256_ZERO
             || !self.state.is_empty_storage(address)
     }
 
@@ -1186,7 +1186,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         let mut gas_limit = try_or_fail!(self.calc_gas_limit_and_record(target_gas, take_l64));
 
         if let Some(transfer) = transfer.as_ref() {
-            if take_stipend && transfer.value != U256::zero() {
+            if take_stipend && transfer.value != U256_ZERO {
                 gas_limit = gas_limit.saturating_add(self.config.call_stipend);
             }
         }
@@ -1835,7 +1835,7 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
             .map(|target| self.executor.is_cold(target, None));
 
         let gas_cost = gasometer::GasCost::Call {
-            value: transfer.clone().map_or_else(U256::zero, |x| x.value),
+            value: transfer.clone().map_or(U256_ZERO, |x| x.value),
             gas: U256::from(gas_limit.unwrap_or(u64::MAX)),
             target_is_cold,
             delegated_designator_is_cold,

@@ -29,7 +29,7 @@ pub fn codecopy(state: &mut Machine) -> Control {
     try_or_fail!(state.memory.resize_offset(memory_offset, len));
     match state
         .memory
-        .copy_large(memory_offset, code_offset, len, &state.code)
+        .copy_data(memory_offset, code_offset, len, &state.code)
     {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
@@ -76,7 +76,7 @@ pub fn calldatacopy(state: &mut Machine) -> Control {
 
     match state
         .memory
-        .copy_large(memory_offset, data_offset, len, &state.data)
+        .copy_data(memory_offset, data_offset, len, &state.data)
     {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
@@ -105,7 +105,7 @@ pub fn mstore(state: &mut Machine) -> Control {
     let index = as_usize_or_fail!(index);
     pop_h256!(state, value);
     try_or_fail!(state.memory.resize_offset(index, 32));
-    match state.memory.set(index, &value[..], Some(32)) {
+    match state.memory.set(index, &value[..], 32) {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
     }
@@ -117,7 +117,7 @@ pub fn mstore8(state: &mut Machine) -> Control {
     let index = as_usize_or_fail!(index);
     try_or_fail!(state.memory.resize_offset(index, 1));
     let value = u8::try_from(value.low_u32() & 0xff).unwrap_or(u8::MAX);
-    match state.memory.set(index, &[value], Some(1)) {
+    match state.memory.set(index, &[value], 1) {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
     }

@@ -11,6 +11,8 @@ pub const U64_MAX: U256 = U256([u64::MAX, 0, 0, 0]);
 pub const U256_ZERO: U256 = U256([0, 0, 0, 0]);
 /// Precalculated `one` value for `U256`
 pub const U256_ONE: U256 = U256([1, 0, 0, 0]);
+/// Precalculated `32` value for `U256`
+pub const U256_VALUE_32: U256 = U256([32, 0, 0, 0]);
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Sign {
@@ -127,7 +129,7 @@ impl Rem for I256 {
     fn rem(self, other: Self) -> Self {
         let r = (self.1 % other.1) & SIGN_BIT_MASK;
 
-        if r == U256::zero() {
+        if r == U256_ZERO {
             return Self::zero();
         }
 
@@ -137,7 +139,7 @@ impl Rem for I256 {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{Sign, I256};
+    use crate::utils::{Sign, I256, U256_ONE};
     use primitive_types::U256;
     use std::num::Wrapping;
 
@@ -151,7 +153,7 @@ mod tests {
         assert_eq!(100i8 / 2, 50i8);
 
         // Now the same calculations based on i256
-        let one = I256(Sign::Zero, U256::one());
+        let one = I256(Sign::Zero, U256_ONE);
         let one_hundred = I256(Sign::Zero, U256::from(100));
         let fifty = I256(Sign::Plus, U256::from(50));
         let two = I256(Sign::Zero, U256::from(2));
