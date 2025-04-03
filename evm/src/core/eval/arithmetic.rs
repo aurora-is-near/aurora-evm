@@ -52,8 +52,7 @@ pub fn addmod(op1: U256, op2: U256, op3: U256) -> U256 {
         U256_ZERO
     } else {
         let v = (op1 + op2) % op3;
-        v.try_into()
-            .expect("op3 is less than U256::MAX, thus it never overflows; qed")
+        v.try_into().expect("ADDMOD_OP3_OVERFLOW")
     }
 }
 
@@ -67,8 +66,7 @@ pub fn mulmod(op1: U256, op2: U256, op3: U256) -> U256 {
         U256_ZERO
     } else {
         let v = (op1 * op2) % op3;
-        v.try_into()
-            .expect("op3 is less than U256::MAX, thus it never overflows; qed")
+        v.try_into().expect("MULMOD_OP3_OVERFLOW")
     }
 }
 
@@ -78,8 +76,8 @@ pub fn exp(op1: U256, op2: U256) -> U256 {
     let mut op2 = op2;
     let mut r: U256 = 1.into();
 
-    while op2 != 0.into() {
-        if op2 & 1.into() != 0.into() {
+    while op2 != U256_ZERO {
+        if op2 & U256_ONE != U256_ZERO {
             r = r.overflowing_mul(op1).0;
         }
         op2 >>= 1;

@@ -52,10 +52,6 @@ pub struct Machine {
 
 /// EVM interpreter handler.
 pub trait InterpreterHandler {
-    fn before_eval(&mut self);
-
-    fn after_eval(&mut self);
-
     /// # Errors
     /// Return `ExitError`
     fn before_bytecode(
@@ -66,7 +62,8 @@ pub trait InterpreterHandler {
         address: &H160,
     ) -> Result<(), ExitError>;
 
-    // Only invoked if #[cfg(feature = "tracing")]
+    // Only invoked for tracing
+    #[cfg(feature = "tracing")]
     fn after_bytecode(&mut self, result: &Result<(), Capture<ExitReason, Trap>>, machine: &Machine);
 }
 
@@ -153,18 +150,6 @@ impl Machine {
         }
     }
 
-    /// Loop stepping the machine, until it stops.
-    pub fn run(&mut self) -> Capture<ExitReason, Trap> {
-        let mut handler = SimpleInterpreterHandler::default();
-        let address = H160::default();
-        loop {
-            match self.step(&mut handler, &address) {
-                Ok(()) => (),
-                Err(res) => return res,
-            }
-        }
-    }
-
     /// Step the machine, executing until exit or trap.
     ///
     /// # Errors
@@ -187,59 +172,5 @@ impl Machine {
             Control::Trap(opcode) => Err(Capture::Trap(opcode)),
             Control::Continue(_) | Control::Jump(_) => Ok(()),
         }
-    }
-}
-
-pub struct SimpleInterpreterHandler {
-    pub executed: u64,
-    pub profile: [u64; 256],
-    pub address: H160,
-}
-
-impl SimpleInterpreterHandler {
-    #[must_use]
-    pub const fn new(address: H160) -> Self {
-        Self {
-            executed: 0,
-            profile: [0; 256],
-            address,
-        }
-    }
-}
-
-impl Default for SimpleInterpreterHandler {
-    fn default() -> Self {
-        Self {
-            executed: 0,
-            profile: [0; 256],
-            address: H160::default(),
-        }
-    }
-}
-
-impl InterpreterHandler for SimpleInterpreterHandler {
-    fn before_eval(&mut self) {}
-
-    fn after_eval(&mut self) {}
-
-    #[inline]
-    fn before_bytecode(
-        &mut self,
-        opcode: Opcode,
-        _pc: usize,
-        _machine: &Machine,
-        _address: &H160,
-    ) -> Result<(), ExitError> {
-        self.executed += 1;
-        self.profile[opcode.as_usize()] += 1;
-        Ok(())
-    }
-
-    #[inline]
-    fn after_bytecode(
-        &mut self,
-        _result: &Result<(), Capture<ExitReason, Trap>>,
-        _machine: &Machine,
-    ) {
     }
 }

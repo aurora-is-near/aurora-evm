@@ -1,6 +1,6 @@
 use crate::backend::Backend;
 use crate::core::utils::{U256_ZERO, U64_MAX};
-use crate::core::{ExitFatal, InterpreterHandler, Machine, Trap};
+use crate::core::{ExitFatal, InterpreterHandler, Machine};
 use crate::executor::stack::precompile::{
     PrecompileFailure, PrecompileHandle, PrecompileOutput, PrecompileSet,
 };
@@ -525,7 +525,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             let runtime_kind = runtime.kind;
             let (reason, maybe_address, return_data) = match runtime_kind {
                 RuntimeKind::Create(created_address) => {
-                    let (reason, maybe_address, return_data) = self.cleanup_for_create(
+                    let (reason, maybe_address, return_data) = self.exit_substate_for_create(
                         created_address,
                         reason,
                         runtime.inner.machine().return_value(),
@@ -533,7 +533,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                     (reason, maybe_address, return_data)
                 }
                 RuntimeKind::Call(code_address) => {
-                    let return_data = self.cleanup_for_call(
+                    let return_data = self.exit_substate_for_call(
                         code_address,
                         &reason,
                         runtime.inner.machine().return_value(),
@@ -1273,7 +1273,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         }))
     }
 
-    fn cleanup_for_create(
+    fn exit_substate_for_create(
         &mut self,
         created_address: H160,
         reason: ExitReason,
@@ -1349,7 +1349,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         }
     }
 
-    fn cleanup_for_call(
+    fn exit_substate_for_call(
         &mut self,
         code_address: H160,
         reason: &ExitReason,
@@ -1386,12 +1386,6 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 impl<'config, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
     for StackExecutor<'config, '_, S, P>
 {
-    #[inline]
-    fn before_eval(&mut self) {}
-
-    #[inline]
-    fn after_eval(&mut self) {}
-
     #[inline]
     fn before_bytecode(
         &mut self,
@@ -1441,23 +1435,20 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
         Ok(())
     }
 
+    #[cfg(feature = "tracing")]
     #[inline]
     fn after_bytecode(
         &mut self,
-        _result: &Result<(), Capture<ExitReason, Trap>>,
-        _machine: &Machine,
+        result: &Result<(), Capture<ExitReason, crate::core::Trap>>,
+        machine: &Machine,
     ) {
-        #[cfg(feature = "tracing")]
-        {
-            use crate::runtime::tracing::Event::StepResult;
-            crate::runtime::tracing::with(|listener| {
-                #[allow(clippy::used_underscore_binding)]
-                listener.event(StepResult {
-                    result: _result,
-                    return_value: _machine.return_value().as_slice(),
-                });
+        use crate::runtime::tracing::Event::StepResult;
+        crate::runtime::tracing::with(|listener| {
+            listener.event(StepResult {
+                result,
+                return_value: machine.return_value().as_slice(),
             });
-        }
+        });
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::core::utils::{Sign, I256};
-use crate::utils::{U256_ONE, U256_ZERO};
+use crate::utils::{U256_ONE, U256_VALUE_256, U256_VALUE_32, U256_ZERO};
 use primitive_types::U256;
 
 #[inline]
@@ -43,7 +43,7 @@ pub fn not(op1: U256) -> U256 {
 #[inline]
 pub fn byte(op1: U256, op2: U256) -> U256 {
     let mut ret = U256_ZERO;
-    if op1 < 32.into() {
+    if op1 < U256_VALUE_32 {
         let o = op1.as_usize();
         for i in 0..8 {
             let t = 255 - (7 - i + 8 * o);
@@ -56,7 +56,7 @@ pub fn byte(op1: U256, op2: U256) -> U256 {
 
 #[inline]
 pub fn shl(shift: U256, value: U256) -> U256 {
-    if value == U256_ZERO || shift >= U256::from(256) {
+    if value == U256_ZERO || shift >= U256_VALUE_256 {
         U256_ZERO
     } else {
         value << shift.as_usize()
@@ -65,7 +65,7 @@ pub fn shl(shift: U256, value: U256) -> U256 {
 
 #[inline]
 pub fn shr(shift: U256, value: U256) -> U256 {
-    if value == U256_ZERO || shift >= U256::from(256) {
+    if value == U256_ZERO || shift >= U256_VALUE_256 {
         U256_ZERO
     } else {
         value >> shift.as_usize()
@@ -76,7 +76,7 @@ pub fn shr(shift: U256, value: U256) -> U256 {
 pub fn sar(shift: U256, value: U256) -> U256 {
     let value = I256::from(value);
 
-    if value == I256::zero() || shift >= U256::from(256) {
+    if value == I256::zero() || shift >= U256_VALUE_256 {
         let I256(sign, _) = value;
         match sign {
             // value is 0 or >=1, pushing 0
@@ -85,8 +85,7 @@ pub fn sar(shift: U256, value: U256) -> U256 {
             Sign::Minus => I256(Sign::Minus, U256_ONE).into(),
         }
     } else {
-        let shift: usize = shift.as_usize();
-
+        let shift = shift.as_usize();
         match value.0 {
             Sign::Plus | Sign::Zero => value.1 >> shift,
             Sign::Minus => {
