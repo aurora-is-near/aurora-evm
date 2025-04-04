@@ -8,9 +8,9 @@ pub const USIZE_MAX: U256 = U256([usize::MAX as u64, 0, 0, 0]);
 /// Precalculated `u64::MAX` for `U256`
 pub const U64_MAX: U256 = U256([u64::MAX, 0, 0, 0]);
 /// Precalculated `zero` value for `U256`
-pub const U256_ZERO: U256 = U256([0, 0, 0, 0]);
+pub const U256_ZERO: U256 = U256::zero();
 /// Precalculated `one` value for `U256`
-pub const U256_ONE: U256 = U256([1, 0, 0, 0]);
+pub const U256_ONE: U256 = U256::one();
 /// Precalculated `32` value for `U256`
 pub const U256_VALUE_32: U256 = U256([32, 0, 0, 0]);
 /// Precalculated `256` value for `U256`
