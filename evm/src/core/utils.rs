@@ -7,6 +7,14 @@ use primitive_types::U256;
 pub const USIZE_MAX: U256 = U256([usize::MAX as u64, 0, 0, 0]);
 /// Precalculated `u64::MAX` for `U256`
 pub const U64_MAX: U256 = U256([u64::MAX, 0, 0, 0]);
+/// Precalculated `zero` value for `U256`
+pub const U256_ZERO: U256 = U256::zero();
+/// Precalculated `one` value for `U256`
+pub const U256_ONE: U256 = U256::one();
+/// Precalculated `32` value for `U256`
+pub const U256_VALUE_32: U256 = U256([32, 0, 0, 0]);
+/// Precalculated `256` value for `U256`
+pub const U256_VALUE_256: U256 = U256([256, 0, 0, 0]);
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Sign {
@@ -29,12 +37,12 @@ impl I256 {
     /// Zero value of I256.
     #[must_use]
     pub const fn zero() -> Self {
-        Self(Sign::Zero, U256::zero())
+        Self(Sign::Zero, U256_ZERO)
     }
     /// Minimum value of I256.
     #[must_use]
     pub fn min_value() -> Self {
-        Self(Sign::Minus, (U256::MAX & SIGN_BIT_MASK) + U256::from(1u64))
+        Self(Sign::Minus, (U256::MAX & SIGN_BIT_MASK) + U256_ONE)
     }
 }
 
@@ -64,12 +72,12 @@ impl Default for I256 {
 
 impl From<U256> for I256 {
     fn from(val: U256) -> Self {
-        if val == U256::zero() {
+        if val == U256_ZERO {
             Self::zero()
         } else if val & SIGN_BIT_MASK == val {
             Self(Sign::Plus, val)
         } else {
-            Self(Sign::Minus, !val + U256::from(1u64))
+            Self(Sign::Minus, !val + U256_ONE)
         }
     }
 }
@@ -95,13 +103,13 @@ impl Div for I256 {
             return Self::zero();
         }
 
-        if self == Self::min_value() && other.1 == U256::from(1u64) {
+        if self == Self::min_value() && other.1 == U256_ONE {
             return Self::min_value();
         }
 
         let d = (self.1 / other.1) & SIGN_BIT_MASK;
 
-        if d == U256::zero() {
+        if d == U256_ZERO {
             return Self::zero();
         }
 
@@ -123,7 +131,7 @@ impl Rem for I256 {
     fn rem(self, other: Self) -> Self {
         let r = (self.1 % other.1) & SIGN_BIT_MASK;
 
-        if r == U256::zero() {
+        if r == U256_ZERO {
             return Self::zero();
         }
 
@@ -133,7 +141,7 @@ impl Rem for I256 {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{Sign, I256};
+    use crate::utils::{Sign, I256, U256_ONE};
     use primitive_types::U256;
     use std::num::Wrapping;
 
@@ -147,7 +155,7 @@ mod tests {
         assert_eq!(100i8 / 2, 50i8);
 
         // Now the same calculations based on i256
-        let one = I256(Sign::Zero, U256::from(1));
+        let one = I256(Sign::Zero, U256_ONE);
         let one_hundred = I256(Sign::Zero, U256::from(100));
         let fifty = I256(Sign::Plus, U256::from(50));
         let two = I256(Sign::Zero, U256::from(2));

@@ -113,15 +113,13 @@ impl Memory {
     pub fn get_h256(&self, offset: usize) -> H256 {
         let mut ret = [0; 32];
 
-        #[allow(clippy::needless_range_loop)]
-        for index in 0..32 {
-            let position = offset + index;
-            if position >= self.data.len() {
-                break;
-            }
-
-            ret[index] = self.data[position];
+        let data_len = self.data.len();
+        if offset >= data_len {
+            return H256(ret);
         }
+        let available_bytes = data_len - offset;
+        let count = 32.min(available_bytes);
+        ret[..count].copy_from_slice(&self.data[offset..offset + count]);
 
         H256(ret)
     }
@@ -135,31 +133,29 @@ impl Memory {
         &mut self,
         offset: usize,
         value: &[u8],
-        target_size: Option<usize>,
+        target_size: usize,
     ) -> Result<(), ExitFatal> {
-        let target_size = target_size.unwrap_or(value.len());
         if target_size == 0 {
             return Ok(());
         }
 
-        if offset
-            .checked_add(target_size)
-            .map_or(true, |pos| pos > self.limit)
-        {
-            return Err(ExitFatal::NotSupported);
+        let end_offset = match offset.checked_add(target_size) {
+            Some(pos) if pos <= self.limit => pos,
+            _ => return Err(ExitFatal::NotSupported),
+        };
+
+        if self.data.len() < end_offset {
+            self.data.resize(end_offset, 0);
         }
 
-        if self.data.len() < offset + target_size {
-            self.data.resize(offset + target_size, 0);
+        let copy_len = min(value.len(), target_size);
+        let dest_slice = &mut self.data[offset..end_offset];
+        if copy_len > 0 {
+            dest_slice[..copy_len].copy_from_slice(&value[..copy_len]);
         }
 
-        if target_size > value.len() {
-            self.data[offset..((value.len()) + offset)].clone_from_slice(value);
-            for index in (value.len())..target_size {
-                self.data[offset + index] = 0;
-            }
-        } else {
-            self.data[offset..(target_size + offset)].clone_from_slice(&value[..target_size]);
+        if target_size > copy_len {
+            dest_slice[copy_len..].fill(0);
         }
 
         Ok(())
@@ -202,45 +198,67 @@ impl Memory {
         Ok(())
     }
 
-    /// Copy `data` into the memory, of given `len`.
+    /// Copy `data` into the memory, for the given `length`.
+    ///
+    /// Copies `min(length, available_source_bytes)` from the source `data`
+    /// starting at `data_offset`, into `self.data` starting at `memory_offset`.
+    /// If `length` is greater than the number of bytes copied from source, the
+    /// remaining bytes in the destination range (up to `length`) are filled with zeros.
     ///
     /// # Errors
-    /// Return `ExitFatal::NotSupported` if `set()` call return out of memory limit.
-    pub fn copy_large(
+    /// Returns `ExitFatal::NotSupported` if the destination range `memory_offset..memory_offset + length`
+    /// exceeds the memory limit or causes usize overflow.
+    pub fn copy_data(
         &mut self,
         memory_offset: usize,
         data_offset: U256,
-        len: usize,
+        length: usize,
         data: &[u8],
     ) -> Result<(), ExitFatal> {
-        // Needed to pass ethereum test defined in
-        // https://github.com/ethereum/tests/commit/17f7e7a6c64bb878c1b6af9dc8371b46c133e46d
-        // (regardless of other inputs, a zero-length copy is defined to be a no-op).
-        // TODO: refactor `set` and `copy_large` (see
-        // https://github.com/rust-blockchain/evm/pull/40#discussion_r677180794)
-        if len == 0 {
+        // 1. Handle zero length copy (no-op)
+        if length == 0 {
             return Ok(());
         }
 
-        #[allow(clippy::as_conversions)]
-        let data = data_offset
-            .checked_add(len.into())
-            .map_or(&[] as &[u8], |end| {
-                if end > USIZE_MAX {
-                    &[]
-                } else {
-                    let data_offset = data_offset.as_usize();
-                    let end = end.as_usize();
+        // 2. Check destination bounds and calculate end offset
+        let dest_end_offset = match memory_offset.checked_add(length) {
+            Some(pos) if pos <= self.limit => pos,
+            _ => return Err(ExitFatal::NotSupported), // Error if overflow or exceeds limit
+        };
 
-                    if data_offset > data.len() {
-                        &[]
-                    } else {
-                        &data[data_offset..min(end, data.len())]
-                    }
-                }
-            });
+        // 3. Ensure destination buffer (`self.data`) is large enough
+        //    Resize before taking mutable slices.
+        if self.data.len() < dest_end_offset {
+            self.data.resize(dest_end_offset, 0);
+        }
 
-        self.set(memory_offset, data, Some(len))
+        // 4. Preparing the copy and padding directly into self.data
+        // Get the mutable slice of the exact destination region length
+        // This is safe because we resized self.data to at least `dest_end_offset`
+        let dest_slice = &mut self.data[memory_offset..dest_end_offset];
+
+        // 5. Check source bounds and rethink zero the data slice
+        if data_offset > USIZE_MAX {
+            dest_slice.fill(0);
+            return Ok(());
+        }
+        let data_offset = data_offset.as_usize();
+        if data_offset > data.len() {
+            dest_slice.fill(0);
+            return Ok(());
+        }
+        // Calculate how many bytes are available in `data` from `data_offset`
+        let actual_len = data.len() - data_offset;
+        // Calculate copy length as the minimum of requested length and available length
+        let copy_len = min(actual_len, length);
+        // Copy data to `dest_slice`
+        if copy_len > 0 {
+            dest_slice[..copy_len].copy_from_slice(&data[data_offset..data_offset + copy_len]);
+        }
+        if length > copy_len {
+            dest_slice[copy_len..].fill(0);
+        }
+        Ok(())
     }
 }
 

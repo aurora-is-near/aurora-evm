@@ -2,6 +2,7 @@
 mod macros;
 mod system;
 
+use crate::core::utils::{U256_ONE, U256_ZERO};
 use crate::prelude::*;
 use crate::{CallScheme, ExitReason, Handler, Opcode, Runtime};
 use core::cmp::min;
@@ -86,15 +87,15 @@ pub fn finish_create(
             Ok(())
         }
         ExitReason::Revert(_) => {
-            runtime.machine.stack_mut().push(U256::zero())?;
+            runtime.machine.stack_mut().push(U256_ZERO)?;
             Ok(())
         }
         ExitReason::Error(_) => {
-            runtime.machine.stack_mut().push(U256::zero())?;
+            runtime.machine.stack_mut().push(U256_ZERO)?;
             Ok(())
         }
         ExitReason::Fatal(e) => {
-            runtime.machine.stack_mut().push(U256::zero())?;
+            runtime.machine.stack_mut().push(U256_ZERO)?;
             Err(e.into())
         }
     }
@@ -115,17 +116,17 @@ pub fn finish_call(
             let value_to_push = if runtime
                 .machine
                 .memory_mut()
-                .copy_large(
+                .copy_data(
                     out_offset,
-                    U256::zero(),
+                    U256_ZERO,
                     target_len,
                     &runtime.return_data_buffer[..],
                 )
                 .is_ok()
             {
-                U256::one()
+                U256_ONE
             } else {
-                U256::zero()
+                U256_ZERO
             };
             runtime
                 .machine
@@ -134,11 +135,11 @@ pub fn finish_call(
                 .map_err(Into::into)
         }
         ExitReason::Revert(_) => {
-            runtime.machine.stack_mut().push(U256::zero())?;
+            runtime.machine.stack_mut().push(U256_ZERO)?;
 
-            let _ = runtime.machine.memory_mut().copy_large(
+            let _ = runtime.machine.memory_mut().copy_data(
                 out_offset,
-                U256::zero(),
+                U256_ZERO,
                 target_len,
                 &runtime.return_data_buffer[..],
             );
@@ -146,12 +147,12 @@ pub fn finish_call(
             Ok(())
         }
         ExitReason::Error(_) => {
-            runtime.machine.stack_mut().push(U256::zero())?;
+            runtime.machine.stack_mut().push(U256_ZERO)?;
 
             Ok(())
         }
         ExitReason::Fatal(e) => {
-            runtime.machine.stack_mut().push(U256::zero())?;
+            runtime.machine.stack_mut().push(U256_ZERO)?;
 
             Err(e.into())
         }

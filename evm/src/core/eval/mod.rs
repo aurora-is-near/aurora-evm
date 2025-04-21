@@ -6,7 +6,7 @@ mod misc;
 
 use crate::core::{ExitError, ExitReason, ExitSucceed, InterpreterHandler, Machine, Opcode};
 use core::ops::{BitAnd, BitOr, BitXor};
-use primitive_types::{H160, U256};
+use primitive_types::H160;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum Control {
@@ -26,7 +26,8 @@ pub fn eval<H: InterpreterHandler>(
     eval_table(machine, position, handler, address)
 }
 
-// Table-based interpreter, shows the smallest gas cost.
+/// Table-based interpreter,
+/// NOTE: It shows the smallest NEAR gas cost for NEAR Protocol runtime.
 #[allow(clippy::too_many_lines)]
 #[inline]
 fn eval_table<H: InterpreterHandler>(
@@ -287,12 +288,11 @@ fn eval_table<H: InterpreterHandler>(
         table
     };
     let mut pc = position;
-    handler.before_eval();
     loop {
         let op = if let Some(v) = state.code.get(pc) {
             Opcode(*v)
         } else {
-            state.position = Err(ExitSucceed::Stopped.into());
+            state.exit(ExitSucceed::Stopped.into());
             return Control::Exit(ExitSucceed::Stopped.into());
         };
         match handler.before_bytecode(op, pc, state, address) {
@@ -318,7 +318,6 @@ fn eval_table<H: InterpreterHandler>(
             Control::Continue(bytes) => pc + bytes,
             Control::Jump(pos) => pos,
             _ => {
-                handler.after_eval();
                 return control;
             }
         }

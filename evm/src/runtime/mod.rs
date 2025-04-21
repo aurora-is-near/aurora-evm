@@ -39,47 +39,11 @@ pub use self::interrupt::{Resolve, ResolveCall, ResolveCreate};
 use prelude::*;
 use primitive_types::H160;
 
-macro_rules! step {
-	( $self:expr, $handler:expr, $return:tt $($err:path)?; $($ok:path)? ) => ({
-		let result = $self.machine.step($handler, &$self.context.address);
-		match result {
-			Ok(()) => $($ok)?(()),
-			Err(Capture::Exit(e)) => {
-				$self.status = Err(e.clone());
-				#[allow(unused_parens)]
-				$return $($err)*(Capture::Exit(e))
-			},
-			Err(Capture::Trap(opcode)) => {
-				match eval::eval($self, opcode, $handler) {
-					eval::Control::Continue => $($ok)?(()),
-					eval::Control::CallInterrupt(interrupt) => {
-						let resolve = ResolveCall::new($self);
-						#[allow(unused_parens)]
-						$return $($err)*(Capture::Trap(Resolve::Call(interrupt, resolve)))
-					},
-					eval::Control::CreateInterrupt(interrupt) => {
-						let resolve = ResolveCreate::new($self);
-						#[allow(unused_parens)]
-						$return $($err)*(Capture::Trap(Resolve::Create(interrupt, resolve)))
-					},
-					eval::Control::Exit(exit) => {
-						$self.machine.exit(exit.clone().into());
-						$self.status = Err(exit.clone());
-						#[allow(unused_parens)]
-						$return $($err)*(Capture::Exit(exit))
-					},
-				}
-			},
-		}
-	});
-}
-
 /// EVM runtime.
 ///
 /// The runtime wraps an EVM `Machine` with support of return data and context.
 pub struct Runtime {
     machine: Machine,
-    status: Result<(), ExitReason>,
     return_data_buffer: Vec<u8>,
     return_data_len: usize,
     return_data_offset: usize,
@@ -98,7 +62,6 @@ impl Runtime {
     ) -> Self {
         Self {
             machine: Machine::new(code, data, stack_limit, memory_limit),
-            status: Ok(()),
             return_data_buffer: Vec::new(),
             return_data_len: 0,
             return_data_offset: 0,
@@ -118,24 +81,34 @@ impl Runtime {
         &self.context
     }
 
-    /// Step the runtime.
-    ///
-    /// # Errors
-    /// Return `ExitReason`, `Resolve`
-    pub fn step<H: Handler + InterpreterHandler>(
-        &mut self,
-        handler: &mut H,
-    ) -> Result<(), Capture<ExitReason, Resolve<H>>> {
-        step!(self, handler, return Err; Ok)
-    }
-
     /// Loop stepping the runtime until it stops.
     pub fn run<H: Handler + InterpreterHandler>(
         &mut self,
         handler: &mut H,
     ) -> Capture<ExitReason, Resolve<H>> {
         loop {
-            step!(self, handler, return;);
+            let result = self.machine.step(handler, &self.context.address);
+            match result {
+                Ok(()) => (),
+                Err(Capture::Exit(e)) => {
+                    return Capture::Exit(e);
+                }
+                Err(Capture::Trap(opcode)) => match eval::eval(self, opcode, handler) {
+                    eval::Control::Continue => (),
+                    eval::Control::CallInterrupt(interrupt) => {
+                        let resolve = ResolveCall::new(self);
+                        return Capture::Trap(Resolve::Call(interrupt, resolve));
+                    }
+                    eval::Control::CreateInterrupt(interrupt) => {
+                        let resolve = ResolveCreate::new(self);
+                        return Capture::Trap(Resolve::Create(interrupt, resolve));
+                    }
+                    eval::Control::Exit(exit) => {
+                        self.machine.exit(exit.clone());
+                        return Capture::Exit(exit);
+                    }
+                },
+            }
         }
     }
 

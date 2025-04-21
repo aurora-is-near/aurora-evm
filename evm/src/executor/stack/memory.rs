@@ -1,5 +1,5 @@
 use crate::backend::{Apply, Backend, Basic, Log};
-use crate::core::utils::U64_MAX;
+use crate::core::utils::{U256_ONE, U256_ZERO, U64_MAX};
 use crate::executor::stack::executor::{
     Accessed, Authorization, StackState, StackSubstateMetadata,
 };
@@ -246,18 +246,18 @@ impl<'config> MemoryStackSubstate<'config> {
     #[must_use]
     pub fn known_empty(&self, address: H160) -> Option<bool> {
         if let Some(account) = self.known_account(address) {
-            if account.basic.balance != U256::zero() {
+            if account.basic.balance != U256_ZERO {
                 return Some(false);
             }
 
-            if account.basic.nonce != U256::zero() {
+            if account.basic.nonce != U256_ZERO {
                 return Some(false);
             }
 
             if let Some(code) = &account.code {
                 return Some(
-                    account.basic.balance == U256::zero()
-                        && account.basic.nonce == U256::zero()
+                    account.basic.balance == U256_ZERO
+                        && account.basic.nonce == U256_ZERO
                         && code.is_empty(),
                 );
             }
@@ -363,7 +363,7 @@ impl<'config> MemoryStackSubstate<'config> {
         if *nonce >= U64_MAX {
             return Err(ExitError::MaxNonce);
         }
-        *nonce += U256::one();
+        *nonce += U256_ONE;
         Ok(())
     }
 
@@ -469,7 +469,7 @@ impl<'config> MemoryStackSubstate<'config> {
     }
 
     pub fn reset_balance<B: Backend>(&mut self, address: H160, backend: &B) {
-        self.account_mut(address, backend).basic.balance = U256::zero();
+        self.account_mut(address, backend).basic.balance = U256_ZERO;
     }
 
     pub fn touch<B: Backend>(&mut self, address: H160, backend: &B) {
@@ -626,8 +626,8 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
             return known_empty;
         }
 
-        self.backend.basic(address).balance == U256::zero()
-            && self.backend.basic(address).nonce == U256::zero()
+        self.backend.basic(address).balance == U256_ZERO
+            && self.backend.basic(address).nonce == U256_ZERO
             && self.backend.code(address).is_empty()
     }
 

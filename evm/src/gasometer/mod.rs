@@ -45,6 +45,7 @@ mod costs;
 mod memory;
 mod utils;
 
+use crate::core::utils::U256_ZERO;
 use crate::core::{ExitError, Opcode, Stack};
 use crate::prelude::*;
 use crate::runtime::{Config, Handler};
@@ -851,7 +852,7 @@ pub fn dynamic_opcode_cost<H: Handler>(
                 already_removed: handler.deleted(address),
             }
         }
-        Opcode::CALL if !is_static || (is_static && stack.peek(2)? == U256::zero()) => {
+        Opcode::CALL if !is_static || (is_static && stack.peek(2)? == U256_ZERO) => {
             let target = stack.peek_h256(1)?.into();
             let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
             GasCost::Call {
@@ -1026,7 +1027,7 @@ impl Inner<'_> {
                 target_exists,
                 ..
             } => costs::call_cost(
-                U256::zero(),
+                U256_ZERO,
                 target_is_cold,
                 delegated_designator_is_cold,
                 false,
@@ -1040,7 +1041,7 @@ impl Inner<'_> {
                 target_exists,
                 ..
             } => costs::call_cost(
-                U256::zero(),
+                U256_ZERO,
                 target_is_cold,
                 delegated_designator_is_cold,
                 false,

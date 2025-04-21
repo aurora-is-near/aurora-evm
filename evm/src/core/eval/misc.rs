@@ -2,6 +2,7 @@ use super::Control;
 
 use crate::core::utils::USIZE_MAX;
 use crate::core::{ExitError, ExitRevert, ExitSucceed, Machine};
+use crate::utils::U256_ZERO;
 use core::cmp::min;
 use primitive_types::{H256, U256};
 
@@ -19,7 +20,7 @@ pub fn codecopy(state: &mut Machine) -> Control {
     // If `len` is zero then nothing happens, regardless of the
     // value of the other parameters. In particular, `memory_offset`
     // might be larger than `usize::MAX`, hence why we check this first.
-    if len == U256::zero() {
+    if len == U256_ZERO {
         return Control::Continue(1);
     }
     let len = as_usize_or_fail!(len);
@@ -28,7 +29,7 @@ pub fn codecopy(state: &mut Machine) -> Control {
     try_or_fail!(state.memory.resize_offset(memory_offset, len));
     match state
         .memory
-        .copy_large(memory_offset, code_offset, len, &state.code)
+        .copy_data(memory_offset, code_offset, len, &state.code)
     {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
@@ -40,15 +41,12 @@ pub fn calldataload(state: &mut Machine) -> Control {
     pop_u256!(state, index);
 
     let mut load = [0u8; 32];
-    #[allow(clippy::needless_range_loop)]
-    for i in 0..32 {
-        if let Some(p) = index.checked_add(U256::from(i)) {
-            if p <= USIZE_MAX {
-                let p = p.as_usize();
-                if p < state.data.len() {
-                    load[i] = state.data[p];
-                }
-            }
+    if index <= USIZE_MAX {
+        let checked_index = index.as_usize();
+        let data_count = state.data.len();
+        if checked_index < data_count {
+            let count = 32.min(data_count - checked_index);
+            load[..count].copy_from_slice(&state.data[checked_index..checked_index + count]);
         }
     }
 
@@ -68,7 +66,7 @@ pub fn calldatacopy(state: &mut Machine) -> Control {
     pop_u256!(state, memory_offset, data_offset, len);
 
     // See comment on `codecopy` about the `len == 0` case.
-    if len == U256::zero() {
+    if len == U256_ZERO {
         return Control::Continue(1);
     }
     let len = as_usize_or_fail!(len);
@@ -78,7 +76,7 @@ pub fn calldatacopy(state: &mut Machine) -> Control {
 
     match state
         .memory
-        .copy_large(memory_offset, data_offset, len, &state.data)
+        .copy_data(memory_offset, data_offset, len, &state.data)
     {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
@@ -107,7 +105,7 @@ pub fn mstore(state: &mut Machine) -> Control {
     let index = as_usize_or_fail!(index);
     pop_h256!(state, value);
     try_or_fail!(state.memory.resize_offset(index, 32));
-    match state.memory.set(index, &value[..], Some(32)) {
+    match state.memory.set(index, &value[..], 32) {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
     }
@@ -119,7 +117,7 @@ pub fn mstore8(state: &mut Machine) -> Control {
     let index = as_usize_or_fail!(index);
     try_or_fail!(state.memory.resize_offset(index, 1));
     let value = u8::try_from(value.low_u32() & 0xff).unwrap_or(u8::MAX);
-    match state.memory.set(index, &[value], Some(1)) {
+    match state.memory.set(index, &[value], 1) {
         Ok(()) => Control::Continue(1),
         Err(e) => Control::Exit(e.into()),
     }
@@ -141,7 +139,7 @@ pub fn jump(state: &mut Machine) -> Control {
 pub fn jumpi(state: &mut Machine) -> Control {
     pop_u256!(state, dest, value);
 
-    if value == U256::zero() {
+    if value == U256_ZERO {
         Control::Continue(1)
     } else {
         let dest = as_usize_or_fail!(dest, ExitError::InvalidJump);
@@ -179,9 +177,7 @@ pub fn push(state: &mut Machine, n: usize, position: usize) -> Control {
 
 #[inline]
 pub fn push0(state: &mut Machine) -> Control {
-    let val = U256::zero();
-
-    push_u256!(state, val);
+    push_u256!(state, U256_ZERO);
     Control::Continue(1)
 }
 
@@ -238,7 +234,7 @@ pub fn swap(state: &mut Machine, n: usize) -> Control {
 #[inline]
 pub fn ret(state: &mut Machine) -> Control {
     pop_u256!(state, start, len);
-    if len > U256::zero() {
+    if len > U256_ZERO {
         let start = as_usize_or_fail!(start);
         let len = as_usize_or_fail!(len);
         try_or_fail!(state.memory.resize_offset(start, len));
@@ -250,7 +246,7 @@ pub fn ret(state: &mut Machine) -> Control {
 #[inline]
 pub fn revert(state: &mut Machine) -> Control {
     pop_u256!(state, start, len);
-    if len > U256::zero() {
+    if len > U256_ZERO {
         let start = as_usize_or_fail!(start);
         let len = as_usize_or_fail!(len);
         try_or_fail!(state.memory.resize_offset(start, len));
