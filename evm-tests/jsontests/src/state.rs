@@ -1096,7 +1096,8 @@ fn check_validate_exit_reason(
                 }
                 InvalidTxReason::TooManyBlobs => {
                     let check_result = exception == "TR_BLOBLIST_OVERSIZE"
-                        || exception == "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED";
+                        || exception == "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED"
+                        || exception == "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED|TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED";
                     assert!(
                         check_result,
                         "unexpected exception {exception:?} for TooManyBlobs for test: [{spec:?}] {name}"
