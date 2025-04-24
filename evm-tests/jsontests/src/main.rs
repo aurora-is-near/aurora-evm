@@ -16,7 +16,7 @@ pub mod vm;
 
 mod utils;
 
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn main() -> Result<(), String> {
     let matches = command!()
         .version(env!("CARGO_PKG_VERSION"))
@@ -114,9 +114,9 @@ fn main() -> Result<(), String> {
             let path = Path::new(src_name);
             assert!(path.exists(), "data source is not exist: {path:?}");
             if path.is_file() {
-                run_test_for_file(&spec, &verbose_output, path, &mut tests_result);
+                run_test_for_file(spec.as_ref(), &verbose_output, path, &mut tests_result);
             } else if path.is_dir() {
-                run_test_for_dir(&spec, &verbose_output, path, &mut tests_result);
+                run_test_for_dir(spec.as_ref(), &verbose_output, path, &mut tests_result);
             }
         }
         println!("\nTOTAL: {}", tests_result.total);
@@ -198,13 +198,13 @@ fn run_vm_test_for_file(
 }
 
 fn run_test_for_dir(
-    spec: &Option<ForkSpec>,
+    spec: Option<&ForkSpec>,
     verbose_output: &VerboseOutput,
     dir_name: &Path,
     tests_result: &mut TestExecutionResult,
 ) {
     if should_skip(dir_name) {
-        println!("Skipping test case {:?}", dir_name);
+        println!("Skipping test case {dir_name:?}");
         return;
     }
     for entry in fs::read_dir(dir_name).unwrap() {
@@ -224,14 +224,14 @@ fn run_test_for_dir(
 }
 
 fn run_test_for_file(
-    spec: &Option<ForkSpec>,
+    spec: Option<&ForkSpec>,
     verbose_output: &VerboseOutput,
     file_name: &Path,
     tests_result: &mut TestExecutionResult,
 ) {
     if should_skip(file_name) {
         if verbose_output.verbose {
-            println!("Skipping test case {:?}", file_name);
+            println!("Skipping test case {file_name:?}");
         }
         return;
     }
@@ -252,7 +252,7 @@ fn run_test_for_file(
             verbose_output.clone(),
             &name,
             test,
-            spec.clone(),
+            spec.cloned(),
             file_name.clone(),
         );
 
@@ -335,8 +335,8 @@ const SKIPPED_CASES: &[&str] = &[
 
 /// Check if a path should be skipped.
 /// It checks:
-/// - path/and_file_stem - check path and file name (without extention)
-/// - path/with/sub/path - recursively check path
+/// - `path/and_file_stem` - check path and file name (without extention)
+/// - `path/with/sub/path` - recursively check path
 fn should_skip(path: &Path) -> bool {
     let matches = |case: &str| {
         let case_path = Path::new(case);

@@ -150,7 +150,7 @@ pub mod eip7623 {
     /// Retrieve the total number of tokens in calldata.
     #[must_use]
     pub fn get_tokens_in_calldata(input: &[u8]) -> u64 {
-        let zero_data_len = input.iter().filter(|v| **v == 0).count();
+        let zero_data_len = bytecount::count(input, 0);
         let non_zero_data_len = input.len() - zero_data_len;
         u64::try_from(zero_data_len + non_zero_data_len * NON_ZERO_BYTE_MULTIPLIER).unwrap()
     }
@@ -481,7 +481,7 @@ pub mod transaction {
 
             // Check EIP-7702 Spec validation steps: 1 and 2
             // Other validation step inside EVM transact logic.
-            for auth in test_tx.authorization_list.iter() {
+            for auth in &test_tx.authorization_list {
                 // 1. Verify the chain id is either 0 or the chain’s current ID.
                 let mut is_valid = auth.chain_id.0 <= U256::from(u64::MAX)
                     && (auth.chain_id.0 == U256::from(0) || auth.chain_id.0 == vicinity.chain_id);

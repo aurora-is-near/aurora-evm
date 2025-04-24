@@ -22,6 +22,7 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 
 #[derive(Default, Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct VerboseOutput {
     pub verbose: bool,
     pub verbose_failed: bool,
@@ -143,6 +144,7 @@ pub struct TestExecutionResult {
 
 impl TestExecutionResult {
     #[allow(clippy::new_without_default)]
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             total: 0,
@@ -162,6 +164,7 @@ impl TestExecutionResult {
 pub struct Test(ethjson::test_helpers::state::State);
 
 impl Test {
+    #[must_use]
     pub fn unwrap_to_pre_state(&self) -> BTreeMap<H160, MemoryAccount> {
         crate::utils::unwrap_to_state(&self.0.pre_state)
     }
@@ -777,7 +780,15 @@ pub fn test(
 
     let child = thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || test_run(&verbose_output, &name, &test, specific_spec, &file_name))
+        .spawn(move || {
+            test_run(
+                &verbose_output,
+                &name,
+                &test,
+                specific_spec.as_ref(),
+                &file_name,
+            )
+        })
         .unwrap();
 
     // Wait for thread to join
@@ -785,10 +796,8 @@ pub fn test(
 }
 
 /// Validate EIP-3607 - empty create caller
-fn assert_empty_create_caller(expect_exception: &Option<String>, name: &str) {
-    let exception = expect_exception
-        .as_deref()
-        .expect("expected evm-json-test exception");
+fn assert_empty_create_caller(expect_exception: Option<&String>, name: &str) {
+    let exception = expect_exception.expect("expected evm-json-test exception");
     let check_exception =
         exception == "SenderNotEOA" || exception == "TransactionException.SENDER_NOT_EOA";
     assert!(
@@ -798,7 +807,7 @@ fn assert_empty_create_caller(expect_exception: &Option<String>, name: &str) {
 }
 
 /// Check call expected exception
-fn assert_call_exit_exception(expect_exception: &Option<String>, name: &str) {
+fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str) {
     assert!(
         expect_exception.is_none(),
         "unexpected call exception: {expect_exception:?} for test: {name}"
@@ -808,12 +817,12 @@ fn assert_call_exit_exception(expect_exception: &Option<String>, name: &str) {
 /// Check Exit Reason of EVM execution
 fn check_create_exit_reason(
     reason: &ExitReason,
-    expect_exception: Option<String>,
+    expect_exception: Option<&String>,
     name: &str,
 ) -> bool {
     match reason {
         ExitReason::Error(err) => {
-            if let Some(exception) = expect_exception.as_deref() {
+            if let Some(exception) = expect_exception {
                 match err {
                     ExitError::CreateContractLimit => {
                         let check_result = exception == "TR_InitCodeLimitExceeded"
@@ -1052,13 +1061,14 @@ fn assert_vicinity_validation(
 }
 
 /// Check Exit Reason of EVM execution
+#[allow(clippy::too_many_lines)]
 fn check_validate_exit_reason(
     reason: &InvalidTxReason,
-    expect_exception: Option<String>,
+    expect_exception: Option<&String>,
     name: &str,
     spec: &ForkSpec,
 ) -> bool {
-    expect_exception.as_deref().map_or_else(
+    expect_exception.map_or_else(
         || {
             panic!("unexpected validation error reason: {reason:?} {name}");
         },
@@ -1204,7 +1214,7 @@ fn test_run(
     verbose_output: &VerboseOutput,
     name: &str,
     test: &Test,
-    specific_spec: Option<ForkSpec>,
+    specific_spec: Option<&ForkSpec>,
     file_name: &Arc<PathBuf>,
 ) -> TestExecutionResult {
     let mut tests_result = TestExecutionResult::new();
@@ -1212,7 +1222,7 @@ fn test_run(
     for (spec, states) in &test.0.post_states {
         // Run tests for specific SPEC (Hard fork)
         if let Some(s) = specific_spec.as_ref() {
-            if s != spec {
+            if *s != spec {
                 continue;
             }
         }
@@ -1231,23 +1241,26 @@ fn test_run(
         };
 
         // EIP-4844
-        let blob_gas_price =
-            if let Some(current_excess_blob_gas) = test.0.env.current_excess_blob_gas {
-                Some(eip_4844::calc_blob_gas_price(
-                    current_excess_blob_gas.0.as_u64(),
-                ))
-            } else if let (Some(parent_blob_gas_used), Some(parent_excess_blob_gas)) = (
-                test.0.env.parent_blob_gas_used,
-                test.0.env.parent_excess_blob_gas,
-            ) {
-                let excess_blob_gas = eip_4844::calc_excess_blob_gas(
-                    parent_blob_gas_used.0.as_u64(),
-                    parent_excess_blob_gas.0.as_u64(),
-                );
-                Some(eip_4844::calc_blob_gas_price(excess_blob_gas))
-            } else {
-                None
-            };
+        let blob_gas_price = test
+            .0
+            .env
+            .current_excess_blob_gas
+            .map(|current_excess_blob_gas| {
+                eip_4844::calc_blob_gas_price(current_excess_blob_gas.0.as_u64())
+            })
+            .or_else(|| {
+                test.0
+                    .env
+                    .parent_blob_gas_used
+                    .zip(test.0.env.parent_excess_blob_gas)
+                    .map(|(parent_blob_gas_used, parent_excess_blob_gas)| {
+                        let excess_blob_gas = eip_4844::calc_excess_blob_gas(
+                            parent_blob_gas_used.0.as_u64(),
+                            parent_excess_blob_gas.0.as_u64(),
+                        );
+                        eip_4844::calc_blob_gas_price(excess_blob_gas)
+                    })
+            });
         // EIP-4844
         let data_max_fee = if gasometer_config.has_shard_blob_transactions {
             let max_fee_per_blob_gas = test_tx.max_fee_per_blob_gas.unwrap_or_default().0;
@@ -1350,7 +1363,7 @@ fn test_run(
             );
             // Only execute valid transactions
             if let Err(err) = &valid_tx {
-                if check_validate_exit_reason(err, state.expect_exception.clone(), name, spec) {
+                if check_validate_exit_reason(err, state.expect_exception.as_ref(), name, spec) {
                     continue;
                 }
             }
@@ -1408,7 +1421,7 @@ fn test_run(
                             access_list,
                             authorization_list,
                         );
-                        assert_call_exit_exception(&state.expect_exception, name);
+                        assert_call_exit_exception(state.expect_exception.as_ref(), name);
                     }
                     ethjson::maybe::MaybeEmpty::None => {
                         let code = data;
@@ -1418,7 +1431,7 @@ fn test_run(
                             executor.transact_create(caller, value, code, gas_limit, access_list);
                         if check_create_exit_reason(
                             &reason.0,
-                            state.expect_exception.clone(),
+                            state.expect_exception.as_ref(),
                             &format!("{spec:?}-{name}-{i}"),
                         ) {
                             continue;
@@ -1433,7 +1446,7 @@ fn test_run(
                 if !(*spec >= ForkSpec::Prague
                     && TxType::from_txbytes(&state.txbytes) == TxType::EOAAccountCode)
                 {
-                    assert_empty_create_caller(&state.expect_exception, name);
+                    assert_empty_create_caller(state.expect_exception.as_ref(), name);
                 }
             }
 
