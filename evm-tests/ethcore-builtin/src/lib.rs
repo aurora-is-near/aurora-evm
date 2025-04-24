@@ -112,7 +112,7 @@ struct ModexpPricer {
 
 impl Pricer for Linear {
     fn cost(&self, input: &[u8]) -> U256 {
-        U256::from(self.base) + U256::from(self.word) * U256::from((input.len() + 31) / 32)
+        U256::from(self.base) + U256::from(self.word) * U256::from(input.len().div_ceil(32))
     }
 }
 

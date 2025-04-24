@@ -74,7 +74,7 @@ impl Machine {
         &self.stack
     }
     /// Mutable reference of machine stack.
-    pub fn stack_mut(&mut self) -> &mut Stack {
+    pub const fn stack_mut(&mut self) -> &mut Stack {
         &mut self.stack
     }
     /// Reference of machine memory.
@@ -83,7 +83,7 @@ impl Machine {
         &self.memory
     }
     /// Mutable reference of machine memory.
-    pub fn memory_mut(&mut self) -> &mut Memory {
+    pub const fn memory_mut(&mut self) -> &mut Memory {
         &mut self.memory
     }
     /// Return a reference of the program counter.
