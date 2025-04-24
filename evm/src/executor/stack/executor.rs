@@ -247,7 +247,7 @@ impl<'config> StackSubstateMetadata<'config> {
         &self.gasometer
     }
 
-    pub fn gasometer_mut(&mut self) -> &mut Gasometer<'config> {
+    pub const fn gasometer_mut(&mut self) -> &mut Gasometer<'config> {
         &mut self.gasometer
     }
 
@@ -445,7 +445,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         &self.state
     }
 
-    pub fn state_mut(&mut self) -> &mut S {
+    pub const fn state_mut(&mut self) -> &mut S {
         &mut self.state
     }
 
@@ -942,7 +942,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                 self.state
                     .metadata_mut()
                     .access_addresses([caller, address].iter().copied());
-            };
+            }
 
             self.warm_access_list(access_list);
         }
@@ -1287,7 +1287,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             Ok(())
         }
 
-        log::debug!(target: "evm", "Create execution using address {}: {:?}", created_address, reason);
+        log::debug!(target: "evm", "Create execution using address {created_address}: {reason:?}");
 
         match reason {
             ExitReason::Succeed(s) => {
@@ -1355,7 +1355,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         reason: &ExitReason,
         return_data: Vec<u8>,
     ) -> Vec<u8> {
-        log::debug!(target: "evm", "Call execution using address {}: {:?}", code_address, reason);
+        log::debug!(target: "evm", "Call execution using address {code_address}: {reason:?}");
         match reason {
             ExitReason::Succeed(_) => {
                 let _ = self.exit_substate(&StackExitKind::Succeeded);
