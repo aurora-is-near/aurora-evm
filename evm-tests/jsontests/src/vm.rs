@@ -90,12 +90,13 @@ impl Test {
     }
 }
 
-pub fn test(verbose_output: &VerboseOutput, name: &str, test: Test) -> TestExecutionResult {
+#[must_use]
+pub fn test(verbose_output: &VerboseOutput, name: &str, test: &Test) -> TestExecutionResult {
     let mut result = TestExecutionResult::new();
     let mut failed = false;
     result.total = 1;
     if verbose_output.verbose {
-        print!("Running test {} ... ", name);
+        print!("Running test {name} ... ");
         crate::utils::flush();
     }
 
@@ -121,28 +122,25 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: Test) -> TestExecu
 
     if test.0.output.is_none() {
         if verbose_output.verbose {
-            print!("{:?} ", reason);
+            print!("{reason:?} ");
         }
 
         if reason.is_succeed() {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: succeed for empty output: {:?}] ", reason);
+                print!("[Failed: succeed for empty output: {reason:?}] ");
             }
         }
         if !(test.0.post_state.is_none() && test.0.gas_left.is_none()) {
             failed = true;
             if verbose_output.verbose_failed {
-                print!(
-                    "[Failed: not empty state and left gas for empty output: {:?}] ",
-                    reason
-                );
+                print!("[Failed: not empty state and left gas for empty output: {reason:?}] ",);
             }
         }
     } else {
         let expected_post_gas = test.unwrap_to_post_gas();
         if verbose_output.verbose {
-            print!("{:?} ", reason);
+            print!("{reason:?} ");
         }
 
         if runtime.machine().return_value() != test.unwrap_to_return_value() {
@@ -163,7 +161,7 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: Test) -> TestExecu
         if gas != expected_post_gas {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: unexpected gas: {:?}] ", gas);
+                print!("[Failed: unexpected gas: {gas:?}] ");
             }
         }
     }

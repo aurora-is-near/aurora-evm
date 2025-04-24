@@ -1,13 +1,18 @@
 [package]
-name = "evm-jsontests"
+name = "aurora-evm-jsontests"
 version.workspace = true
 license = "GPL-3.0"
 authors.workspace = true
-description = "EVM json tests"
+description = "Aurora EVM json tests"
 repository.workspace = true
 keywords.workspace = true
 edition.workspace = true
 publish = false
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
 
 [dependencies]
 aurora-evm.workspace = true

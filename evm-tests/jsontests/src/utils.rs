@@ -60,13 +60,10 @@ impl rlp::Encodable for TrieAccount {
     fn rlp_append(&self, stream: &mut rlp::RlpStream) {
         let use_short_version = self.code_version == U256::zero();
 
-        match use_short_version {
-            true => {
-                stream.begin_list(4);
-            }
-            false => {
-                stream.begin_list(5);
-            }
+        if use_short_version {
+            stream.begin_list(4);
+        } else {
+            stream.begin_list(5);
         }
 
         stream.append(&self.nonce);
@@ -177,10 +174,10 @@ pub mod eip7702 {
     ///
     /// `57896044618658097711785492504343953926418782139537452191302581570759080747168`
     pub const SECP256K1N_HALF: U256 = U256([
-        0xDFE92F46681B20A0,
-        0x5D576E7357A4501D,
-        0xFFFFFFFFFFFFFFFF,
-        0x7FFFFFFFFFFFFFFF,
+        0xDFE9_2F46_681B_20A0,
+        0x5D57_6E73_57A4_501D,
+        0xFFFF_FFFF_FFFF_FFFF,
+        0x7FFF_FFFF_FFFF_FFFF,
     ]);
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,9 +236,9 @@ pub mod eip7702 {
                 chain_id,
                 address,
                 nonce,
-                s,
-                r,
                 v,
+                r,
+                s,
             }
         }
 
@@ -263,11 +260,11 @@ pub mod eip_4844 {
     pub const MAX_BLOBS_PER_BLOCK_ELECTRA: u64 = 9;
     pub const MAX_BLOBS_PER_BLOCK_CANCUN: u64 = 6;
     /// Target consumable blob gas for data blobs per block: EIP-7691
-    pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 786432;
+    pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 786_432;
     /// Minimum gas price for data blobs.
     pub const MIN_BLOB_GASPRICE: u64 = 1;
     /// Controls the maximum rate of change for blob gas price.
-    pub const BLOB_GASPRICE_UPDATE_FRACTION: u64 = 3338477;
+    pub const BLOB_GASPRICE_UPDATE_FRACTION: u64 = 3_338_477;
     /// First version of the blob.
     pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 
@@ -336,9 +333,9 @@ pub mod eip_4844 {
     #[inline]
     pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u128 {
         assert_ne!(denominator, 0, "attempt to divide by zero");
-        let factor = factor as u128;
-        let numerator = numerator as u128;
-        let denominator = denominator as u128;
+        let factor = u128::from(factor);
+        let numerator = u128::from(numerator);
+        let denominator = u128::from(denominator);
 
         let mut i = 1;
         let mut output = 0;
@@ -369,7 +366,7 @@ pub mod transaction {
     use primitive_types::{H160, H256, U256};
 
     // TODO: it will be refactored as old solution inefficient, also will be removed clippy-allow flag
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     pub fn validate(
         tx: &Transaction,
         block_gas_limit: U256,
@@ -439,7 +436,7 @@ pub mod transaction {
                 }
 
                 // all versioned blob hashes must start with VERSIONED_HASH_VERSION_KZG
-                for blob in test_tx.blob_versioned_hashes.iter() {
+                for blob in &test_tx.blob_versioned_hashes {
                     let blob_hash = H256(blob.to_big_endian());
                     if blob_hash[0] != super::eip_4844::VERSIONED_HASH_VERSION_KZG {
                         return Err(InvalidTxReason::BlobVersionNotSupported);
@@ -454,7 +451,7 @@ pub mod transaction {
                 } else {
                     super::eip_4844::MAX_BLOBS_PER_BLOCK_ELECTRA
                 };
-                if test_tx.blob_versioned_hashes.len() > max_blob_len as usize {
+                if test_tx.blob_versioned_hashes.len() > usize::try_from(max_blob_len).unwrap() {
                     return Err(InvalidTxReason::TooManyBlobs);
                 }
             }

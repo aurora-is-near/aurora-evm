@@ -3,14 +3,13 @@ use crate::types::json_utils::{
     deserialize_u64_from_str_opt,
 };
 use primitive_types::{H160, H256, U256};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 
 mod json_utils;
 
 /// Represents a test case for the Ethereum state transitions.
 /// It includes the environment setup, pre-state, transaction details,
 /// expected post-state results for different forks, configuration, and metadata.
-
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct StateTestCase {
     /// The environment parameters for the state test execution.

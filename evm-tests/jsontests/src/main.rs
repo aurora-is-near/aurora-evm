@@ -1,14 +1,20 @@
+#![allow(clippy::too_long_first_doc_paragraph)]
+
+use crate::state::{TestExecutionResult, VerboseOutput};
 use clap::{arg, command, value_parser, ArgAction, Command};
 use ethjson::spec::ForkSpec;
-use evm_jsontests::state as statetests;
-use evm_jsontests::state::{TestExecutionResult, VerboseOutput};
-use evm_jsontests::vm as vmtests;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+pub mod state;
+pub mod types;
+pub mod vm;
+
+mod utils;
 
 #[allow(clippy::cognitive_complexity)]
 fn main() -> Result<(), String> {
@@ -157,11 +163,11 @@ fn run_vm_test_for_file(
     let file = File::open(file_name).expect("Open file failed");
 
     let reader = BufReader::new(file);
-    let test_suite = serde_json::from_reader::<_, HashMap<String, vmtests::Test>>(reader)
+    let test_suite = serde_json::from_reader::<_, HashMap<String, vm::Test>>(reader)
         .expect("Parse test cases failed");
 
     for (name, test) in test_suite {
-        let test_res = vmtests::test(verbose_output, &name, test);
+        let test_res = vm::test(verbose_output, &name, &test);
 
         if test_res.failed > 0 {
             if verbose_output.verbose {
@@ -237,12 +243,12 @@ fn run_test_for_file(
     }
     let file = File::open(file_name).expect("Open file failed");
     let reader = BufReader::new(file);
-    let test_suite = serde_json::from_reader::<_, HashMap<String, statetests::Test>>(reader)
+    let test_suite = serde_json::from_reader::<_, HashMap<String, state::Test>>(reader)
         .expect("Parse test cases failed");
 
     let file_name = Arc::new(file_name.to_path_buf());
     for (name, test) in test_suite {
-        let test_res = statetests::test(
+        let test_res = state::test(
             verbose_output.clone(),
             &name,
             test,

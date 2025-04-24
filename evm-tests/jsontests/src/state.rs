@@ -166,10 +166,18 @@ impl Test {
         crate::utils::unwrap_to_state(&self.0.pre_state)
     }
 
+    #[allow(clippy::missing_panics_doc)]
+    #[must_use]
     pub fn unwrap_caller_secret_key(&self) -> H256 {
         self.0.transaction.secret.unwrap().into()
     }
 
+    /// Unwrap caller
+    ///
+    /// # Panics
+    ///
+    /// Panics if the transaction secret is missing or if parsing the secret key fails.
+    #[must_use]
     pub fn unwrap_caller(&self) -> H160 {
         let hash: H256 = self.0.transaction.secret.unwrap().into();
         let mut secret_key = [0; 32];
@@ -182,6 +190,22 @@ impl Test {
         H160::from(H256::from_slice(Keccak256::digest(res).as_slice()))
     }
 
+    /// Unwraps the test to compute the memory vicinity from the transaction and environment data.
+    ///
+    /// This function calculates the gas price and effective gas price based on the provided fork specification
+    /// and follows EIP-1559 validation rules. It also extracts additional parameters such as block randomness
+    /// and blob hashes from the transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `InvalidTxReason` if:
+    /// - The transaction provides a max fee per gas on forks prior to London.
+    /// - The maximum priority fee is greater than the gas price.
+    /// - The gas price is less than the block base fee.
+    ///
+    /// # Panics
+    ///
+    /// Panics occurs for invalid transaction data.
     pub fn unwrap_to_vicinity(
         &self,
         spec: &ForkSpec,
@@ -273,6 +297,8 @@ macro_rules! precompile_entry {
 pub struct JsonPrecompile;
 
 impl JsonPrecompile {
+    #[allow(clippy::match_same_arms)]
+    #[must_use]
     pub fn precompile(spec: &ForkSpec) -> Option<BTreeMap<H160, PrecompileFn>> {
         match spec {
             ForkSpec::Istanbul => {
@@ -379,6 +405,7 @@ impl JsonPrecompile {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn istanbul_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
     use ethjson::spec::builtin::{BuiltinCompat, Linear, Modexp, PricingCompat};
 
@@ -501,6 +528,7 @@ fn istanbul_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
         .collect()
 }
 
+#[allow(clippy::too_many_lines)]
 fn berlin_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
     use ethjson::spec::builtin::{BuiltinCompat, Linear, Modexp, PricingCompat};
 
@@ -727,6 +755,12 @@ fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
     builtins
 }
 
+/// Runs a test in a separate thread with a specified stack size.
+///
+/// # Panics
+///
+/// This function will panic if thread spawning or joining fails.
+#[must_use]
 pub fn test(
     verbose_output: VerboseOutput,
     name: &str,
@@ -743,15 +777,7 @@ pub fn test(
 
     let child = thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || {
-            test_run(
-                &verbose_output,
-                &name,
-                test,
-                specific_spec,
-                file_name.clone(),
-            )
-        })
+        .spawn(move || test_run(&verbose_output, &name, &test, specific_spec, &file_name))
         .unwrap();
 
     // Wait for thread to join
@@ -782,7 +808,7 @@ fn assert_call_exit_exception(expect_exception: &Option<String>, name: &str) {
 /// Check Exit Reason of EVM execution
 fn check_create_exit_reason(
     reason: &ExitReason,
-    expect_exception: &Option<String>,
+    expect_exception: Option<String>,
     name: &str,
 ) -> bool {
     match reason {
@@ -838,13 +864,13 @@ fn check_create_exit_reason(
 }
 
 /// Assert vicinity validation to ensure that test os expected validation error
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn assert_vicinity_validation(
     reason: &InvalidTxReason,
     states: &[PostStateResult],
     spec: &ForkSpec,
     name: &str,
-    file_name: Arc<PathBuf>,
+    file_name: &Arc<PathBuf>,
 ) {
     match *spec {
         ForkSpec::Istanbul | ForkSpec::Berlin => match reason {
@@ -1028,7 +1054,7 @@ fn assert_vicinity_validation(
 /// Check Exit Reason of EVM execution
 fn check_validate_exit_reason(
     reason: &InvalidTxReason,
-    expect_exception: &Option<String>,
+    expect_exception: Option<String>,
     name: &str,
     spec: &ForkSpec,
 ) -> bool {
@@ -1172,13 +1198,13 @@ fn check_validate_exit_reason(
     )
 }
 
-#[allow(clippy::cognitive_complexity)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn test_run(
     verbose_output: &VerboseOutput,
     name: &str,
-    test: Test,
+    test: &Test,
     specific_spec: Option<ForkSpec>,
-    file_name: Arc<PathBuf>,
+    file_name: &Arc<PathBuf>,
 ) -> TestExecutionResult {
     let mut tests_result = TestExecutionResult::new();
     let test_tx = &test.0.transaction;
@@ -1194,8 +1220,7 @@ fn test_run(
             ForkSpec::Istanbul => (Config::istanbul(), true),
             ForkSpec::Berlin => (Config::berlin(), true),
             ForkSpec::London => (Config::london(), true),
-            ForkSpec::Merge => (Config::merge(), true),
-            ForkSpec::Paris => (Config::merge(), true),
+            ForkSpec::Merge | ForkSpec::Paris => (Config::merge(), true),
             ForkSpec::Shanghai => (Config::shanghai(), true),
             ForkSpec::Cancun => (Config::cancun(), true),
             ForkSpec::Prague => (Config::prague(), true),
@@ -1264,7 +1289,7 @@ fn test_run(
                 tests_result.failed += 1;
                 continue;
             }
-            assert_vicinity_validation(&tx_err, states, spec, name, file_name.clone());
+            assert_vicinity_validation(&tx_err, states, spec, name, &file_name.clone());
             // As it's expected validation error - skip the test run
             continue;
         }
@@ -1324,7 +1349,7 @@ fn test_run(
             );
             // Only execute valid transactions
             if let Err(err) = &valid_tx {
-                if check_validate_exit_reason(err, &state.expect_exception, name, spec) {
+                if check_validate_exit_reason(err, state.expect_exception.clone(), name, spec) {
                     continue;
                 }
             }
@@ -1392,7 +1417,7 @@ fn test_run(
                             executor.transact_create(caller, value, code, gas_limit, access_list);
                         if check_create_exit_reason(
                             &reason.0,
-                            &state.expect_exception,
+                            state.expect_exception.clone(),
                             &format!("{spec:?}-{name}-{i}"),
                         ) {
                             continue;
@@ -1519,13 +1544,13 @@ fn test_run(
 pub enum TxType {
     /// All transactions before EIP-2718 are legacy.
     Legacy,
-    /// https://eips.ethereum.org/EIPS/eip-2718
+    /// <https://eips.ethereum.org/EIPS/eip-2718>
     AccessList,
-    /// https://eips.ethereum.org/EIPS/eip-1559
+    /// <https://eips.ethereum.org/EIPS/eip-1559>
     DynamicFee,
-    /// https://eips.ethereum.org/EIPS/eip-4844
+    /// <https://eips.ethereum.org/EIPS/eip-4844>
     ShardBlob,
-    /// https://eips.ethereum.org/EIPS/eip-7702
+    /// <https://eips.ethereum.org/EIPS/eip-7702>
     EOAAccountCode,
 }
 
@@ -1533,6 +1558,7 @@ impl TxType {
     /// Whether this is a legacy, access list, dynamic fee, etc transaction
     // Taken from geth's core/types/transaction.go/UnmarshalBinary, but we only detect the transaction
     // type rather than unmarshal the entire payload.
+    #[must_use]
     pub const fn from_txbytes(txbytes: &[u8]) -> Self {
         match txbytes[0] {
             b if b > 0x7f => Self::Legacy,
