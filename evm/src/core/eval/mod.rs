@@ -51,7 +51,7 @@ fn eval_table<H: InterpreterHandler>(
                 table_elem!($operation, $state, _pc, $definition)
             };
             ($operation:ident, $state:ident, $pc:ident, $definition:expr) => {
-                #[allow(non_snake_case)]
+                #[allow(non_snake_case, clippy::missing_const_for_fn)]
                 fn $operation($state: &mut Machine, _opcode: Opcode, $pc: usize) -> Control {
                     $definition
                 }
@@ -301,7 +301,7 @@ fn eval_table<H: InterpreterHandler>(
                 state.exit(e.clone().into());
                 return Control::Exit(ExitReason::Error(e));
             }
-        };
+        }
         let control = TABLE[op.as_usize()](state, op, pc);
 
         #[cfg(feature = "tracing")]

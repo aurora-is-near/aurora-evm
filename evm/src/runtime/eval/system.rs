@@ -167,7 +167,7 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H>
     ) {
         Ok(()) => (),
         Err(e) => return Control::Exit(e.into()),
-    };
+    }
 
     Control::Continue
 }
@@ -204,7 +204,7 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
         .resize_offset(memory_offset, len));
     if data_offset
         .checked_add(len.into())
-        .map_or(true, |l| l > U256::from(runtime.return_data_buffer.len()))
+        .is_none_or(|l| l > U256::from(runtime.return_data_buffer.len()))
     {
         return Control::Exit(ExitError::OutOfOffset.into());
     }
@@ -343,7 +343,7 @@ pub fn mcopy<H: Handler>(runtime: &mut Runtime, _handler: &mut H) -> Control<H> 
     match runtime.machine.memory_mut().copy(src, dst, len) {
         Ok(()) => (),
         Err(e) => return Control::Exit(e.into()),
-    };
+    }
 
     Control::Continue
 }
