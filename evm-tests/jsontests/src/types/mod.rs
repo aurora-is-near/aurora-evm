@@ -13,7 +13,7 @@ mod json_utils;
 /// Represents a test case for the Ethereum state transitions.
 /// It includes the environment setup, pre-state, transaction details,
 /// expected post-state results for different forks, configuration, and metadata.
-#[derive(Debug, Eq, PartialEq, Deserialize)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 pub struct StateTestCase {
     /// The environment parameters for the state test execution.
     /// This includes block-specific information like coinbase address, difficulty, gas limit, etc.
@@ -40,7 +40,7 @@ pub struct StateTestCase {
 
 /// Represents the environment parameters under which a state test is executed.
 /// These parameters typically correspond to the fields of a block header.
-#[derive(Debug, Eq, PartialEq, Deserialize)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StateEnv {
     /// The address of the beneficiary account (miner) to whom the block rewards are transferred.
@@ -105,13 +105,13 @@ pub struct StateEnv {
 /// `PreState` represents a sorted mapping from Ethereum account addresses (`H160`) to their
 /// corresponding state (`StateAccount`).
 /// Represents vis `AccountsState`.
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Deserialize)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 pub struct PreState(AccountsState);
 
 /// `AccountsState` represents a sorted mapping from Ethereum account addresses (`H160`) to their
 /// corresponding state (`StateAccount`).
 /// It uses a `BTreeMap` to ensure a consistent order for serialization.
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
 pub struct AccountsState(BTreeMap<H160, StateAccount>);
 
 impl<'de> Deserialize<'de> for AccountsState {
@@ -126,7 +126,9 @@ impl<'de> Deserialize<'de> for AccountsState {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Deserialize)]
+//BTreeMap<ForkSpec, Vec<PostStateResult>>,
+
+#[derive(Debug, Eq, Ord, PartialOrd, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PostState {
     /// Post state hash
@@ -146,7 +148,7 @@ pub struct PostState {
     pub state: Option<AccountsState>,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Deserialize)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StateAccount {
     /// Account Nonce.
@@ -164,7 +166,7 @@ pub struct StateAccount {
 }
 
 /// Post State indexes.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Ord, PartialOrd, PartialEq, Eq, Clone, Deserialize)]
 pub struct PostStateIndexes {
     /// Index into transaction data set.
     pub data: u64,
