@@ -9,8 +9,8 @@ env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v17.0
   ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-6%40v1.0.0/fixtures_pectra-devnet-6.tar.gz
-  ETHEREUM_SPEC_TESTS2_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v4.4.0/fixtures_stable.tar.gz
-  ETHEREUM_SPEC_TESTS_STATIC_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v4.4.0/fixtures_static.tar.gz
+  ETHEREUM_SPEC_TESTS2_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_stable.tar.gz
+  ETHEREUM_SPEC_TESTS_STATIC_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_static.tar.gz
 
 jobs:
   unit-tests:
