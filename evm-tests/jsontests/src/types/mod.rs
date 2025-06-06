@@ -1,14 +1,17 @@
 use crate::types::json_utils::{
     deserialize_btree_u256_u256_from_str_opt, deserialize_bytes_from_str,
-    deserialize_bytes_from_str_opt, deserialize_h160_from_str, deserialize_h256_from_u256_str,
-    deserialize_h256_from_u256_str_opt, deserialize_u256_from_str, deserialize_u64_from_str_opt,
-    h160_from_str, strip_0x_prefix,
+    deserialize_bytes_from_str_opt, deserialize_h160_from_str, deserialize_h160_from_str_opt,
+    deserialize_h256_from_u256_str, deserialize_h256_from_u256_str_opt, deserialize_u256_from_str,
+    deserialize_u256_from_str_opt, deserialize_u64_from_str_opt, deserialize_u8_from_str_opt,
+    deserialize_vec_h256_from_str, deserialize_vec_u256_from_str, h160_from_str, strip_0x_prefix,
 };
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
 
+mod info;
 mod json_utils;
+pub mod spec;
 
 /// Represents a test case for the Ethereum state transitions.
 /// It includes the environment setup, pre-state, transaction details,
@@ -22,20 +25,25 @@ pub struct StateTestCase {
     /// The initial state of accounts before the transaction is executed.
     #[serde(rename = "pre")]
     pub pre_state: PreState,
-    /*
-        /// The expected state of accounts after the transaction execution for various forks.
-        /// Maps fork specifications to a list of possible outcomes (results).
-        #[serde(rename = "post")]
-        pub post_states: BTreeMap<ForkSpec, Vec<PostState>>,
-        /// The transaction(s) to be executed in the test case.
-        /// Can represent different transaction types across forks.
-        pub transaction: MultiTransaction,
-        /// Configuration settings specific to this state test.
-        pub config: StateTestConfig,
-        /// Additional information or metadata about the state test.
-        #[serde(rename = "_info")]
-        pub info: StateTestInfo,
-    */
+
+    /// The expected state of accounts after the transaction execution for various forks.
+    /// Maps fork specifications to a list of possible outcomes (results).
+    ///
+    /// NOTE: field `config` skipped as it is not used in the current context.
+    #[serde(rename = "post")]
+    pub post_states: BTreeMap<spec::Spec, Vec<PostState>>,
+
+    /// The transaction(s) to be executed in the test case.
+    /// Can represent different transaction types across forks.
+    pub transaction: Transaction,
+
+    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_bytes_from_str_opt")]
+    pub out: Option<Vec<u8>>,
+
+    /// Additional information or metadata about the state test.
+    #[serde(rename = "_info")]
+    pub info: info::Info,
 }
 
 /// Represents the environment parameters under which a state test is executed.
@@ -126,8 +134,6 @@ impl<'de> Deserialize<'de> for AccountsState {
     }
 }
 
-//BTreeMap<ForkSpec, Vec<PostStateResult>>,
-
 #[derive(Debug, Eq, Ord, PartialOrd, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PostState {
@@ -144,8 +150,10 @@ pub struct PostState {
     /// Transaction bytes
     #[serde(rename = "txbytes", deserialize_with = "deserialize_bytes_from_str")]
     pub tx_bytes: Vec<u8>,
-    /// Accounts state
+    /// Output Accounts state
     pub state: Option<AccountsState>,
+    /// Post Accounts state
+    pub post_state: Option<AccountsState>,
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
@@ -166,7 +174,7 @@ pub struct StateAccount {
 }
 
 /// Post State indexes.
-#[derive(Debug, Ord, PartialOrd, PartialEq, Eq, Clone, Deserialize)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 pub struct PostStateIndexes {
     /// Index into transaction data set.
     pub data: u64,
@@ -174,4 +182,95 @@ pub struct PostStateIndexes {
     pub gas: u64,
     /// Index into transaction value set.
     pub value: u64,
+}
+
+/// Transaction data.
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transaction {
+    #[serde(rename = "type", deserialize_with = "deserialize_u8_from_str_opt")]
+    pub tx_type: Option<u8>,
+    #[serde(deserialize_with = "deserialize_bytes_from_str")]
+    pub data: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_vec_u256_from_str")]
+    pub gas_limit: Vec<U256>,
+    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    pub gas_price: Option<U256>,
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
+    pub nonce: U256,
+    #[serde(deserialize_with = "deserialize_h256_from_u256_str_opt")]
+    pub secret_key: Option<H256>,
+    #[serde(deserialize_with = "deserialize_h160_from_str_opt")]
+    pub sender: Option<H160>,
+    #[serde(deserialize_with = "deserialize_h160_from_str_opt")]
+    pub to: Option<H160>,
+    #[serde(deserialize_with = "deserialize_vec_u256_from_str")]
+    pub value: Vec<U256>,
+    /// for details on `maxFeePerGas` see EIP-1559
+    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    pub max_fee_per_gas: Option<U256>,
+    /// for details on `maxPriorityFeePerGas` see EIP-1559
+    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    pub max_priority_fee_per_gas: Option<U256>,
+    #[serde(
+        rename = "initcodes",
+        deserialize_with = "deserialize_bytes_from_str_opt"
+    )]
+    pub init_codes: Option<Vec<u8>>,
+
+    /// EIP-2930
+    #[serde(default)]
+    pub access_lists: Vec<Option<AccessList>>,
+
+    /// EIP-4844
+    #[serde(default, deserialize_with = "deserialize_vec_h256_from_str")]
+    pub blob_versioned_hashes: Vec<H256>,
+    /// EIP-4844
+    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    pub max_fee_per_blob_gas: Option<U256>,
+    /// EIP-7702
+    pub authorization_list: Option<AuthorizationList>,
+}
+
+/// Type alias for access lists (see EIP-2930)
+pub type AccessList = Vec<AccessListTuple>;
+
+/// Access list tuple (see <https://eips.ethereum.org/EIPS/eip-2930>).
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessListTuple {
+    /// Address to access
+    #[serde(deserialize_with = "deserialize_h160_from_str")]
+    pub address: H160,
+    /// Keys (slots) to access at that address
+    pub storage_keys: Vec<H256>,
+}
+
+/// EIP-7702 Authorization List
+pub type AuthorizationList = Vec<AuthorizationItem>;
+/// EIP-7702 Authorization item
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorizationItem {
+    /// Chain ID
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
+    pub chain_id: U256,
+    /// Address to access
+    #[serde(deserialize_with = "deserialize_h160_from_str")]
+    pub address: H160,
+    /// Keys (slots) to access at that address
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
+    pub nonce: U256,
+    /// r signature
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
+    pub r: U256,
+    /// s signature
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
+    pub s: U256,
+    /// Parity
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
+    pub v: U256,
+    /// Signer address
+    #[serde(deserialize_with = "deserialize_h160_from_str_opt")]
+    pub signer: Option<H160>,
 }
