@@ -120,17 +120,11 @@ pub fn verylowcopy_cost(len: U256) -> Result<u64, ExitError> {
     Ok(gas.as_u64())
 }
 
-pub fn extcodecopy_cost(
-    len: U256,
-    is_cold: bool,
-    delegated_designator_is_cold: Option<bool>,
-    config: &Config,
-) -> Result<u64, ExitError> {
+pub fn ext_codecopy_cost(len: U256, is_cold: bool, config: &Config) -> Result<u64, ExitError> {
     let wordd = len / U256_VALUE_32;
     let is_wordr = (len % U256_VALUE_32) == U256_ZERO;
-    let gas = U256::from(address_access_cost(
+    let gas = U256::from(non_delegated_access_cost(
         is_cold,
-        delegated_designator_is_cold,
         config.gas_ext_code,
         config,
     ))
@@ -288,6 +282,14 @@ pub fn call_cost(
         config,
     ) + xfer_cost(is_call_or_callcode, transfers_value)
         + new_cost(is_call_or_staticcall, new_account, transfers_value, config)
+}
+
+pub const fn non_delegated_access_cost(is_cold: bool, regular_value: u64, config: &Config) -> u64 {
+    match (config.increase_state_access_gas, is_cold) {
+        (false, _) => regular_value,
+        (true, true) => config.gas_account_access_cold,
+        (true, false) => config.gas_storage_read_warm,
+    }
 }
 
 pub const fn address_access_cost(
