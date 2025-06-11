@@ -158,15 +158,32 @@ pub fn deserialize_bytes_from_str<'de, D: Deserializer<'de>>(
     hex::decode(strip_0x_prefix(&s)).map_err(|e: hex::FromHexError| Error::custom(e.to_string()))
 }
 
+/// Deserializes a vector of hexadecimal strings into a vector of byte vectors.
+/// Each hexadecimal string may start with a "0x" prefix, which will be removed.
+/// Returns an error if any string contains invalid hexadecimal characters.
+pub fn deserialize_vec_of_hex<'de, D>(deserializer: D) -> Result<Vec<Vec<u8>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let values: Vec<String> = Vec::deserialize(deserializer)?;
+    values
+        .into_iter()
+        .map(|s| {
+            hex::decode(strip_0x_prefix(&s))
+                .map_err(|e: hex::FromHexError| Error::custom(e.to_string()))
+        })
+        .collect()
+}
+
 /// Deserializes an optional hexadecimal string into an optional vector of bytes.
 /// The hexadecimal string may start with the "0x" prefix.
 /// Returns `None` if the value is missing.
 pub fn deserialize_bytes_from_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Vec<u8>>, D::Error> {
-    Option::deserialize(deserializer)?
+    Option::<String>::deserialize(deserializer)?
         .map(|s| {
-            hex::decode(strip_0x_prefix(s))
+            hex::decode(strip_0x_prefix(&s))
                 .map_err(|e: hex::FromHexError| Error::custom(e.to_string()))
         })
         .transpose()
@@ -213,6 +230,7 @@ pub fn deserialize_h160_from_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<H160>, D::Error> {
     Option::<String>::deserialize(deserializer)?
+        .filter(|s| !s.is_empty())
         .map(|s| h160_from_str::<D>(strip_0x_prefix(&s)))
         .transpose()
 }

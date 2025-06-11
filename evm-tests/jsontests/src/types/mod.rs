@@ -3,7 +3,8 @@ use crate::types::json_utils::{
     deserialize_bytes_from_str_opt, deserialize_h160_from_str, deserialize_h160_from_str_opt,
     deserialize_h256_from_u256_str, deserialize_h256_from_u256_str_opt, deserialize_u256_from_str,
     deserialize_u256_from_str_opt, deserialize_u64_from_str_opt, deserialize_u8_from_str_opt,
-    deserialize_vec_h256_from_str, deserialize_vec_u256_from_str, h160_from_str, strip_0x_prefix,
+    deserialize_vec_h256_from_str, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
+    h160_from_str, strip_0x_prefix,
 };
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Deserializer};
@@ -85,28 +86,28 @@ pub struct StateEnv {
     /// The base fee per gas for the current block, as introduced in EIP-1559.
     /// This value adjusts based on network congestion.
     #[serde(
-        rename = "currentBaseFee",
         default,
+        rename = "currentBaseFee",
         deserialize_with = "deserialize_u256_from_str"
     )]
     pub block_base_fee_per_gas: U256,
     /// A pre-seeded random value (mix hash) used for testing purposes, particularly relevant
     /// before the Merge (transition to Proof-of-Stake).
     #[serde(
-        rename = "currentRandom",
         default,
+        rename = "currentRandom",
         deserialize_with = "deserialize_h256_from_u256_str_opt"
     )]
     pub random: Option<H256>,
 
     /// The amount of blob gas used by the parent block. Relevant for EIP-4844.
-    #[serde(deserialize_with = "deserialize_u64_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_u64_from_str_opt")]
     pub parent_blob_gas_used: Option<u64>,
     /// The excess blob gas of the parent block. Relevant for EIP-4844.
-    #[serde(deserialize_with = "deserialize_u64_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_u64_from_str_opt")]
     pub parent_excess_blob_gas: Option<u64>,
     /// The excess blob gas for the current block being processed. Relevant for EIP-4844.
-    #[serde(deserialize_with = "deserialize_u64_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_u64_from_str_opt")]
     pub current_excess_blob_gas: Option<u64>,
 }
 
@@ -146,13 +147,16 @@ pub struct PostState {
     /// Indexes
     pub indexes: PostStateIndexes,
     /// Expected error if the test is meant to fail
+    #[serde(default)]
     pub expect_exception: Option<String>,
     /// Transaction bytes
     #[serde(rename = "txbytes", deserialize_with = "deserialize_bytes_from_str")]
     pub tx_bytes: Vec<u8>,
     /// Output Accounts state
+    #[serde(default)]
     pub state: Option<AccountsState>,
     /// Post Accounts state
+    #[serde(default)]
     pub post_state: Option<AccountsState>,
 }
 
@@ -166,10 +170,10 @@ pub struct StateAccount {
     #[serde(deserialize_with = "deserialize_u256_from_str")]
     pub balance: U256,
     /// Account Code.
-    #[serde(deserialize_with = "deserialize_bytes_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_bytes_from_str_opt")]
     pub code: Option<Vec<u8>>,
     /// Account Storage.
-    #[serde(deserialize_with = "deserialize_btree_u256_u256_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_btree_u256_u256_from_str_opt")]
     pub storage: Option<BTreeMap<U256, U256>>,
 }
 
@@ -188,31 +192,36 @@ pub struct PostStateIndexes {
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
-    #[serde(rename = "type", deserialize_with = "deserialize_u8_from_str_opt")]
+    #[serde(
+        default,
+        rename = "type",
+        deserialize_with = "deserialize_u8_from_str_opt"
+    )]
     pub tx_type: Option<u8>,
-    #[serde(deserialize_with = "deserialize_bytes_from_str")]
-    pub data: Vec<u8>,
+    #[serde(deserialize_with = "deserialize_vec_of_hex")]
+    pub data: Vec<Vec<u8>>,
     #[serde(deserialize_with = "deserialize_vec_u256_from_str")]
     pub gas_limit: Vec<U256>,
-    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u256_from_str")]
     pub nonce: U256,
-    #[serde(deserialize_with = "deserialize_h256_from_u256_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_h256_from_u256_str_opt")]
     pub secret_key: Option<H256>,
-    #[serde(deserialize_with = "deserialize_h160_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_h160_from_str_opt")]
     pub sender: Option<H160>,
-    #[serde(deserialize_with = "deserialize_h160_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_h160_from_str_opt")]
     pub to: Option<H160>,
     #[serde(deserialize_with = "deserialize_vec_u256_from_str")]
     pub value: Vec<U256>,
     /// for details on `maxFeePerGas` see EIP-1559
-    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
     pub max_fee_per_gas: Option<U256>,
     /// for details on `maxPriorityFeePerGas` see EIP-1559
-    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
     pub max_priority_fee_per_gas: Option<U256>,
     #[serde(
+        default,
         rename = "initcodes",
         deserialize_with = "deserialize_bytes_from_str_opt"
     )]
@@ -226,9 +235,10 @@ pub struct Transaction {
     #[serde(default, deserialize_with = "deserialize_vec_h256_from_str")]
     pub blob_versioned_hashes: Vec<H256>,
     /// EIP-4844
-    #[serde(deserialize_with = "deserialize_u256_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
     pub max_fee_per_blob_gas: Option<U256>,
     /// EIP-7702
+    #[serde(default)]
     pub authorization_list: Option<AuthorizationList>,
 }
 
@@ -271,6 +281,6 @@ pub struct AuthorizationItem {
     #[serde(deserialize_with = "deserialize_u256_from_str")]
     pub v: U256,
     /// Signer address
-    #[serde(deserialize_with = "deserialize_h160_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_h160_from_str_opt")]
     pub signer: Option<H160>,
 }

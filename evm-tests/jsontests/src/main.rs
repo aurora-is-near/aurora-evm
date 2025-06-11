@@ -1,6 +1,7 @@
 #![allow(clippy::too_long_first_doc_paragraph)]
 
 use crate::state::{TestExecutionResult, VerboseOutput};
+use crate::types::StateTestCase;
 use clap::{arg, command, value_parser, ArgAction, Command};
 use ethjson::spec::ForkSpec;
 use std::collections::HashMap;
@@ -243,6 +244,13 @@ fn run_test_for_file(
     }
     let file = File::open(file_name).expect("Open file failed");
     let reader = BufReader::new(file);
+
+    let file2 = File::open(file_name).expect("Open file failed");
+
+    let reader2 = BufReader::new(file2);
+    let _test_suite =
+        serde_json::from_reader::<_, HashMap<String, StateTestCase>>(reader2).expect("###");
+
     let test_suite = serde_json::from_reader::<_, HashMap<String, state::Test>>(reader)
         .expect("Parse test cases failed");
 
