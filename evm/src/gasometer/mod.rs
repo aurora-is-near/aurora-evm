@@ -1077,29 +1077,27 @@ impl Inner<'_> {
             GasCost::Low => u64::from(consts::G_LOW),
             GasCost::Invalid(opcode) => return Err(ExitError::InvalidCode(opcode)),
 
-            GasCost::ExtCodeSize { target_is_cold } => costs::address_access_cost(
+            GasCost::ExtCodeSize { target_is_cold } => costs::non_delegated_access_cost(
                 target_is_cold,
-                None,
                 self.config.gas_ext_code,
                 self.config,
             ),
             GasCost::ExtCodeCopy {
                 target_is_cold,
                 len,
-            } => costs::extcodecopy_cost(len, target_is_cold, None, self.config)?,
-            GasCost::Balance { target_is_cold } => costs::address_access_cost(
+            } => costs::ext_codecopy_cost(len, target_is_cold, self.config)?,
+            GasCost::ExtCodeHash { target_is_cold } => costs::non_delegated_access_cost(
                 target_is_cold,
-                None,
+                self.config.gas_ext_code_hash,
+                self.config,
+            ),
+
+            GasCost::Balance { target_is_cold } => costs::non_delegated_access_cost(
+                target_is_cold,
                 self.config.gas_balance,
                 self.config,
             ),
             GasCost::BlockHash => u64::from(consts::G_BLOCKHASH),
-            GasCost::ExtCodeHash { target_is_cold } => costs::address_access_cost(
-                target_is_cold,
-                None,
-                self.config.gas_ext_code_hash,
-                self.config,
-            ),
             GasCost::WarmStorageRead => costs::storage_read_warm(self.config),
         })
     }

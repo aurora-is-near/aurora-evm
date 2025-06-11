@@ -32,6 +32,8 @@ impl Valids {
     /// code bytes.
     #[inline]
     #[must_use]
+    // TODO: rust-v1.87 - const fn
+    #[allow(clippy::missing_const_for_fn)]
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -39,6 +41,8 @@ impl Valids {
     /// Returns true if the valids list is empty
     #[inline]
     #[must_use]
+    // TODO: rust-v1.87 - const fn
+    #[allow(clippy::missing_const_for_fn)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
