@@ -1,4 +1,4 @@
-use crate::types::spec::Spec;
+use crate::types::Spec;
 use std::path::PathBuf;
 
 #[derive(Default, Debug, Clone)]

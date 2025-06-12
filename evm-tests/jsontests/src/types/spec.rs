@@ -57,25 +57,25 @@ impl FromStr for Spec {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "Frontier" => Ok(Spec::Frontier),
-            "Homestead" | "FrontierToHomesteadAt5" => Ok(Spec::Homestead),
-            "EIP150" | "HomesteadToDaoAt5" | "HomesteadToEIP150At5" => Ok(Spec::Tangerine),
-            "EIP158" => Ok(Spec::SpuriousDragon),
-            "Byzantium" | "EIP158ToByzantiumAt5" => Ok(Spec::Byzantium),
+            "Frontier" => Ok(Self::Frontier),
+            "Homestead" | "FrontierToHomesteadAt5" => Ok(Self::Homestead),
+            "EIP150" | "HomesteadToDaoAt5" | "HomesteadToEIP150At5" => Ok(Self::Tangerine),
+            "EIP158" => Ok(Self::SpuriousDragon),
+            "Byzantium" | "EIP158ToByzantiumAt5" => Ok(Self::Byzantium),
             "Constantinople"
             | "ConstantinopleFix"
             | "ByzantiumToConstantinopleAt5"
-            | "ByzantiumToConstantinopleFixAt5" => Ok(Spec::Constantinople),
-            "Petersburg" => Ok(Spec::Petersburg),
-            "Istanbul" => Ok(Spec::Istanbul),
-            "Berlin" => Ok(Spec::Berlin),
-            "London" | "BerlinToLondonAt5" => Ok(Spec::London),
-            "Merge" | "Paris" => Ok(Spec::Merge),
-            "Shanghai" => Ok(Spec::Shanghai),
-            "Cancun" => Ok(Spec::Cancun),
-            "Prague" => Ok(Spec::Prague),
-            "Osaka" => Ok(Spec::Osaka),
-            _ => Err(format!("Unknown Spec value: {}", value)),
+            | "ByzantiumToConstantinopleFixAt5" => Ok(Self::Constantinople),
+            "Petersburg" => Ok(Self::Petersburg),
+            "Istanbul" => Ok(Self::Istanbul),
+            "Berlin" => Ok(Self::Berlin),
+            "London" | "BerlinToLondonAt5" => Ok(Self::London),
+            "Merge" | "Paris" => Ok(Self::Merge),
+            "Shanghai" => Ok(Self::Shanghai),
+            "Cancun" => Ok(Self::Cancun),
+            "Prague" => Ok(Self::Prague),
+            "Osaka" => Ok(Self::Osaka),
+            _ => Err(format!("Unknown Spec value: {value}")),
         }
     }
 }

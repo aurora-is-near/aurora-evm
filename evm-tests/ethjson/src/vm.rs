@@ -1,3 +1,5 @@
+//! EVM vm types
+
 use crate::{
     bytes::Bytes,
     hash::{Address, H256},

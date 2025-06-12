@@ -1,15 +1,15 @@
-#![allow(clippy::too_long_first_doc_paragraph)]
+#![allow(clippy::too_long_first_doc_paragraph, clippy::missing_panics_doc)]
 
-use crate::config::VerboseOutput;
-use crate::state::{TestConfig, TestExecutionResult, VerboseOutput};
-use crate::types::spec::Spec;
+use crate::config::{TestConfig, VerboseOutput};
+use crate::execution_results::TestExecutionResult;
+use crate::types::Spec;
 use crate::types::StateTestCase;
+use crate::types::VmTestCase;
 use clap::{arg, command, value_parser, ArgAction, Command};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
-use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -17,8 +17,10 @@ pub mod state;
 pub mod types;
 pub mod vm;
 
+mod assertions;
 mod config;
 mod execution_results;
+mod precompiles;
 mod state_dump;
 mod utils;
 
@@ -107,7 +109,7 @@ fn main() -> Result<(), String> {
     if let Some(matches) = matches.subcommand_matches("state") {
         let spec: Option<Spec> = matches
             .get_one::<String>("spec")
-            .and_then(|spec| Spec::from_str(&spec).ok());
+            .and_then(|spec| Spec::from_str(spec).ok());
 
         let verbose_output = VerboseOutput {
             verbose: matches.get_flag("verbose"),
@@ -119,7 +121,11 @@ fn main() -> Result<(), String> {
         for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
             let path = Path::new(src_name);
 
-            assert!(path.exists(), "data source is not exist: {path:?}");
+            assert!(
+                path.exists(),
+                "data source is not exist: {}",
+                path.display()
+            );
             if path.is_file() {
                 let test_config = TestConfig {
                     verbose_output: verbose_output.clone(),
@@ -175,7 +181,7 @@ fn run_vm_test_for_file(
     let file = File::open(file_name).expect("Open file failed");
 
     let reader = BufReader::new(file);
-    let test_suite = serde_json::from_reader::<_, HashMap<String, vm::Test>>(reader)
+    let test_suite = serde_json::from_reader::<_, HashMap<String, VmTestCase>>(reader)
         .expect("Parse test cases failed");
 
     for (name, test) in test_suite {
@@ -216,7 +222,7 @@ fn run_test_for_dir(
     tests_result: &mut TestExecutionResult,
 ) {
     if should_skip(dir_name) {
-        println!("Skipping test case {dir_name:?}");
+        println!("Skipping test case {}", dir_name.display());
         return;
     }
     for entry in fs::read_dir(dir_name).unwrap() {
@@ -243,7 +249,7 @@ fn run_test_for_dir(
 fn run_test_for_file(test_config: &TestConfig, tests_result: &mut TestExecutionResult) {
     if should_skip(&test_config.file_name) {
         if test_config.verbose_output.verbose {
-            println!("Skipping test case {:?}", test_config.file_name);
+            println!("Skipping test case {}", test_config.file_name.display());
         }
         return;
     }

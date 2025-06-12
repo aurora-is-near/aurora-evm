@@ -1,3 +1,5 @@
+//! EVM state types
+
 use crate::{
     bytes::Bytes,
     hash::{Address, Bloom, H256},

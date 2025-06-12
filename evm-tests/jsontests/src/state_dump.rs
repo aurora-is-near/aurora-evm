@@ -1,4 +1,4 @@
-use crate::types::spec::Spec;
+use crate::types::Spec;
 use aurora_evm::backend::{MemoryAccount, MemoryVicinity};
 use primitive_types::{H160, H256, U256};
 use std::collections::BTreeMap;

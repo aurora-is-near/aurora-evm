@@ -31,16 +31,6 @@ pub fn unwrap_to_account(s: &ethjson::spec::Account) -> MemoryAccount {
     }
 }
 
-pub fn unwrap_to_state(a: &ethjson::spec::State) -> BTreeMap<H160, MemoryAccount> {
-    match &a.0 {
-        ethjson::spec::HashOrMap::Map(m) => m
-            .iter()
-            .map(|(k, v)| ((*k).into(), unwrap_to_account(v)))
-            .collect(),
-        ethjson::spec::HashOrMap::Hash(_) => panic!("Hash can not be converted."),
-    }
-}
-
 /// Basic account type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrieAccount {

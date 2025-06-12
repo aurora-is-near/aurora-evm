@@ -11,7 +11,7 @@ pub fn strip_0x_prefix(s: &str) -> &str {
 
 /// Converts a hexadecimal string into a `u64` value.
 /// Returns an error if the string length is greater than 16 or parsing fails.
-fn u64_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u64, D::Error> {
+pub fn u64_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u64, D::Error> {
     if value.len() > 16 {
         return Err(Error::custom(
             format!("u64 value too big (length={})", value.len()).as_str(),
@@ -24,7 +24,7 @@ fn u64_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u64, D::Error>
 
 /// Converts a hexadecimal string into a `u8` value.
 /// Returns an error if the string length is greater than 16 or parsing fails.
-fn u8_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u8, D::Error> {
+pub fn u8_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u8, D::Error> {
     if value.len() > 16 {
         return Err(Error::custom(
             format!("u8 value too big (length={})", value.len()).as_str(),
@@ -37,7 +37,7 @@ fn u8_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u8, D::Error> {
 
 /// Converts a hexadecimal string into a `U256` value.
 /// Returns an error if the string length is greater than 64 or parsing fails.
-fn u256_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<U256, D::Error> {
+pub fn u256_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<U256, D::Error> {
     if value.len() > 64 {
         return Err(Error::custom(
             format!("U256 value too big (length={})", value.len()).as_str(),
@@ -62,13 +62,30 @@ pub fn h160_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<H160, D::
 /// Converts a `BTreeMap` with hexadecimal string keys and values into a `BTreeMap` with `U256` keys and values.
 /// The hexadecimal strings may optionally start with the "0x" prefix.
 /// Returns an error if any key or value cannot be parsed into a U256.
-fn btree_u256_u256_from_str<'de, D: Deserializer<'de>>(
+pub fn btree_u256_u256_from_str<'de, D: Deserializer<'de>>(
     map_str: BTreeMap<String, String>,
 ) -> Result<BTreeMap<U256, U256>, D::Error> {
     let mut map = BTreeMap::new();
     for (k, v) in map_str {
         let key = u256_from_str::<D>(strip_0x_prefix(&k))?;
         let value = u256_from_str::<D>(strip_0x_prefix(&v))?;
+        map.insert(key, value);
+    }
+    Ok(map)
+}
+
+/// Converts a `BTreeMap` with hexadecimal string keys and values into a `BTreeMap` with keys and values of type H256.
+/// The hexadecimal strings may start with the "0x" prefix, which will be removed.
+/// Returns an error if any key or value cannot be converted.
+pub fn btree_h256_h256_from_str<'de, D: Deserializer<'de>>(
+    map_str: BTreeMap<String, String>,
+) -> Result<BTreeMap<H256, H256>, D::Error> {
+    let mut map = BTreeMap::new();
+    for (k, v) in map_str {
+        let key_u256 = u256_from_str::<D>(strip_0x_prefix(&k))?;
+        let value_u256 = u256_from_str::<D>(strip_0x_prefix(&v))?;
+        let key = H256::from(key_u256.to_big_endian());
+        let value = H256::from(value_u256.to_big_endian());
         map.insert(key, value);
     }
     Ok(map)
