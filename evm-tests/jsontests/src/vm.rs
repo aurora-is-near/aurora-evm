@@ -1,4 +1,6 @@
+use crate::config::{TestConfig, VerboseOutput};
 use crate::state::{TestExecutionResult, VerboseOutput};
+use crate::types::StateTestCase;
 use aurora_evm::backend::{ApplyBackend, MemoryAccount, MemoryBackend, MemoryVicinity};
 use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
 use aurora_evm::Config;
@@ -91,7 +93,11 @@ impl Test {
 }
 
 #[must_use]
-pub fn test(verbose_output: &VerboseOutput, name: &str, test: &Test) -> TestExecutionResult {
+pub fn test(
+    verbose_output: &VerboseOutput,
+    name: &str,
+    test: &StateTestCase,
+) -> TestExecutionResult {
     let mut result = TestExecutionResult::new();
     let mut failed = false;
     result.total = 1;

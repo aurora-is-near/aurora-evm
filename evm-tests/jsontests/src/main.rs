@@ -1,20 +1,25 @@
 #![allow(clippy::too_long_first_doc_paragraph)]
 
-use crate::state::{TestExecutionResult, VerboseOutput};
+use crate::config::VerboseOutput;
+use crate::state::{TestConfig, TestExecutionResult, VerboseOutput};
+use crate::types::spec::Spec;
 use crate::types::StateTestCase;
 use clap::{arg, command, value_parser, ArgAction, Command};
-use ethjson::spec::ForkSpec;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::str::FromStr;
 
 pub mod state;
 pub mod types;
 pub mod vm;
 
+mod config;
+mod execution_results;
+mod state_dump;
 mod utils;
 
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -100,9 +105,9 @@ fn main() -> Result<(), String> {
     }
 
     if let Some(matches) = matches.subcommand_matches("state") {
-        let spec: Option<ForkSpec> = matches
+        let spec: Option<Spec> = matches
             .get_one::<String>("spec")
-            .and_then(|spec| spec.clone().try_into().ok());
+            .and_then(|spec| Spec::from_str(&spec).ok());
 
         let verbose_output = VerboseOutput {
             verbose: matches.get_flag("verbose"),
@@ -113,9 +118,15 @@ fn main() -> Result<(), String> {
         let mut tests_result = TestExecutionResult::new();
         for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
             let path = Path::new(src_name);
+
             assert!(path.exists(), "data source is not exist: {path:?}");
             if path.is_file() {
-                run_test_for_file(spec.as_ref(), &verbose_output, path, &mut tests_result);
+                let test_config = TestConfig {
+                    verbose_output: verbose_output.clone(),
+                    spec: spec.clone(),
+                    file_name: path.to_path_buf(),
+                };
+                run_test_for_file(&test_config, &mut tests_result);
             } else if path.is_dir() {
                 run_test_for_dir(spec.as_ref(), &verbose_output, path, &mut tests_result);
             }
@@ -199,7 +210,7 @@ fn run_vm_test_for_file(
 }
 
 fn run_test_for_dir(
-    spec: Option<&ForkSpec>,
+    spec: Option<&Spec>,
     verbose_output: &VerboseOutput,
     dir_name: &Path,
     tests_result: &mut TestExecutionResult,
@@ -219,72 +230,59 @@ fn run_test_for_dir(
         if path.is_dir() {
             run_test_for_dir(spec, verbose_output, path.as_path(), tests_result);
         } else {
-            run_test_for_file(spec, verbose_output, path.as_path(), tests_result);
+            let test_config = TestConfig {
+                verbose_output: verbose_output.clone(),
+                spec: spec.cloned(),
+                file_name: path.clone(),
+            };
+            run_test_for_file(&test_config, tests_result);
         }
     }
 }
 
-fn run_test_for_file(
-    spec: Option<&ForkSpec>,
-    verbose_output: &VerboseOutput,
-    file_name: &Path,
-    tests_result: &mut TestExecutionResult,
-) {
-    if should_skip(file_name) {
-        if verbose_output.verbose {
-            println!("Skipping test case {file_name:?}");
+fn run_test_for_file(test_config: &TestConfig, tests_result: &mut TestExecutionResult) {
+    if should_skip(&test_config.file_name) {
+        if test_config.verbose_output.verbose {
+            println!("Skipping test case {:?}", test_config.file_name);
         }
         return;
     }
-    if verbose_output.verbose {
+    if test_config.verbose_output.verbose {
         println!(
             "RUN for: {}",
-            short_test_file_name(file_name.to_str().unwrap())
+            short_test_file_name(test_config.file_name.to_str().unwrap())
         );
     }
-    let file = File::open(file_name).expect("Open file failed");
+    let file = File::open(&test_config.file_name).expect("Open file failed");
     let reader = BufReader::new(file);
 
-    let file2 = File::open(file_name).expect("Open file failed");
-
-    let reader2 = BufReader::new(file2);
-    let _test_suite =
-        serde_json::from_reader::<_, HashMap<String, StateTestCase>>(reader2).expect("###");
-
-    let test_suite = serde_json::from_reader::<_, HashMap<String, state::Test>>(reader)
+    let test_suite = serde_json::from_reader::<_, HashMap<String, StateTestCase>>(reader)
         .expect("Parse test cases failed");
 
-    let file_name = Arc::new(file_name.to_path_buf());
     for (name, test) in test_suite {
-        let test_res = state::test(
-            verbose_output.clone(),
-            &name,
-            test,
-            spec.cloned(),
-            file_name.clone(),
-        );
+        let test_res = state::test(test_config.clone(), name, test);
 
         if test_res.failed > 0 {
-            if verbose_output.verbose {
+            if test_config.verbose_output.verbose {
                 println!("Tests count:\t{}", test_res.total);
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(file_name.to_str().unwrap())
+                    short_test_file_name(test_config.file_name.to_str().unwrap())
                 );
-            } else if verbose_output.verbose_failed {
+            } else if test_config.verbose_output.verbose_failed {
                 println!(
                     "RUN for: {}",
-                    short_test_file_name(file_name.to_str().unwrap())
+                    short_test_file_name(test_config.file_name.to_str().unwrap())
                 );
                 println!("Tests count:\t{}", test_res.total);
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(file_name.to_str().unwrap())
+                    short_test_file_name(test_config.file_name.to_str().unwrap())
                 );
             }
-        } else if verbose_output.verbose {
+        } else if test_config.verbose_output.verbose {
             println!("Tests count: {}\n", test_res.total);
         }
 
@@ -329,7 +327,7 @@ const SKIPPED_CASES: &[&str] = &[
     // NOTE: this tests related to hard forks: London and before London
     "stRevertTest/RevertPrecompiledTouch",
     "stRevertTest/RevertPrecompiledTouch_storage",
-    // These tests are passing, but they take a lot of time to execute so can going to skip them.
+    // These tests pass, but they take a long time to execute, so they are skipped by default.
     "stTimeConsuming/static_Call50000_sha256",
     "vmPerformance/loopMul",
     "stTimeConsuming/CALLBlake2f_MaxRounds",
@@ -343,7 +341,7 @@ const SKIPPED_CASES: &[&str] = &[
 
 /// Check if a path should be skipped.
 /// It checks:
-/// - `path/and_file_stem` - check path and file name (without extention)
+/// - `path/and_file_stem` - check path and file name (without extension)
 /// - `path/with/sub/path` - recursively check path
 fn should_skip(path: &Path) -> bool {
     let matches = |case: &str| {

@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 mod info;
 mod json_utils;
 pub mod spec;
+mod vm;
 
 /// Represents a test case for the Ethereum state transitions.
 /// It includes the environment setup, pre-state, transaction details,

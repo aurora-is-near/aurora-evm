@@ -1,6 +1,7 @@
-use serde::de::{self, Unexpected, Visitor};
+use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::fmt;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Spec {
@@ -51,6 +52,33 @@ pub enum Spec {
     Osaka,
 }
 
+impl FromStr for Spec {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "Frontier" => Ok(Spec::Frontier),
+            "Homestead" | "FrontierToHomesteadAt5" => Ok(Spec::Homestead),
+            "EIP150" | "HomesteadToDaoAt5" | "HomesteadToEIP150At5" => Ok(Spec::Tangerine),
+            "EIP158" => Ok(Spec::SpuriousDragon),
+            "Byzantium" | "EIP158ToByzantiumAt5" => Ok(Spec::Byzantium),
+            "Constantinople"
+            | "ConstantinopleFix"
+            | "ByzantiumToConstantinopleAt5"
+            | "ByzantiumToConstantinopleFixAt5" => Ok(Spec::Constantinople),
+            "Petersburg" => Ok(Spec::Petersburg),
+            "Istanbul" => Ok(Spec::Istanbul),
+            "Berlin" => Ok(Spec::Berlin),
+            "London" | "BerlinToLondonAt5" => Ok(Spec::London),
+            "Merge" | "Paris" => Ok(Spec::Merge),
+            "Shanghai" => Ok(Spec::Shanghai),
+            "Cancun" => Ok(Spec::Cancun),
+            "Prague" => Ok(Spec::Prague),
+            "Osaka" => Ok(Spec::Osaka),
+            _ => Err(format!("Unknown Spec value: {}", value)),
+        }
+    }
+}
 impl<'de> Deserialize<'de> for Spec {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -69,27 +97,8 @@ impl<'de> Deserialize<'de> for Spec {
             where
                 E: de::Error,
             {
-                match value {
-                    "Frontier" => Ok(Spec::Frontier),
-                    "Homestead" | "FrontierToHomesteadAt5" => Ok(Spec::Homestead),
-                    "EIP150" | "HomesteadToDaoAt5" | "HomesteadToEIP150At5" => Ok(Spec::Tangerine),
-                    "EIP158" => Ok(Spec::SpuriousDragon),
-                    "Byzantium" | "EIP158ToByzantiumAt5" => Ok(Spec::Byzantium),
-                    "Constantinople"
-                    | "ConstantinopleFix"
-                    | "ByzantiumToConstantinopleAt5"
-                    | "ByzantiumToConstantinopleFixAt5" => Ok(Spec::Constantinople),
-                    "Petersburg" => Ok(Spec::Petersburg),
-                    "Istanbul" => Ok(Spec::Istanbul),
-                    "Berlin" => Ok(Spec::Berlin),
-                    "London" | "BerlinToLondonAt5" => Ok(Spec::London),
-                    "Merge" | "Paris" => Ok(Spec::Merge),
-                    "Shanghai" => Ok(Spec::Shanghai),
-                    "Cancun" => Ok(Spec::Cancun),
-                    "Prague" => Ok(Spec::Prague),
-                    "Osaka" => Ok(Spec::Osaka),
-                    _ => Err(de::Error::invalid_value(Unexpected::Str(value), &self)),
-                }
+                Spec::from_str(value)
+                    .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(value), &self))
             }
         }
 
