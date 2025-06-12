@@ -76,7 +76,7 @@ jobs:
 
       - name: Run Ethereum state tests
         run: |
-          cargo run -r -p evm-jsontests -F enable-slow-tests -- state -f \
+          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
           ethtests/GeneralStateTests/ \
           ethereum-spec-tests-static/fixtures/state_tests/ \
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
@@ -85,7 +85,7 @@ jobs:
 
       - name: Run Ethereum vm tests
         run: |
-          cargo run -r -p evm-jsontests -F enable-slow-tests -- vm -f \
+          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
             ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
             ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
             ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
@@ -138,14 +138,14 @@ jobs:
             mkdir ethereum-spec-tests-static
             tar -xzf ethereum-spec-tests-static.tar.gz -C ethereum-spec-tests-static
 
-            cargo run -r -p evm-jsontests -F enable-slow-tests -- state -f \
+            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
               ethtests/GeneralStateTests/ \
               ethereum-spec-tests-static/fixtures/state_tests/ \
               ethtests/LegacyTests/Cancun/GeneralStateTests/ \
               ethereum-spec-tests/fixtures/state_tests/ \
               ethereum-spec-tests2/fixtures/state_tests/
 
-            cargo run -r -p evm-jsontests -F enable-slow-tests -- vm -f \
+            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
               ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
               ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
               ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \

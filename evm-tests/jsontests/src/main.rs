@@ -22,7 +22,7 @@ mod config;
 mod execution_results;
 mod precompiles;
 mod state_dump;
-mod utils;
+// mod utils;
 
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn main() -> Result<(), String> {
@@ -178,8 +178,8 @@ fn run_vm_test_for_file(
             short_test_file_name(file_name.to_str().unwrap())
         );
     }
-    let file = File::open(file_name).expect("Open file failed");
 
+    let file = File::open(file_name).expect("Open file failed");
     let reader = BufReader::new(file);
     let test_suite = serde_json::from_reader::<_, HashMap<String, VmTestCase>>(reader)
         .expect("Parse test cases failed");

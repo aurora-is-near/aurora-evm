@@ -1,3 +1,5 @@
+// TODO: fix it
+#![allow(dead_code)]
 use crate::types::Spec;
 use aurora_evm::backend::{MemoryAccount, MemoryVicinity};
 use primitive_types::{H160, H256, U256};

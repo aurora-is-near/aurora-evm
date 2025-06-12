@@ -4,32 +4,22 @@ use crate::types::VmTestCase;
 use aurora_evm::backend::{ApplyBackend, MemoryBackend};
 use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
 use aurora_evm::Config;
-use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::io::{self, Write};
 use std::rc::Rc;
-
-#[derive(Deserialize, Debug)]
-pub struct Test(ethjson::vm::Vm);
 
 #[must_use]
 pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> TestExecutionResult {
-    if "suicide" != name {
-        return TestExecutionResult::new();
-    }
-    println!("-- {name}");
     let mut result = TestExecutionResult::new();
     let mut failed = false;
     result.total = 1;
     if verbose_output.verbose {
         print!("Running test {name} ... ");
-        crate::utils::flush();
+        io::stdout().flush().expect("Could not flush stdout");
     }
 
-    print!("## test {test:#?}");
     let original_state = test.pre_state.to_memory_accounts();
     let vicinity = test.get_memory_vicinity();
-    print!("## original_state {original_state:#?}");
-    print!("## vicinity {vicinity:#?}");
     let config = Config::frontier();
     let mut backend = MemoryBackend::new(&vicinity, original_state);
     let metadata = StackSubstateMetadata::new(test.get_gas_limit(), &config);
@@ -82,6 +72,7 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> Te
                 );
             }
         }
+
         if !test.validate_state(backend.state()) {
             failed = true;
             if verbose_output.verbose_failed {

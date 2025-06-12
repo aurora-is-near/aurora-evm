@@ -7,7 +7,7 @@ use crate::types::json_utils::{
 };
 use aurora_evm::backend::MemoryVicinity;
 use primitive_types::{H160, H256, U256};
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 
 mod account_state;

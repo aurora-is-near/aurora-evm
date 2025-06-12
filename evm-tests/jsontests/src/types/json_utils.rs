@@ -1,3 +1,5 @@
+// TODO: fix it
+#![allow(dead_code)]
 use primitive_types::{H160, H256, U256};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};

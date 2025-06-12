@@ -1,16 +1,8 @@
-use crate::execution_results::TestExecutionResult;
-use crate::types::Spec;
-use crate::types::StateTestCase;
-use crate::utils::transaction::InvalidTxReason;
-use aurora_evm::backend::MemoryVicinity;
-
 use crate::config::TestConfig;
-use libsecp256k1::SecretKey;
-use primitive_types::{H160, H256, U256};
-use serde::Deserialize;
-use sha3::{Digest, Keccak256};
-use std::str::FromStr;
+use crate::execution_results::TestExecutionResult;
+use crate::types::StateTestCase;
 
+/*
 #[derive(Deserialize, Debug)]
 pub struct Test(ethjson::test_helpers::state::State);
 
@@ -125,6 +117,7 @@ impl Test {
         })
     }
 }
+*/
 
 /// Runs a test in a separate thread with a specified stack size.
 ///
