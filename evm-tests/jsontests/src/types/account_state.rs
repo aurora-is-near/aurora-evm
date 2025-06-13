@@ -1,19 +1,27 @@
-use super::json_utils::{btree_h256_h256_from_str, h160_from_str, strip_0x_prefix, u256_from_str};
+use super::json_utils::{
+    btree_h256_h256_from_str, deserialize_bytes_from_str_opt, deserialize_u256_from_str,
+    h160_from_str, strip_0x_prefix,
+};
 use aurora_evm::backend::MemoryAccount;
 use primitive_types::{H160, H256, U256};
-use serde::{de, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StateAccount {
     /// Account Nonce.
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
     pub nonce: U256,
     /// Account Balance.
+    #[serde(deserialize_with = "deserialize_u256_from_str")]
     pub balance: U256,
     /// Account Code.
+    #[serde(default, deserialize_with = "deserialize_bytes_from_str_opt")]
     pub code: Option<Vec<u8>>,
     /// Account Storage.
-    pub storage: Option<BTreeMap<H256, H256>>,
+    #[serde(default, deserialize_with = "btree_h256_h256_from_str")]
+    pub storage: BTreeMap<H256, H256>,
 }
 
 impl From<StateAccount> for MemoryAccount {
@@ -21,47 +29,9 @@ impl From<StateAccount> for MemoryAccount {
         Self {
             nonce: account.nonce,
             balance: account.balance,
-            storage: account.storage.unwrap_or_default(),
+            storage: account.storage,
             code: account.code.unwrap_or_default(),
         }
-    }
-}
-
-impl<'de> Deserialize<'de> for StateAccount {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct StateAccountHelper {
-            nonce: String,
-            balance: String,
-            #[serde(default)]
-            code: Option<String>,
-            #[serde(default)]
-            storage: Option<BTreeMap<String, String>>,
-        }
-
-        let helper = StateAccountHelper::deserialize(deserializer)?;
-
-        let nonce = u256_from_str::<D>(strip_0x_prefix(&helper.nonce))?;
-        let balance = u256_from_str::<D>(strip_0x_prefix(&helper.balance))?;
-        let code = helper
-            .code
-            .map(|c| hex::decode(strip_0x_prefix(&c)).map_err(|e| de::Error::custom(e.to_string())))
-            .transpose()?;
-        let storage = helper
-            .storage
-            .map(btree_h256_h256_from_str::<D>)
-            .transpose()?;
-
-        Ok(Self {
-            nonce,
-            balance,
-            code,
-            storage,
-        })
     }
 }
 

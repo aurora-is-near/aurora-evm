@@ -107,7 +107,7 @@ pub struct Call {
 
 /// Executed transaction.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionTransaction {
     /// Contract address.
     #[serde(deserialize_with = "deserialize_h160_from_str")]

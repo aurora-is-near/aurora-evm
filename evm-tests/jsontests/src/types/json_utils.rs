@@ -1,5 +1,3 @@
-// TODO: fix it
-#![allow(dead_code)]
 use primitive_types::{H160, H256, U256};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
@@ -79,9 +77,12 @@ pub fn btree_u256_u256_from_str<'de, D: Deserializer<'de>>(
 /// Converts a `BTreeMap` with hexadecimal string keys and values into a `BTreeMap` with keys and values of type H256.
 /// The hexadecimal strings may start with the "0x" prefix, which will be removed.
 /// Returns an error if any key or value cannot be converted.
-pub fn btree_h256_h256_from_str<'de, D: Deserializer<'de>>(
-    map_str: BTreeMap<String, String>,
-) -> Result<BTreeMap<H256, H256>, D::Error> {
+pub fn btree_h256_h256_from_str<'de, D>(deserializer: D) -> Result<BTreeMap<H256, H256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let map_str: BTreeMap<String, String> = BTreeMap::deserialize(deserializer)?;
+
     let mut map = BTreeMap::new();
     for (k, v) in map_str {
         let key_u256 = u256_from_str::<D>(strip_0x_prefix(&k))?;
@@ -90,6 +91,7 @@ pub fn btree_h256_h256_from_str<'de, D: Deserializer<'de>>(
         let value = H256::from(value_u256.to_big_endian());
         map.insert(key, value);
     }
+
     Ok(map)
 }
 
@@ -212,6 +214,7 @@ pub fn deserialize_bytes_from_str_opt<'de, D: Deserializer<'de>>(
 /// `BTreeMap` with `U256` keys and values.
 /// The hexadecimal strings may start with the "0x" prefix.
 /// Returns `None` if the value is missing.
+#[allow(dead_code)]
 pub fn deserialize_btree_u256_u256_from_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<BTreeMap<U256, U256>>, D::Error> {

@@ -44,8 +44,7 @@ pub struct StateTestCase {
     /// Can represent different transaction types across forks.
     pub transaction: Transaction,
 
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_bytes_from_str_opt")]
+    #[serde(default, deserialize_with = "deserialize_bytes_from_str_opt")]
     pub out: Option<Vec<u8>>,
 
     /// Additional information or metadata about the state test.
@@ -58,18 +57,18 @@ pub struct StateTestCase {
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StateEnv {
-    /// The address of the beneficiary account (miner) to whom the block rewards are transferred.
-    #[serde(
-        rename = "currentCoinbase",
-        deserialize_with = "deserialize_h160_from_str"
-    )]
-    pub block_coinbase: H160,
     /// The difficulty of the current block.
     #[serde(
         rename = "currentDifficulty",
         deserialize_with = "deserialize_u256_from_str"
     )]
     pub block_difficulty: U256,
+    /// The address of the beneficiary account (miner) to whom the block rewards are transferred.
+    #[serde(
+        rename = "currentCoinbase",
+        deserialize_with = "deserialize_h160_from_str"
+    )]
+    pub block_coinbase: H160,
     /// The gas limit for the current block, setting the maximum amount of gas that can be
     /// consumed by transactions in the block.
     #[serde(
