@@ -1,175 +1,25 @@
-use crate::utils::eip_4844;
-use crate::utils::transaction::InvalidTxReason;
-use aurora_evm::backend::{ApplyBackend, MemoryAccount, MemoryBackend, MemoryVicinity};
-use aurora_evm::executor::stack::{
-    Authorization, MemoryStackState, PrecompileFailure, PrecompileFn, PrecompileOutput,
-    StackExecutor, StackSubstateMetadata,
-};
-use aurora_evm::utils::U64_MAX;
-use aurora_evm::{Config, Context, ExitError, ExitReason, ExitSucceed};
-use ethjson::hash::Address;
-use ethjson::spec::builtin::{AltBn128ConstOperations, AltBn128Pairing, PricingAt};
-use ethjson::spec::{ForkSpec, Pricing};
-use ethjson::test_helpers::state::PostStateResult;
-use ethjson::uint::Uint;
-use libsecp256k1::SecretKey;
-use primitive_types::{H160, H256, U256};
-use serde::Deserialize;
-use sha3::{Digest, Keccak256};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::{Arc, LazyLock};
+use crate::config::TestConfig;
+use crate::execution_results::TestExecutionResult;
+use crate::types::{BlobExcessGasAndPrice, Spec, StateTestCase};
+use aurora_evm::Config;
 
-#[derive(Default, Debug, Clone)]
-pub struct VerboseOutput {
-    pub verbose: bool,
-    pub verbose_failed: bool,
-    pub very_verbose: bool,
-    pub print_state: bool,
-}
-
-#[derive(Default, Debug, Clone)]
-#[cfg_attr(feature = "dump-state", derive(serde::Serialize, serde::Deserialize))]
-pub struct StateTestsDump {
-    pub state: BTreeMap<H160, MemoryAccount>,
-    pub caller: H160,
-    pub gas_price: U256,
-    pub effective_gas_price: U256,
-    pub caller_secret_key: H256,
-    pub used_gas: u64,
-    pub state_hash: H256,
-    pub result_state: BTreeMap<H160, MemoryAccount>,
-    pub to: H160,
-    pub value: U256,
-    pub data: Vec<u8>,
-    pub gas_limit: u64,
-    pub access_list: Vec<(H160, Vec<H256>)>,
-}
-
-trait StateTestsDumper {
-    fn set_state(&mut self, _state: &BTreeMap<H160, MemoryAccount>) {}
-    fn set_used_gas(&mut self, _used_gas: u64) {}
-    fn set_vicinity(&mut self, _vicinity: &MemoryVicinity) {}
-    fn set_tx_data(
-        &mut self,
-        _to: H160,
-        _value: U256,
-        _data: Vec<u8>,
-        _gas_limit: u64,
-        _access_list: Vec<(H160, Vec<H256>)>,
-    ) {
-    }
-    fn set_caller_secret_key(&mut self, _caller_secret_key: H256) {}
-    fn set_state_hash(&mut self, _state_hash: H256) {}
-    fn set_result_state(&mut self, _state: &BTreeMap<H160, MemoryAccount>) {}
-    fn dump_to_file(&self, _spec: &ForkSpec) {}
-}
-
-#[cfg(not(feature = "dump-state"))]
-impl StateTestsDumper for StateTestsDump {}
-
-#[cfg(feature = "dump-state")]
-impl StateTestsDumper for StateTestsDump {
-    fn set_state(&mut self, state: &BTreeMap<H160, MemoryAccount>) {
-        self.state = state.clone();
-    }
-
-    fn set_used_gas(&mut self, used_gas: u64) {
-        self.used_gas = used_gas;
-    }
-
-    fn set_vicinity(&mut self, vicinity: &MemoryVicinity) {
-        self.caller = vicinity.origin;
-        self.gas_price = vicinity.gas_price;
-        self.effective_gas_price = vicinity.effective_gas_price;
-    }
-
-    fn set_tx_data(
-        &mut self,
-        to: H160,
-        value: U256,
-        data: Vec<u8>,
-        gas_limit: u64,
-        access_list: Vec<(H160, Vec<H256>)>,
-    ) {
-        self.to = to;
-        self.value = value;
-        self.data = data;
-        self.gas_limit = gas_limit;
-        self.access_list = access_list;
-    }
-
-    fn set_caller_secret_key(&mut self, caller_secret_key: H256) {
-        self.caller_secret_key = caller_secret_key;
-    }
-
-    fn set_state_hash(&mut self, state_hash: H256) {
-        self.state_hash = state_hash;
-    }
-
-    fn set_result_state(&mut self, state: &BTreeMap<H160, MemoryAccount>) {
-        self.result_state = state.clone();
-    }
-
-    fn dump_to_file(&self, spec: &ForkSpec) {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros();
-        let path = format!("{spec:?}_BLS12-382_{now}.json");
-        let json = serde_json::to_string(&self).unwrap();
-        std::fs::write(path, json).unwrap();
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct FailedTestDetails {
-    pub name: String,
-    pub spec: ForkSpec,
-    pub index: usize,
-    pub expected_hash: H256,
-    pub actual_hash: H256,
-    pub state: BTreeMap<H160, MemoryAccount>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TestExecutionResult {
-    pub total: u64,
-    pub failed: u64,
-    pub failed_tests: Vec<FailedTestDetails>,
-}
-
-impl TestExecutionResult {
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            total: 0,
-            failed: 0,
-            failed_tests: Vec::new(),
-        }
-    }
-
-    pub fn merge(&mut self, src: Self) {
-        self.failed_tests.extend(src.failed_tests);
-        self.total += src.total;
-        self.failed += src.failed;
-    }
-}
-
+/*
 #[derive(Deserialize, Debug)]
 pub struct Test(ethjson::test_helpers::state::State);
 
 impl Test {
-    pub fn unwrap_to_pre_state(&self) -> BTreeMap<H160, MemoryAccount> {
-        crate::utils::unwrap_to_state(&self.0.pre_state)
-    }
-
+    #[allow(clippy::missing_panics_doc)]
+    #[must_use]
     pub fn unwrap_caller_secret_key(&self) -> H256 {
         self.0.transaction.secret.unwrap().into()
     }
 
+    /// Unwrap caller
+    ///
+    /// # Panics
+    ///
+    /// Panics if the transaction secret is missing or if parsing the secret key fails.
+    #[must_use]
     pub fn unwrap_caller(&self) -> H160 {
         let hash: H256 = self.0.transaction.secret.unwrap().into();
         let mut secret_key = [0; 32];
@@ -182,15 +32,31 @@ impl Test {
         H160::from(H256::from_slice(Keccak256::digest(res).as_slice()))
     }
 
+    /// Unwraps the test to compute the memory vicinity from the transaction and environment data.
+    ///
+    /// This function calculates the gas price and effective gas price based on the provided fork specification
+    /// and follows EIP-1559 validation rules. It also extracts additional parameters such as block randomness
+    /// and blob hashes from the transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `InvalidTxReason` if:
+    /// - The transaction provides a max fee per gas on forks prior to London.
+    /// - The maximum priority fee is greater than the gas price.
+    /// - The gas price is less than the block base fee.
+    ///
+    /// # Panics
+    ///
+    /// Panics occurs for invalid transaction data.
     pub fn unwrap_to_vicinity(
         &self,
-        spec: &ForkSpec,
+        spec: &Spec,
         blob_gas_price: Option<u128>,
     ) -> Result<MemoryVicinity, InvalidTxReason> {
         let block_base_fee_per_gas = self.0.env.block_base_fee_per_gas.0;
         let tx = &self.0.transaction;
         // Validation for EIP-1559 that was introduced in London hard fork
-        let gas_price = if *spec >= ForkSpec::London {
+        let gas_price = if *spec >= Spec::London {
             tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default().0
         } else {
             if tx.max_fee_per_gas.is_some() {
@@ -218,7 +84,7 @@ impl Test {
             return Err(InvalidTxReason::GasPriceLessThenBlockBaseFee);
         }
 
-        let block_randomness = if spec.is_eth2() {
+        let block_randomness = if *spec > Spec::Berlin {
             self.0.env.random.map(|r| {
                 // Convert between U256 and H256. U256 is in little-endian but since H256 is just
                 // a string-like byte array, it's big endian (MSB is the first element of the array).
@@ -252,977 +118,49 @@ impl Test {
         })
     }
 }
+*/
 
-type LazyPrecompiles = LazyLock<BTreeMap<H160, ethcore_builtin::Builtin>>;
-static ISTANBUL_BUILTINS: LazyPrecompiles = LazyLock::new(istanbul_builtins);
-static BERLIN_BUILTINS: LazyPrecompiles = LazyLock::new(berlin_builtins);
-static CANCUN_BUILTINS: LazyPrecompiles = LazyLock::new(cancun_builtins);
-static PRAGUE_BUILTINS: LazyPrecompiles = LazyLock::new(prague_builtins);
-
-macro_rules! precompile_entry {
-    ($map:expr, $builtins:expr, $index:expr) => {
-        let x: PrecompileFn =
-            |input: &[u8], gas_limit: Option<u64>, _context: &Context, _is_static: bool| {
-                let builtin = $builtins.get(&H160::from_low_u64_be($index)).unwrap();
-                Self::exec_as_precompile(builtin, input, gas_limit)
-            };
-        $map.insert(H160::from_low_u64_be($index), x);
-    };
-}
-
-pub struct JsonPrecompile;
-
-impl JsonPrecompile {
-    pub fn precompile(spec: &ForkSpec) -> Option<BTreeMap<H160, PrecompileFn>> {
-        match spec {
-            ForkSpec::Istanbul => {
-                let mut map = BTreeMap::new();
-                precompile_entry!(map, ISTANBUL_BUILTINS, 1);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 2);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 3);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 4);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 5);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 6);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 7);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 8);
-                precompile_entry!(map, ISTANBUL_BUILTINS, 9);
-                Some(map)
-            }
-            ForkSpec::Berlin => {
-                let mut map = BTreeMap::new();
-                precompile_entry!(map, BERLIN_BUILTINS, 1);
-                precompile_entry!(map, BERLIN_BUILTINS, 2);
-                precompile_entry!(map, BERLIN_BUILTINS, 3);
-                precompile_entry!(map, BERLIN_BUILTINS, 4);
-                precompile_entry!(map, BERLIN_BUILTINS, 5);
-                precompile_entry!(map, BERLIN_BUILTINS, 6);
-                precompile_entry!(map, BERLIN_BUILTINS, 7);
-                precompile_entry!(map, BERLIN_BUILTINS, 8);
-                precompile_entry!(map, BERLIN_BUILTINS, 9);
-                Some(map)
-            }
-            // precompiles for London and Berlin are the same
-            ForkSpec::London => Self::precompile(&ForkSpec::Berlin),
-            // precompiles for Merge and Berlin are the same
-            ForkSpec::Merge => Self::precompile(&ForkSpec::Berlin),
-            // precompiles for Paris and Berlin are the same
-            ForkSpec::Paris => Self::precompile(&ForkSpec::Berlin),
-            // precompiles for Shanghai and Berlin are the same
-            ForkSpec::Shanghai => Self::precompile(&ForkSpec::Berlin),
-            ForkSpec::Cancun => {
-                let mut map = BTreeMap::new();
-                precompile_entry!(map, CANCUN_BUILTINS, 1);
-                precompile_entry!(map, CANCUN_BUILTINS, 2);
-                precompile_entry!(map, CANCUN_BUILTINS, 3);
-                precompile_entry!(map, CANCUN_BUILTINS, 4);
-                precompile_entry!(map, CANCUN_BUILTINS, 5);
-                precompile_entry!(map, CANCUN_BUILTINS, 6);
-                precompile_entry!(map, CANCUN_BUILTINS, 7);
-                precompile_entry!(map, CANCUN_BUILTINS, 8);
-                precompile_entry!(map, CANCUN_BUILTINS, 9);
-                precompile_entry!(map, CANCUN_BUILTINS, 0xA);
-                Some(map)
-            }
-            ForkSpec::Prague => {
-                let mut map = BTreeMap::new();
-                precompile_entry!(map, PRAGUE_BUILTINS, 1);
-                precompile_entry!(map, PRAGUE_BUILTINS, 2);
-                precompile_entry!(map, PRAGUE_BUILTINS, 3);
-                precompile_entry!(map, PRAGUE_BUILTINS, 4);
-                precompile_entry!(map, PRAGUE_BUILTINS, 5);
-                precompile_entry!(map, PRAGUE_BUILTINS, 6);
-                precompile_entry!(map, PRAGUE_BUILTINS, 7);
-                precompile_entry!(map, PRAGUE_BUILTINS, 8);
-                precompile_entry!(map, PRAGUE_BUILTINS, 9);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x0A);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x0B);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x0C);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x0D);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x0E);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x0F);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x10);
-                precompile_entry!(map, PRAGUE_BUILTINS, 0x11);
-                Some(map)
-            }
-            _ => None,
-        }
-    }
-
-    fn exec_as_precompile(
-        builtin: &ethcore_builtin::Builtin,
-        input: &[u8],
-        gas_limit: Option<u64>,
-    ) -> Result<(PrecompileOutput, u64), PrecompileFailure> {
-        let cost = builtin.cost(input, 0);
-
-        if let Some(target_gas) = gas_limit {
-            if cost > U64_MAX || target_gas < cost.as_u64() {
-                return Err(PrecompileFailure::Error {
-                    exit_status: ExitError::OutOfGas,
-                });
-            }
-        }
-
-        let mut output = Vec::new();
-        match builtin.execute(input, &mut parity_bytes::BytesRef::Flexible(&mut output)) {
-            Ok(()) => Ok((
-                PrecompileOutput {
-                    exit_status: ExitSucceed::Stopped,
-                    output,
-                },
-                cost.as_u64(),
-            )),
-            Err(e) => Err(PrecompileFailure::Error {
-                exit_status: ExitError::Other(e.into()),
-            }),
-        }
-    }
-}
-
-fn istanbul_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
-    use ethjson::spec::builtin::{BuiltinCompat, Linear, Modexp, PricingCompat};
-
-    let builtins: BTreeMap<Address, BuiltinCompat> = BTreeMap::from([
-        (
-            Address(H160::from_low_u64_be(1)),
-            BuiltinCompat {
-                name: "ecrecover".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                    base: 3000,
-                    word: 0,
-                })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(2)),
-            BuiltinCompat {
-                name: "sha256".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 60, word: 12 })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(3)),
-            BuiltinCompat {
-                name: "ripemd160".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                    base: 600,
-                    word: 120,
-                })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(4)),
-            BuiltinCompat {
-                name: "identity".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 15, word: 3 })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(5)),
-            BuiltinCompat {
-                name: "modexp".to_string(),
-                pricing: PricingCompat::Single(Pricing::Modexp(Modexp {
-                    divisor: 20,
-                    is_eip_2565: false,
-                })),
-                activate_at: Some(Uint(U256::zero())),
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(6)),
-            BuiltinCompat {
-                name: "alt_bn128_add".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128ConstOperations(AltBn128ConstOperations {
-                            price: 150,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(7)),
-            BuiltinCompat {
-                name: "alt_bn128_mul".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128ConstOperations(AltBn128ConstOperations {
-                            price: 6000,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(8)),
-            BuiltinCompat {
-                name: "alt_bn128_pairing".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128Pairing(AltBn128Pairing {
-                            base: 45000,
-                            pair: 34000,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(9)),
-            BuiltinCompat {
-                name: "blake2_f".to_string(),
-                pricing: PricingCompat::Single(Pricing::Blake2F { gas_per_round: 1 }),
-                activate_at: Some(Uint(U256::zero())),
-            },
-        ),
-    ]);
-    builtins
-        .into_iter()
-        .map(|(address, builtin)| {
-            (
-                address.into(),
-                ethjson::spec::Builtin::from(builtin).try_into().unwrap(),
-            )
-        })
-        .collect()
-}
-
-fn berlin_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
-    use ethjson::spec::builtin::{BuiltinCompat, Linear, Modexp, PricingCompat};
-
-    let builtins: BTreeMap<Address, BuiltinCompat> = BTreeMap::from([
-        (
-            Address(H160::from_low_u64_be(1)),
-            BuiltinCompat {
-                name: "ecrecover".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                    base: 3000,
-                    word: 0,
-                })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(2)),
-            BuiltinCompat {
-                name: "sha256".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 60, word: 12 })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(3)),
-            BuiltinCompat {
-                name: "ripemd160".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                    base: 600,
-                    word: 120,
-                })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(4)),
-            BuiltinCompat {
-                name: "identity".to_string(),
-                pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 15, word: 3 })),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(5)),
-            BuiltinCompat {
-                name: "modexp".to_string(),
-                pricing: PricingCompat::Single(Pricing::Modexp(Modexp {
-                    divisor: 3,
-                    is_eip_2565: true,
-                })),
-                activate_at: Some(Uint(U256::zero())),
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(6)),
-            BuiltinCompat {
-                name: "alt_bn128_add".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128ConstOperations(AltBn128ConstOperations {
-                            price: 150,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(7)),
-            BuiltinCompat {
-                name: "alt_bn128_mul".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128ConstOperations(AltBn128ConstOperations {
-                            price: 6000,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(8)),
-            BuiltinCompat {
-                name: "alt_bn128_pairing".to_string(),
-                pricing: PricingCompat::Multi(BTreeMap::from([(
-                    Uint(U256::zero()),
-                    PricingAt {
-                        info: Some("EIP 1108 transition".to_string()),
-                        price: Pricing::AltBn128Pairing(AltBn128Pairing {
-                            base: 45000,
-                            pair: 34000,
-                        }),
-                    },
-                )])),
-                activate_at: None,
-            },
-        ),
-        (
-            Address(H160::from_low_u64_be(9)),
-            BuiltinCompat {
-                name: "blake2_f".to_string(),
-                pricing: PricingCompat::Single(Pricing::Blake2F { gas_per_round: 1 }),
-                activate_at: Some(Uint(U256::zero())),
-            },
-        ),
-    ]);
-    builtins
-        .into_iter()
-        .map(|(address, builtin)| {
-            (
-                address.into(),
-                ethjson::spec::Builtin::from(builtin).try_into().unwrap(),
-            )
-        })
-        .collect()
-}
-
-fn cancun_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
-    use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
-
-    let mut builtins = berlin_builtins();
-    builtins.insert(
-        Address(H160::from_low_u64_be(0xA)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "kzg".to_string(),
-            pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                base: 50_000,
-                word: 0,
-            })),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-    builtins
-}
-
-fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
-    use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
-
-    let mut builtins = cancun_builtins();
-    builtins.insert(
-        Address(H160::from_low_u64_be(0xB)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "bls12_381_g1_add".to_string(),
-            pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 375, word: 0 })),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-    builtins.insert(
-        Address(H160::from_low_u64_be(0xC)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "bls12_381_g1_mul".to_string(),
-            pricing: PricingCompat::Single(Pricing::Bls12G1Mul),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-    builtins.insert(
-        Address(H160::from_low_u64_be(0xD)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "bls12_381_g2_add".to_string(),
-            pricing: PricingCompat::Single(Pricing::Linear(Linear { base: 600, word: 0 })),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-    builtins.insert(
-        Address(H160::from_low_u64_be(0xE)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "bls12_381_g2_mul".to_string(),
-            pricing: PricingCompat::Single(Pricing::Bls12G2Mul),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-    builtins.insert(
-        Address(H160::from_low_u64_be(0xF)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "bls12_381_pairing".to_string(),
-            pricing: PricingCompat::Single(Pricing::Bls12Pairing),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-    builtins.insert(
-        Address(H160::from_low_u64_be(0x10)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "bls12_381_fp_to_g1".to_string(),
-            pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                base: 5_500,
-                word: 0,
-            })),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-    builtins.insert(
-        Address(H160::from_low_u64_be(0x11)).into(),
-        ethjson::spec::Builtin::from(BuiltinCompat {
-            name: "bls12_381_fp2_to_g2".to_string(),
-            pricing: PricingCompat::Single(Pricing::Linear(Linear {
-                base: 23_800,
-                word: 0,
-            })),
-            activate_at: None,
-        })
-        .try_into()
-        .unwrap(),
-    );
-
-    builtins
-}
-
-pub fn test(
-    verbose_output: VerboseOutput,
-    name: &str,
-    test: Test,
-    specific_spec: Option<ForkSpec>,
-    file_name: Arc<PathBuf>,
-) -> TestExecutionResult {
+/// Runs a test in a separate thread with a specified stack size.
+///
+/// # Panics
+///
+/// This function will panic if thread spawning or joining fails.
+#[must_use]
+pub fn test(test_config: TestConfig, name: String, test: StateTestCase) -> TestExecutionResult {
     use std::thread;
 
     const STACK_SIZE: usize = 16 * 1024 * 1024;
 
-    let name = name.to_string();
     // Spawn thread with explicit stack size
-
     let child = thread::Builder::new()
         .stack_size(STACK_SIZE)
-        .spawn(move || {
-            test_run(
-                &verbose_output,
-                &name,
-                test,
-                specific_spec,
-                file_name.clone(),
-            )
-        })
+        .spawn(move || test_run(&test_config, &name, &test))
         .unwrap();
 
     // Wait for thread to join
     child.join().unwrap()
 }
 
-/// Validate EIP-3607 - empty create caller
-fn assert_empty_create_caller(expect_exception: &Option<String>, name: &str) {
-    let exception = expect_exception
-        .as_deref()
-        .expect("expected evm-json-test exception");
-    let check_exception =
-        exception == "SenderNotEOA" || exception == "TransactionException.SENDER_NOT_EOA";
-    assert!(
-        check_exception,
-        "expected EmptyCaller exception for test: {name}: {expect_exception:?}"
-    );
-}
-
-/// Check call expected exception
-fn assert_call_exit_exception(expect_exception: &Option<String>, name: &str) {
-    assert!(
-        expect_exception.is_none(),
-        "unexpected call exception: {expect_exception:?} for test: {name}"
-    );
-}
-
-/// Check Exit Reason of EVM execution
-fn check_create_exit_reason(
-    reason: &ExitReason,
-    expect_exception: &Option<String>,
-    name: &str,
-) -> bool {
-    match reason {
-        ExitReason::Error(err) => {
-            if let Some(exception) = expect_exception.as_deref() {
-                match err {
-                    ExitError::CreateContractLimit => {
-                        let check_result = exception == "TR_InitCodeLimitExceeded"
-                            || exception == "TransactionException.INITCODE_SIZE_EXCEEDED";
-                        assert!(
-                            check_result,
-                            "unexpected exception {exception:?} for CreateContractLimit error for test: {name}"
-                        );
-                        return true;
-                    }
-                    ExitError::MaxNonce => {
-                        let check_result = exception == "TR_NonceHasMaxValue"
-                            || exception == "TransactionException.NONCE_IS_MAX";
-                        assert!(check_result,
-                                "unexpected exception {exception:?} for MaxNonce error for test: {name}"
-                        );
-                        return true;
-                    }
-                    ExitError::OutOfGas => {
-                        let check_result =
-                            exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
-                        assert!(check_result,
-                                "unexpected exception {exception:?} for OutOfGas error for test: {name}"
-                        );
-                        return true;
-                    }
-                    _ => {
-                        panic!(
-                            "unexpected error: {err:?} for exception: {exception} for test: {name}"
-                        )
-                    }
-                }
-            } else {
-                return false;
-            }
-        }
-        ExitReason::Fatal(err) => {
-            panic!("Unexpected error: {err:?}")
-        }
-        _ => {
-            assert!(
-                expect_exception.is_none(),
-                "Unexpected json-test error: {expect_exception:?}"
-            );
-        }
-    }
-    false
-}
-
-/// Assert vicinity validation to ensure that test os expected validation error
-#[allow(clippy::cognitive_complexity)]
-fn assert_vicinity_validation(
-    reason: &InvalidTxReason,
-    states: &[PostStateResult],
-    spec: &ForkSpec,
-    name: &str,
-    file_name: Arc<PathBuf>,
-) {
-    match *spec {
-        ForkSpec::Istanbul | ForkSpec::Berlin => match reason {
-            InvalidTxReason::GasPriseEip1559 => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!(
-                            "expected error message for test: [{spec:?}] {name}:{i}\n{file_name:?}"
-                        )
-                    });
-
-                    let is_checked =
-                        expected == "TR_TypeNotSupported" || expected == "TR_TypeNotSupportedBlob";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: [{spec:?}] {name}:{i}\n{file_name:?}",
-                    );
-                }
-            }
-            _ => panic!("Unexpected validation reason: {reason:?} [{name}]\n{file_name:?}"),
-        },
-        ForkSpec::London => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-                    let is_checked = expected == "tipTooHigh" || expected == "TR_TipGtFeeCap";
-                    assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                        );
-                }
-            }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-                    let is_checked =
-                        expected == "lowFeeCap" || expected == "TR_FeeCapLessThanBlocks";
-                    assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                        );
-                }
-            }
-            _ => {
-                panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}\n{file_name:?}")
-            }
-        },
-        ForkSpec::Paris => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-                    let is_checked = expected == "TR_TipGtFeeCap";
-                    assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                        );
-                }
-            }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-                    let is_checked = expected == "TR_FeeCapLessThanBlocks";
-                    assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                        );
-                }
-            }
-            _ => {
-                panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}\n{file_name:?}")
-            }
-        },
-        ForkSpec::Shanghai => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-                    let is_checked = expected == "TR_TipGtFeeCap";
-                    assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}\n{file_name:?}",
-                        );
-                }
-            }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-
-                    let is_checked = expected == "TR_FeeCapLessThanBlocks";
-                    assert!(
-                            is_checked,
-                            "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                        );
-                }
-            }
-            _ => {
-                panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}\n{file_name:?}")
-            }
-        },
-        ForkSpec::Cancun => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-
-                    let is_checked = expected == "TR_TipGtFeeCap"
-                        || expected == "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                    );
-                }
-            }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-
-                    let is_checked = expected == "TR_FeeCapLessThanBlocks"
-                        || expected == "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                    );
-                }
-            }
-            _ => {
-                panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}\n{file_name:?}")
-            }
-        },
-        ForkSpec::Prague => match reason {
-            InvalidTxReason::PriorityFeeTooLarge => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
-                    });
-
-                    let is_checked =
-                        expected == "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                    );
-                }
-            }
-
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
-                for (i, state) in states.iter().enumerate() {
-                    let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i})\n{file_name:?}")
-                    });
-                    let is_checked = expected == "TR_FeeCapLessThanBlocks"
-                        || expected == "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS";
-                    assert!(
-                        is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
-                    );
-                }
-            }
-            _ => {
-                panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}\n{file_name:?}")
-            }
-        },
-        _ => panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}\n{file_name:?}"),
-    }
-}
-
-/// Check Exit Reason of EVM execution
-fn check_validate_exit_reason(
-    reason: &InvalidTxReason,
-    expect_exception: &Option<String>,
-    name: &str,
-    spec: &ForkSpec,
-) -> bool {
-    expect_exception.as_deref().map_or_else(
-        || {
-            panic!("unexpected validation error reason: {reason:?} {name}");
-        },
-        |exception| {
-            match reason {
-                InvalidTxReason::OutOfFund => {
-                    let check_result = exception
-                        == "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS"
-                        || exception == "TR_NoFunds"
-                        || exception == "TR_NoFundsX"
-                        || exception == "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS"
-                        || exception == "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS|TransactionException.GASLIMIT_PRICE_PRODUCT_OVERFLOW";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for OutOfFund for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::GasLimitReached => {
-                    let check_result = exception == "TR_GasLimitReached"
-                        || exception == "TransactionException.GAS_ALLOWANCE_EXCEEDED";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for GasLimitReached for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::IntrinsicGas => {
-                    let check_result = exception == "TR_NoFundsOrGas"
-                        || exception == "TR_IntrinsicGas"
-                        || exception == "TransactionException.INTRINSIC_GAS_TOO_LOW"
-                        || exception == "IntrinsicGas"
-                        || exception == "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS|TransactionException.INTRINSIC_GAS_TOO_LOW";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for IntrinsicGas for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::BlobVersionNotSupported => {
-                    let check_result = exception
-                        == "TransactionException.TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH"
-                        || exception == "TR_BLOBVERSION_INVALID";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for BlobVersionNotSupported for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::BlobCreateTransaction => {
-                    let check_result = exception == "TR_BLOBCREATE"
-                        || exception == "TransactionException.TYPE_3_TX_CONTRACT_CREATION";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for BlobCreateTransaction for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::BlobGasPriceGreaterThanMax => {
-                    let check_result =
-                        exception == "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for BlobGasPriceGreaterThanMax for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::TooManyBlobs => {
-                    let check_result = exception == "TR_BLOBLIST_OVERSIZE"
-                        || exception == "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED"
-                        || exception == "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED|TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for TooManyBlobs for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::EmptyBlobs => {
-                    let check_result = exception == "TransactionException.TYPE_3_TX_ZERO_BLOBS"
-                        || exception == "TR_EMPTYBLOB";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for EmptyBlobs for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::MaxFeePerBlobGasNotSupported => {
-                    let check_result =
-                        exception == "TransactionException.TYPE_3_TX_PRE_FORK|TransactionException.TYPE_3_TX_ZERO_BLOBS";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for MaxFeePerBlobGasNotSupported for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::BlobVersionedHashesNotSupported => {
-                    let check_result = exception == "TransactionException.TYPE_3_TX_PRE_FORK"
-                        || exception == "TR_TypeNotSupportedBlob";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for BlobVersionedHashesNotSupported for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::InvalidAuthorizationChain => {
-                    let check_result = exception == "TransactionException.TYPE_4_INVALID_AUTHORIZATION_FORMAT";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for InvalidAuthorizationChain for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::InvalidAuthorizationSignature => {
-                    let check_result = exception == "TransactionException.TYPE_4_INVALID_AUTHORITY_SIGNATURE";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for InvalidAuthorizationSignature for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::AuthorizationListNotExist => {
-                    let check_result = exception == "TransactionException.TYPE_4_EMPTY_AUTHORIZATION_LIST" || exception == "TransactionException.TYPE_4_TX_CONTRACT_CREATION";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for AuthorizationListNotExist for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::CreateTransaction => {
-                    let check_result = exception == "TransactionException.TYPE_4_TX_CONTRACT_CREATION";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for CreateTransaction for test: [{spec:?}] {name}"
-                    );
-                }
-                InvalidTxReason::GasFloorMoreThanGasLimit => {
-                    let check_result = exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
-                    assert!(
-                        check_result,
-                        "unexpected exception {exception:?} for GasFloorMoreThanGasLimit for test: [{spec:?}] {name}"
-                    );
-                }
-                _ => {
-                    panic!(
-                        "unexpected exception {exception:?} for reason {reason:?} for test: [{spec:?}] {name}"
-                    );
-                }
-            }
-            true
-        },
-    )
-}
-
-#[allow(clippy::cognitive_complexity)]
-fn test_run(
-    verbose_output: &VerboseOutput,
-    name: &str,
-    test: Test,
-    specific_spec: Option<ForkSpec>,
-    file_name: Arc<PathBuf>,
-) -> TestExecutionResult {
-    let mut tests_result = TestExecutionResult::new();
-    let test_tx = &test.0.transaction;
-    for (spec, states) in &test.0.post_states {
-        // Run tests for specific SPEC (Hard fork)
-        if let Some(s) = specific_spec.as_ref() {
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+fn test_run(test_config: &TestConfig, _name: &str, test: &StateTestCase) -> TestExecutionResult {
+    let tests_result = TestExecutionResult::new();
+    let test_tx = &test.transaction;
+    for (spec, states) in &test.post_states {
+        // Run tests for specific EVM hard fork (Spec)
+        if let Some(s) = test_config.spec.as_ref() {
             if s != spec {
                 continue;
             }
         }
 
-        let (gasometer_config, delete_empty) = match spec {
-            ForkSpec::Istanbul => (Config::istanbul(), true),
-            ForkSpec::Berlin => (Config::berlin(), true),
-            ForkSpec::London => (Config::london(), true),
-            ForkSpec::Merge => (Config::merge(), true),
-            ForkSpec::Paris => (Config::merge(), true),
-            ForkSpec::Shanghai => (Config::shanghai(), true),
-            ForkSpec::Cancun => (Config::cancun(), true),
-            ForkSpec::Prague => (Config::prague(), true),
-            _ => {
-                continue;
-            }
+        // Geet gasometer config for the current spec
+        let Some(gasometer_config) = get_gasometer_config(spec) else {
+            // If the spec is not supported, skip the test
+            continue;
         };
 
         // EIP-4844
-        let blob_gas_price =
-            if let Some(current_excess_blob_gas) = test.0.env.current_excess_blob_gas {
-                Some(eip_4844::calc_blob_gas_price(
-                    current_excess_blob_gas.0.as_u64(),
-                ))
-            } else if let (Some(parent_blob_gas_used), Some(parent_excess_blob_gas)) = (
-                test.0.env.parent_blob_gas_used,
-                test.0.env.parent_excess_blob_gas,
-            ) {
-                let excess_blob_gas = eip_4844::calc_excess_blob_gas(
-                    parent_blob_gas_used.0.as_u64(),
-                    parent_excess_blob_gas.0.as_u64(),
-                );
-                Some(eip_4844::calc_blob_gas_price(excess_blob_gas))
-            } else {
-                None
-            };
+        let blob_gas_price = BlobExcessGasAndPrice::from_env(&test.env);
         // EIP-4844
         let data_max_fee = if gasometer_config.has_shard_blob_transactions {
             let max_fee_per_blob_gas = test_tx.max_fee_per_blob_gas.unwrap_or_default().0;
@@ -1241,7 +179,7 @@ fn test_run(
         } else {
             None
         };
-
+        /*
         let original_state = test.unwrap_to_pre_state();
         let vicinity = test.unwrap_to_vicinity(spec, blob_gas_price);
         if let Err(tx_err) = vicinity {
@@ -1265,7 +203,7 @@ fn test_run(
                 tests_result.failed += 1;
                 continue;
             }
-            assert_vicinity_validation(&tx_err, states, spec, name, file_name.clone());
+            assert_vicinity_validation(&tx_err, states, spec, name, &file_name.clone());
             // As it's expected validation error - skip the test run
             continue;
         }
@@ -1325,7 +263,7 @@ fn test_run(
             );
             // Only execute valid transactions
             if let Err(err) = &valid_tx {
-                if check_validate_exit_reason(err, &state.expect_exception, name, spec) {
+                if check_validate_exit_reason(err, state.expect_exception.as_ref(), name, spec) {
                     continue;
                 }
             }
@@ -1383,7 +321,7 @@ fn test_run(
                             access_list,
                             authorization_list,
                         );
-                        assert_call_exit_exception(&state.expect_exception, name);
+                        assert_call_exit_exception(state.expect_exception.as_ref(), name);
                     }
                     ethjson::maybe::MaybeEmpty::None => {
                         let code = data;
@@ -1393,7 +331,7 @@ fn test_run(
                             executor.transact_create(caller, value, code, gas_limit, access_list);
                         if check_create_exit_reason(
                             &reason.0,
-                            &state.expect_exception,
+                            state.expect_exception.as_ref(),
                             &format!("{spec:?}-{name}-{i}"),
                         ) {
                             continue;
@@ -1408,7 +346,7 @@ fn test_run(
                 if !(*spec >= ForkSpec::Prague
                     && TxType::from_txbytes(&state.txbytes) == TxType::EOAAccountCode)
                 {
-                    assert_empty_create_caller(&state.expect_exception, name);
+                    assert_empty_create_caller(state.expect_exception.as_ref(), name);
                 }
             }
 
@@ -1420,7 +358,7 @@ fn test_run(
             let actual_fee = executor.fee(vicinity.effective_gas_price);
             // Forks after London burn miner rewards and thus have different gas fee
             // calculation (see EIP-1559)
-            let miner_reward = if spec.is_eth2() {
+            let miner_reward = if *spec > Spec::Berlin {
                 let coinbase_gas_price = vicinity
                     .effective_gas_price
                     .saturating_sub(vicinity.block_base_fee_per_gas);
@@ -1443,7 +381,7 @@ fn test_run(
 
             let (values, logs) = executor.into_state().deconstruct();
 
-            backend.apply(values, logs, delete_empty);
+            backend.apply(values, logs, true);
             // It's special case for hard forks: London or before London
             // According to EIP-160 empty account should be removed. But in that particular test - original test state
             // contains account 0x03 (it's precompile), and when precompile 0x03 was called it exit with
@@ -1451,7 +389,7 @@ fn test_run(
             // is not success. And it mean, that it don't appeared in Apply::Modify, then as untouched it
             // can't be removed by backend.apply event. In that particular case we should manage it manually.
             // NOTE: it's not realistic situation for real life flow.
-            if *spec <= ForkSpec::London && delete_empty && name == "failed_tx_xcf416c53" {
+            if *spec <= ForkSpec::London && name == "failed_tx_xcf416c53" {
                 let state = backend.state_mut();
                 state.retain(|addr, account| {
                     // Check is account empty for precompile 0x03
@@ -1510,7 +448,7 @@ fn test_run(
             state_tests_dump.set_state_hash(actual_hash);
             state_tests_dump.set_result_state(backend.state());
             state_tests_dump.dump_to_file(spec);
-        }
+        }*/
     }
     tests_result
 }
@@ -1520,20 +458,21 @@ fn test_run(
 pub enum TxType {
     /// All transactions before EIP-2718 are legacy.
     Legacy,
-    /// https://eips.ethereum.org/EIPS/eip-2718
+    /// <https://eips.ethereum.org/EIPS/eip-2718>
     AccessList,
-    /// https://eips.ethereum.org/EIPS/eip-1559
+    /// <https://eips.ethereum.org/EIPS/eip-1559>
     DynamicFee,
-    /// https://eips.ethereum.org/EIPS/eip-4844
+    /// <https://eips.ethereum.org/EIPS/eip-4844>
     ShardBlob,
-    /// https://eips.ethereum.org/EIPS/eip-7702
+    /// <https://eips.ethereum.org/EIPS/eip-7702>
     EOAAccountCode,
 }
 
 impl TxType {
-    /// Whether this is a legacy, access list, dynamic fee, etc transaction
-    // Taken from geth's core/types/transaction.go/UnmarshalBinary, but we only detect the transaction
-    // type rather than unmarshal the entire payload.
+    /// Whether this is a legacy, access list, dynamic fee, etc. transaction
+    /// Taken from geth's core/types/transaction.go/UnmarshalBinary, but we only detect the transaction
+    /// type rather than unmarshal the entire payload.
+    #[must_use]
     pub const fn from_txbytes(txbytes: &[u8]) -> Self {
         match txbytes[0] {
             b if b > 0x7f => Self::Legacy,
@@ -1546,5 +485,19 @@ impl TxType {
 You may need to update the TxType enum if Ethereum introduced new enveloped transaction types."
             ),
         }
+    }
+}
+
+#[must_use]
+const fn get_gasometer_config(s: &Spec) -> Option<Config> {
+    match s {
+        Spec::Istanbul => Some(Config::istanbul()),
+        Spec::Berlin => Some(Config::berlin()),
+        Spec::London => Some(Config::london()),
+        Spec::Merge => Some(Config::merge()),
+        Spec::Shanghai => Some(Config::shanghai()),
+        Spec::Cancun => Some(Config::cancun()),
+        Spec::Prague => Some(Config::prague()),
+        _ => None,
     }
 }

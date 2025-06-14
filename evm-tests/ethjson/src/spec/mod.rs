@@ -48,7 +48,7 @@ pub use self::instant_seal::{InstantSeal, InstantSealParams};
 pub use self::null_engine::{NullEngine, NullEngineParams};
 pub use self::params::Params;
 pub use self::seal::{AuthorityRoundSeal, Ethereum, Seal, TendermintSeal};
-pub use self::spec::{ForkSpec, Spec};
+pub use self::spec::ForkSpec;
 pub use self::state::{HashOrMap, State};
 pub use self::step_duration::StepDuration;
 pub use self::validator_set::ValidatorSet;
