@@ -11,6 +11,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 mod account_state;
+pub mod blob;
 mod info;
 mod json_utils;
 mod spec;
