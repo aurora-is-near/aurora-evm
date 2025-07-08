@@ -164,16 +164,22 @@ pub fn calc_max_data_fee(config: &Config, tx: &Transaction) -> Option<U256> {
 ///
 /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 #[inline]
-pub fn calc_max_data_fee(max_fee_per_blob_gas: U256, blob_hashes_len: usize) -> U256 {
-    max_fee_per_blob_gas.saturating_mul(U256::from(get_total_blob_gas(blob_hashes_len)))
-}
-
-/// Calculates the [EIP-4844] `data_fee` of the transaction.
-///
-/// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
-#[inline]
-pub fn calc_data_fee(blob_gas_price: u128, blob_hashes_len: usize) -> U256 {
-    U256::from(blob_gas_price).saturating_mul(U256::from(get_total_blob_gas(blob_hashes_len)))
+#[must_use]
+pub fn calc_data_fee(
+    config: &Config,
+    tx: &Transaction,
+    blob_gas_price: Option<&BlobExcessGasAndPrice>,
+) -> Option<U256> {
+    config.has_shard_blob_transactions.then(|| {
+        U256::from(
+            blob_gas_price
+                .expect("expect blob_gas_price")
+                .blob_gas_price,
+        )
+        .saturating_mul(U256::from(get_total_blob_gas(
+            tx.blob_versioned_hashes.len(),
+        )))
+    })
 }
 
 /// See [EIP-4844], [`calc_max_data_fee`]

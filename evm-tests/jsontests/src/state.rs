@@ -1,8 +1,8 @@
 use crate::config::TestConfig;
 use crate::execution_results::TestExecutionResult;
-use crate::types::{BlobExcessGasAndPrice, Spec, StateTestCase};
+use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
+use crate::types::{Spec, StateTestCase};
 use aurora_evm::Config;
-
 /*
 #[derive(Deserialize, Debug)]
 pub struct Test(ethjson::test_helpers::state::State);
@@ -144,7 +144,6 @@ pub fn test(test_config: TestConfig, name: String, test: StateTestCase) -> TestE
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn test_run(test_config: &TestConfig, _name: &str, test: &StateTestCase) -> TestExecutionResult {
     let tests_result = TestExecutionResult::new();
-    let test_tx = &test.transaction;
     for (spec, states) in &test.post_states {
         // Run tests for specific EVM hard fork (Spec)
         if let Some(s) = test_config.spec.as_ref() {
@@ -162,26 +161,16 @@ fn test_run(test_config: &TestConfig, _name: &str, test: &StateTestCase) -> Test
         // EIP-4844
         let blob_gas_price = BlobExcessGasAndPrice::from_env(&test.env);
         // EIP-4844
-        let data_max_fee = if gasometer_config.has_shard_blob_transactions {
-            let max_fee_per_blob_gas = test_tx.max_fee_per_blob_gas.unwrap_or_default().0;
-            Some(eip_4844::calc_max_data_fee(
-                max_fee_per_blob_gas,
-                test_tx.blob_versioned_hashes.len(),
-            ))
-        } else {
-            None
-        };
-        let data_fee = if gasometer_config.has_shard_blob_transactions {
-            Some(eip_4844::calc_data_fee(
-                blob_gas_price.expect("expect blob_gas_price"),
-                test_tx.blob_versioned_hashes.len(),
-            ))
-        } else {
-            None
-        };
+        let data_max_fee = calc_max_data_fee(&gasometer_config, &test.transaction);
+        let data_fee = calc_data_fee(
+            &gasometer_config,
+            &test.transaction,
+            blob_gas_price.as_ref(),
+        );
+
+        let original_state = test.pre_state.as_ref().to_memory_accounts();
+        let vicinity = test.get_memory_vicinity(spec, blob_gas_price);
         /*
-        let original_state = test.unwrap_to_pre_state();
-        let vicinity = test.unwrap_to_vicinity(spec, blob_gas_price);
         if let Err(tx_err) = vicinity {
             tests_result.total += states.len() as u64;
             let h = states.first().unwrap().hash.0;

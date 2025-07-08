@@ -18,6 +18,7 @@ mod spec;
 mod transaction;
 mod vm;
 
+use crate::types::blob::BlobExcessGasAndPrice;
 pub use spec::Spec;
 pub use vm::VmTestCase;
 
@@ -51,6 +52,95 @@ pub struct StateTestCase {
     /// Additional information or metadata about the state test.
     #[serde(rename = "_info")]
     pub info: info::Info,
+}
+
+impl StateTestCase {
+    #[must_use]
+    pub const fn get_memory_vicinity(
+        &self,
+        spec: &Spec,
+        blob_gas_price: Option<BlobExcessGasAndPrice>,
+    ) -> Result<MemoryVicinity, InvalidTxReason> {
+        let block_base_fee_per_gas = self.env.block_base_fee_per_gas.0;
+        let tx = &self.transaction;
+        // Validation for EIP-1559 that was introduced in London hard fork
+        let gas_price = if *spec >= Spec::London {
+            tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default().0
+        } else {
+            if tx.max_fee_per_gas.is_some() {
+                return Err(InvalidTxReason::GasPriseEip1559);
+            }
+            tx.gas_price.expect("expect gas price").0
+        };
+
+        // EIP-1559: priority fee must be lower than gas_price
+        if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas {
+            if max_priority_fee_per_gas.0 > gas_price {
+                return Err(InvalidTxReason::PriorityFeeTooLarge);
+            }
+        }
+
+        let effective_gas_price = self.0.transaction.max_priority_fee_per_gas.map_or(
+            gas_price,
+            |max_priority_fee_per_gas| {
+                gas_price.min(max_priority_fee_per_gas.0 + block_base_fee_per_gas)
+            },
+        );
+
+        // gas price cannot be lower than base fee
+        if gas_price < block_base_fee_per_gas {
+            return Err(InvalidTxReason::GasPriceLessThenBlockBaseFee);
+        }
+
+        let block_randomness = if *spec > Spec::Berlin {
+            self.0.env.random.map(|r| {
+                // Convert between U256 and H256. U256 is in little-endian but since H256 is just
+                // a string-like byte array, it's big endian (MSB is the first element of the array).
+                //
+                // Byte order here is important because this opcode has the same value as DIFFICULTY
+                // (0x44), and so for older forks of Ethereum, the threshold value of 2^64 is used to
+                // distinguish between the two: if it's below, the value corresponds to the DIFFICULTY
+                // opcode, otherwise to the PREVRANDAO opcode.
+                crate::utils::u256_to_h256(r.0)
+            })
+        } else {
+            None
+        };
+        let blob_hashes = tx.blob_versioned_hashes.clone();
+
+        Ok(MemoryVicinity {
+            gas_price,
+            effective_gas_price,
+            origin: self.unwrap_caller(),
+            block_hashes: Vec::new(),
+            block_number: self.0.env.number.into(),
+            block_coinbase: self.0.env.author.into(),
+            block_timestamp: self.0.env.timestamp.into(),
+            block_difficulty: self.0.env.difficulty.into(),
+            block_gas_limit: self.0.env.gas_limit.into(),
+            chain_id: U256::one(),
+            block_base_fee_per_gas,
+            block_randomness,
+            blob_gas_price,
+            blob_hashes,
+        })
+        // MemoryVicinity {
+        //     gas_price: self.transaction.gas_price,
+        //     effective_gas_price: self.transaction.gas_price,
+        //     origin: self.transaction.origin,
+        //     block_hashes: Vec::new(),
+        //     block_number: self.env.block_number,
+        //     block_coinbase: self.env.block_coinbase,
+        //     block_timestamp: self.env.block_timestamp,
+        //     block_difficulty: self.env.block_difficulty,
+        //     block_gas_limit: self.env.block_gas_limit,
+        //     chain_id: U256::zero(),
+        //     block_base_fee_per_gas: self.transaction.gas_price,
+        //     block_randomness: self.env.random,
+        //     blob_gas_price: None,
+        //     blob_hashes: Vec::new(),
+        // }
+    }
 }
 
 /// Represents the environment parameters under which a state test is executed.
@@ -144,6 +234,12 @@ impl From<StateEnv> for MemoryVicinity {
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 pub struct PreState(AccountsState);
 
+impl AsRef<AccountsState> for PreState {
+    fn as_ref(&self) -> &AccountsState {
+        &self.0
+    }
+}
+
 #[derive(Debug, Eq, Ord, PartialOrd, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PostState {
@@ -178,4 +274,27 @@ pub struct PostStateIndexes {
     pub gas: u64,
     /// Index into transaction value set.
     pub value: u64,
+}
+
+#[derive(Debug)]
+pub enum InvalidTxReason {
+    IntrinsicGas,
+    OutOfFund,
+    GasLimitReached,
+    PriorityFeeTooLarge,
+    GasPriceLessThenBlockBaseFee,
+    BlobCreateTransaction,
+    BlobVersionNotSupported,
+    TooManyBlobs,
+    EmptyBlobs,
+    BlobGasPriceGreaterThanMax,
+    BlobVersionedHashesNotSupported,
+    MaxFeePerBlobGasNotSupported,
+    GasPriseEip1559,
+    AuthorizationListNotExist,
+    AuthorizationListNotSupported,
+    InvalidAuthorizationChain,
+    InvalidAuthorizationSignature,
+    CreateTransaction,
+    GasFloorMoreThanGasLimit,
 }
