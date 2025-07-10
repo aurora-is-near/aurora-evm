@@ -48,7 +48,7 @@ impl<'config> MemoryStackSubstate<'config> {
         &self.logs
     }
 
-    pub const fn logs_mut(&mut self) -> &mut Vec<Log> {
+    pub fn logs_mut(&mut self) -> &mut Vec<Log> {
         &mut self.logs
     }
 
@@ -57,7 +57,7 @@ impl<'config> MemoryStackSubstate<'config> {
         &self.metadata
     }
 
-    pub const fn metadata_mut(&mut self) -> &mut StackSubstateMetadata<'config> {
+    pub fn metadata_mut(&mut self) -> &mut StackSubstateMetadata<'config> {
         &mut self.metadata
     }
 
@@ -316,7 +316,9 @@ impl<'config> MemoryStackSubstate<'config> {
         if local_is_accessed {
             false
         } else {
-            self.parent.as_ref().is_none_or(|p| p.recursive_is_cold(f))
+            self.parent
+                .as_ref()
+                .map_or(true, |p| p.recursive_is_cold(f))
         }
     }
 
