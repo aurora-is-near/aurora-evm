@@ -14,7 +14,7 @@ pub struct ResolveCreate<'a> {
 }
 
 impl<'a> ResolveCreate<'a> {
-    pub(crate) const fn new(runtime: &'a mut Runtime) -> Self {
+    pub(crate) fn new(runtime: &'a mut Runtime) -> Self {
         Self { _runtime: runtime }
     }
 }
@@ -25,7 +25,7 @@ pub struct ResolveCall<'a> {
 }
 
 impl<'a> ResolveCall<'a> {
-    pub(crate) const fn new(runtime: &'a mut Runtime) -> Self {
+    pub(crate) fn new(runtime: &'a mut Runtime) -> Self {
         Self { _runtime: runtime }
     }
 }
