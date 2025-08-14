@@ -61,29 +61,29 @@ impl StateTestCase {
         spec: &Spec,
         blob_gas_price: Option<BlobExcessGasAndPrice>,
     ) -> Result<MemoryVicinity, InvalidTxReason> {
-        let block_base_fee_per_gas = self.env.block_base_fee_per_gas.0;
+        let block_base_fee_per_gas = self.env.block_base_fee_per_gas;
         let tx = &self.transaction;
         // Validation for EIP-1559 that was introduced in London hard fork
         let gas_price = if *spec >= Spec::London {
-            tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default().0
+            tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default()
         } else {
             if tx.max_fee_per_gas.is_some() {
                 return Err(InvalidTxReason::GasPriseEip1559);
             }
-            tx.gas_price.expect("expect gas price").0
+            tx.gas_price.expect("expect gas price")
         };
 
         // EIP-1559: priority fee must be lower than gas_price
         if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas {
-            if max_priority_fee_per_gas.0 > gas_price {
+            if max_priority_fee_per_gas > gas_price {
                 return Err(InvalidTxReason::PriorityFeeTooLarge);
             }
         }
 
-        let effective_gas_price = self.0.transaction.max_priority_fee_per_gas.map_or(
+        let effective_gas_price = self.transaction.max_priority_fee_per_gas.map_or(
             gas_price,
             |max_priority_fee_per_gas| {
-                gas_price.min(max_priority_fee_per_gas.0 + block_base_fee_per_gas)
+                gas_price.min(max_priority_fee_per_gas + block_base_fee_per_gas)
             },
         );
 
@@ -93,7 +93,7 @@ impl StateTestCase {
         }
 
         let block_randomness = if *spec > Spec::Berlin {
-            self.0.env.random.map(|r| {
+            self.env.random.map(|r| {
                 // Convert between U256 and H256. U256 is in little-endian but since H256 is just
                 // a string-like byte array, it's big endian (MSB is the first element of the array).
                 //
@@ -113,15 +113,15 @@ impl StateTestCase {
             effective_gas_price,
             origin: self.unwrap_caller(),
             block_hashes: Vec::new(),
-            block_number: self.0.env.number.into(),
-            block_coinbase: self.0.env.author.into(),
-            block_timestamp: self.0.env.timestamp.into(),
-            block_difficulty: self.0.env.difficulty.into(),
-            block_gas_limit: self.0.env.gas_limit.into(),
+            block_number: self.env.block_number,
+            block_coinbase: self.env.block_coinbase,
+            block_timestamp: self.env.block_timestamp,
+            block_difficulty: self.env.block_difficulty,
+            block_gas_limit: self.env.block_gas_limit,
             chain_id: U256::one(),
             block_base_fee_per_gas,
             block_randomness,
-            blob_gas_price,
+            blob_gas_price: blob_gas_price.map(|bgp| bgp.blob_gas_price),
             blob_hashes,
         })
         // MemoryVicinity {
