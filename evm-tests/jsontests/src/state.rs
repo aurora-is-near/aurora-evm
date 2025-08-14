@@ -14,24 +14,6 @@ impl Test {
         self.0.transaction.secret.unwrap().into()
     }
 
-    /// Unwrap caller
-    ///
-    /// # Panics
-    ///
-    /// Panics if the transaction secret is missing or if parsing the secret key fails.
-    #[must_use]
-    pub fn unwrap_caller(&self) -> H160 {
-        let hash: H256 = self.0.transaction.secret.unwrap().into();
-        let mut secret_key = [0; 32];
-        secret_key.copy_from_slice(hash.as_bytes());
-        let secret = SecretKey::parse(&secret_key);
-        let public = libsecp256k1::PublicKey::from_secret_key(&secret.unwrap());
-        let mut res = [0u8; 64];
-        res.copy_from_slice(&public.serialize()[1..65]);
-
-        H160::from(H256::from_slice(Keccak256::digest(res).as_slice()))
-    }
-
     /// Unwraps the test to compute the memory vicinity from the transaction and environment data.
     ///
     /// This function calculates the gas price and effective gas price based on the provided fork specification
@@ -144,7 +126,7 @@ pub fn test(test_config: TestConfig, name: String, test: StateTestCase) -> TestE
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn test_run(test_config: &TestConfig, _name: &str, test: &StateTestCase) -> TestExecutionResult {
     let tests_result = TestExecutionResult::new();
-    for (spec, states) in &test.post_states {
+    for (spec, _states) in &test.post_states {
         // Run tests for specific EVM hard fork (Spec)
         if let Some(s) = test_config.spec.as_ref() {
             if s != spec {
@@ -161,15 +143,15 @@ fn test_run(test_config: &TestConfig, _name: &str, test: &StateTestCase) -> Test
         // EIP-4844
         let blob_gas_price = BlobExcessGasAndPrice::from_env(&test.env);
         // EIP-4844
-        let data_max_fee = calc_max_data_fee(&gasometer_config, &test.transaction);
-        let data_fee = calc_data_fee(
+        let _data_max_fee = calc_max_data_fee(&gasometer_config, &test.transaction);
+        let _data_fee = calc_data_fee(
             &gasometer_config,
             &test.transaction,
             blob_gas_price.as_ref(),
         );
 
-        let original_state = test.pre_state.as_ref().to_memory_accounts();
-        let vicinity = test.get_memory_vicinity(spec, blob_gas_price);
+        let _original_state = test.pre_state.as_ref().to_memory_accounts();
+        let _vicinity = test.get_memory_vicinity(spec, blob_gas_price);
         /*
         if let Err(tx_err) = vicinity {
             tests_result.total += states.len() as u64;

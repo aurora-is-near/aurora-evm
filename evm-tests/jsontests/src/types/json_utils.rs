@@ -234,6 +234,7 @@ pub fn deserialize_vec_u256_from_str<'de, D: Deserializer<'de>>(
 }
 
 /// Deserializes strings to `Vec<H256>`.
+#[allow(dead_code)]
 pub fn deserialize_vec_h256_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<H256>, D::Error> {

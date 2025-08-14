@@ -1,5 +1,6 @@
 use self::account_state::AccountsState;
 use self::transaction::Transaction;
+use crate::types::blob::BlobExcessGasAndPrice;
 use crate::types::json_utils::{
     deserialize_bytes_from_str, deserialize_bytes_from_str_opt, deserialize_h160_from_str,
     deserialize_h256_from_u256_str, deserialize_h256_from_u256_str_opt, deserialize_u256_from_str,
@@ -18,7 +19,6 @@ mod spec;
 mod transaction;
 mod vm;
 
-use crate::types::blob::BlobExcessGasAndPrice;
 pub use spec::Spec;
 pub use vm::VmTestCase;
 
@@ -55,8 +55,11 @@ pub struct StateTestCase {
 }
 
 impl StateTestCase {
-    #[must_use]
-    pub const fn get_memory_vicinity(
+    /// Get the memory vicinity for the transaction, which includesState test data.
+    ///
+    /// # Errors
+    /// Invalid transaction error status.
+    pub fn get_memory_vicinity(
         &self,
         spec: &Spec,
         blob_gas_price: Option<BlobExcessGasAndPrice>,
@@ -92,26 +95,12 @@ impl StateTestCase {
             return Err(InvalidTxReason::GasPriceLessThenBlockBaseFee);
         }
 
-        let block_randomness = if *spec > Spec::Berlin {
-            self.env.random.map(|r| {
-                // Convert between U256 and H256. U256 is in little-endian but since H256 is just
-                // a string-like byte array, it's big endian (MSB is the first element of the array).
-                //
-                // Byte order here is important because this opcode has the same value as DIFFICULTY
-                // (0x44), and so for older forks of Ethereum, the threshold value of 2^64 is used to
-                // distinguish between the two: if it's below, the value corresponds to the DIFFICULTY
-                // opcode, otherwise to the PREVRANDAO opcode.
-                crate::utils::u256_to_h256(r.0)
-            })
-        } else {
-            None
-        };
         let blob_hashes = tx.blob_versioned_hashes.clone();
 
         Ok(MemoryVicinity {
             gas_price,
             effective_gas_price,
-            origin: self.unwrap_caller(),
+            origin: self.transaction.get_caller_from_secret_key(),
             block_hashes: Vec::new(),
             block_number: self.env.block_number,
             block_coinbase: self.env.block_coinbase,
@@ -120,26 +109,10 @@ impl StateTestCase {
             block_gas_limit: self.env.block_gas_limit,
             chain_id: U256::one(),
             block_base_fee_per_gas,
-            block_randomness,
+            block_randomness: self.env.random,
             blob_gas_price: blob_gas_price.map(|bgp| bgp.blob_gas_price),
             blob_hashes,
         })
-        // MemoryVicinity {
-        //     gas_price: self.transaction.gas_price,
-        //     effective_gas_price: self.transaction.gas_price,
-        //     origin: self.transaction.origin,
-        //     block_hashes: Vec::new(),
-        //     block_number: self.env.block_number,
-        //     block_coinbase: self.env.block_coinbase,
-        //     block_timestamp: self.env.block_timestamp,
-        //     block_difficulty: self.env.block_difficulty,
-        //     block_gas_limit: self.env.block_gas_limit,
-        //     chain_id: U256::zero(),
-        //     block_base_fee_per_gas: self.transaction.gas_price,
-        //     block_randomness: self.env.random,
-        //     blob_gas_price: None,
-        //     blob_hashes: Vec::new(),
-        // }
     }
 }
 

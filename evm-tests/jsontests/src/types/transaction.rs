@@ -1,12 +1,11 @@
 use crate::types::json_utils::{
     deserialize_bytes_from_str_opt, deserialize_h160_from_str, deserialize_h160_from_str_opt,
     deserialize_h256_from_u256_str_opt, deserialize_u256_from_str, deserialize_u256_from_str_opt,
-    deserialize_u8_from_str_opt, deserialize_vec_h256_from_str, deserialize_vec_of_hex,
-    deserialize_vec_u256_from_str,
+    deserialize_u8_from_str_opt, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
 };
-
 use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
+use sha3::Digest;
 
 /// Transaction data.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
@@ -52,14 +51,33 @@ pub struct Transaction {
     pub access_lists: Vec<Option<AccessList>>,
 
     /// EIP-4844
-    #[serde(default, deserialize_with = "deserialize_vec_h256_from_str")]
-    pub blob_versioned_hashes: Vec<H256>,
+    #[serde(default, deserialize_with = "deserialize_vec_u256_from_str")]
+    pub blob_versioned_hashes: Vec<U256>,
     /// EIP-4844
     #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
     pub max_fee_per_blob_gas: Option<U256>,
     /// EIP-7702
     #[serde(default)]
     pub authorization_list: Option<AuthorizationList>,
+}
+
+impl Transaction {
+    /// Get caller from transaction secret key.
+    ///
+    /// # Panics
+    /// If the transaction secret is missing or if parsing the secret key fails.
+    #[must_use]
+    pub fn get_caller_from_secret_key(&self) -> H160 {
+        let hash = self.secret_key.unwrap();
+        let mut secret_key = [0; 32];
+        secret_key.copy_from_slice(hash.as_bytes());
+        let secret = libsecp256k1::SecretKey::parse(&secret_key);
+        let public = libsecp256k1::PublicKey::from_secret_key(&secret.unwrap());
+        let mut res = [0u8; 64];
+        res.copy_from_slice(&public.serialize()[1..65]);
+
+        H160::from(H256::from_slice(sha3::Keccak256::digest(res).as_slice()))
+    }
 }
 
 /// Type alias for access lists (see EIP-2930)
