@@ -57,12 +57,13 @@ pub struct BlobExcessGasAndPrice {
     pub excess_blob_gas: u64,
     /// The calculated blob gas price based on the `excess_blob_gas`
     ///
-    /// See [calc_blob_gas_price]
+    /// See [`calc_blob_gas_price`]
     pub blob_gas_price: u128,
 }
 
 impl BlobExcessGasAndPrice {
     /// Creates a new instance by calculating the blob gas price with [`calc_blob_gasprice`].
+    #[must_use]
     pub fn new(excess_blob_gas: u64) -> Self {
         let blob_gas_price = calc_blob_gas_price(excess_blob_gas);
         Self {
@@ -75,6 +76,7 @@ impl BlobExcessGasAndPrice {
     /// and the target blob gas per block.
     ///
     /// This fields will be used to calculate `excess_blob_gas` with [`calc_excess_blob_gas`] func.
+    #[must_use]
     pub fn from_parent(parent_excess_blob_gas: u64, parent_blob_gas_used: u64) -> Self {
         Self::new(calc_excess_blob_gas(
             parent_excess_blob_gas,
@@ -83,16 +85,15 @@ impl BlobExcessGasAndPrice {
     }
 
     /// Initializes the ``BlobExcessGasAndPrice`` from the environment state.
+    #[must_use]
     pub fn from_env(env: &StateEnv) -> Option<Self> {
-        env.current_excess_blob_gas
-            .map(|current_excess_blob_gas| Self::new(current_excess_blob_gas))
-            .or_else(|| {
-                env.parent_blob_gas_used
-                    .zip(env.parent_excess_blob_gas)
-                    .map(|(parent_blob_gas_used, parent_excess_blob_gas)| {
-                        Self::from_parent(parent_excess_blob_gas, parent_blob_gas_used)
-                    })
-            })
+        env.current_excess_blob_gas.map(Self::new).or_else(|| {
+            env.parent_blob_gas_used
+                .zip(env.parent_excess_blob_gas)
+                .map(|(parent_blob_gas_used, parent_excess_blob_gas)| {
+                    Self::from_parent(parent_excess_blob_gas, parent_blob_gas_used)
+                })
+        })
     }
 }
 
@@ -100,7 +101,8 @@ impl BlobExcessGasAndPrice {
 ///
 /// See also [the EIP-4844 helpers]<https://eips.ethereum.org/EIPS/eip-4844#helpers>
 #[inline]
-pub fn calc_excess_blob_gas(parent_excess_blob_gas: u64, parent_blob_gas_used: u64) -> u64 {
+#[must_use]
+pub const fn calc_excess_blob_gas(parent_excess_blob_gas: u64, parent_blob_gas_used: u64) -> u64 {
     (parent_excess_blob_gas + parent_blob_gas_used).saturating_sub(TARGET_BLOB_GAS_PER_BLOCK)
 }
 
@@ -108,6 +110,7 @@ pub fn calc_excess_blob_gas(parent_excess_blob_gas: u64, parent_blob_gas_used: u
 ///
 /// See also [the EIP-4844 helpers](https://eips.ethereum.org/EIPS/eip-4844#helpers)
 #[inline]
+#[must_use]
 pub fn calc_blob_gas_price(excess_blob_gas: u64) -> u128 {
     fake_exponential(
         MIN_BLOB_GASPRICE,
@@ -127,11 +130,12 @@ pub fn calc_blob_gas_price(excess_blob_gas: u64) -> u128 {
 ///
 /// This function panics if `denominator` is zero.
 #[inline]
+#[must_use]
 pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u128 {
     assert_ne!(denominator, 0, "attempt to divide by zero");
-    let factor = factor as u128;
-    let numerator = numerator as u128;
-    let denominator = denominator as u128;
+    let factor = u128::from(factor);
+    let numerator = u128::from(numerator);
+    let denominator = u128::from(denominator);
 
     let mut i = 1;
     let mut output = 0;
@@ -150,6 +154,7 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u128 {
 ///
 /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 #[inline]
+#[must_use]
 pub fn calc_max_data_fee(config: &Config, tx: &Transaction) -> Option<U256> {
     config.has_shard_blob_transactions.then(|| {
         tx.max_fee_per_blob_gas
@@ -186,6 +191,7 @@ pub fn calc_data_fee(
 ///
 /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 #[inline]
+#[must_use]
 pub const fn get_total_blob_gas(blob_hashes_len: usize) -> u64 {
     GAS_PER_BLOB * blob_hashes_len as u64
 }

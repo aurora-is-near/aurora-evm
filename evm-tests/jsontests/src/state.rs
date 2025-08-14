@@ -126,6 +126,7 @@ pub fn test(test_config: TestConfig, name: String, test: StateTestCase) -> TestE
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn test_run(test_config: &TestConfig, _name: &str, test: &StateTestCase) -> TestExecutionResult {
     let tests_result = TestExecutionResult::new();
+    #[allow(clippy::for_kv_map)]
     for (spec, _states) in &test.post_states {
         // Run tests for specific EVM hard fork (Spec)
         if let Some(s) = test_config.spec.as_ref() {
