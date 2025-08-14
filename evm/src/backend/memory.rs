@@ -92,7 +92,7 @@ impl<'vicinity> MemoryBackend<'vicinity> {
     }
 
     /// Get a mutable reference to the underlying `BTreeMap` storing the state.
-    pub fn state_mut(&mut self) -> &mut BTreeMap<H160, MemoryAccount> {
+    pub const fn state_mut(&mut self) -> &mut BTreeMap<H160, MemoryAccount> {
         &mut self.state
     }
 }
@@ -173,7 +173,7 @@ impl Backend for MemoryBackend<'_> {
     fn is_empty_storage(&self, address: H160) -> bool {
         self.state
             .get(&address)
-            .map_or(true, |v| v.storage.is_empty())
+            .is_none_or(|v| v.storage.is_empty())
     }
 
     fn original_storage(&self, address: H160, index: H256) -> Option<H256> {

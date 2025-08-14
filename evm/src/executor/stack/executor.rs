@@ -247,7 +247,7 @@ impl<'config> StackSubstateMetadata<'config> {
         &self.gasometer
     }
 
-    pub fn gasometer_mut(&mut self) -> &mut Gasometer<'config> {
+    pub const fn gasometer_mut(&mut self) -> &mut Gasometer<'config> {
         &mut self.gasometer
     }
 
@@ -445,7 +445,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         &self.state
     }
 
-    pub fn state_mut(&mut self) -> &mut S {
+    pub const fn state_mut(&mut self) -> &mut S {
         &mut self.state
     }
 
