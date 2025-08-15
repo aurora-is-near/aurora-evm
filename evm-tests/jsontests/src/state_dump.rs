@@ -12,7 +12,6 @@ pub struct StateTestsDump {
     pub caller: H160,
     pub gas_price: U256,
     pub effective_gas_price: U256,
-    pub caller_secret_key: H256,
     pub used_gas: u64,
     pub state_hash: H256,
     pub result_state: BTreeMap<H160, MemoryAccount>,
@@ -23,7 +22,7 @@ pub struct StateTestsDump {
     pub access_list: Vec<(H160, Vec<H256>)>,
 }
 
-trait StateTestsDumper {
+pub trait StateTestsDumper {
     fn set_state(&mut self, _state: &BTreeMap<H160, MemoryAccount>) {}
     fn set_used_gas(&mut self, _used_gas: u64) {}
     fn set_vicinity(&mut self, _vicinity: &MemoryVicinity) {}
@@ -36,7 +35,6 @@ trait StateTestsDumper {
         _access_list: Vec<(H160, Vec<H256>)>,
     ) {
     }
-    fn set_caller_secret_key(&mut self, _caller_secret_key: H256) {}
     fn set_state_hash(&mut self, _state_hash: H256) {}
     fn set_result_state(&mut self, _state: &BTreeMap<H160, MemoryAccount>) {}
     fn dump_to_file(&self, _spec: &Spec) {}
@@ -74,10 +72,6 @@ impl StateTestsDumper for StateTestsDump {
         self.data = data;
         self.gas_limit = gas_limit;
         self.access_list = access_list;
-    }
-
-    fn set_caller_secret_key(&mut self, caller_secret_key: H256) {
-        self.caller_secret_key = caller_secret_key;
     }
 
     fn set_state_hash(&mut self, state_hash: H256) {

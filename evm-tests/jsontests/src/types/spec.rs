@@ -1,3 +1,4 @@
+use aurora_evm::Config;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::fmt;
@@ -50,6 +51,37 @@ pub enum Spec {
     /// Osaka hard fork
     /// Activated at block TBD
     Osaka,
+}
+
+impl Spec {
+    #[must_use]
+    pub const fn is_filtered_spec_for_skip(&self) -> bool {
+        matches!(
+            self,
+            Self::Tangerine
+                | Self::SpuriousDragon
+                | Self::Frontier
+                | Self::Homestead
+                | Self::Byzantium
+                | Self::Constantinople
+                | Self::Istanbul
+                | Self::Berlin
+        )
+    }
+
+    #[must_use]
+    pub(crate) const fn get_gasometer_config(&self) -> Option<Config> {
+        match self {
+            Self::Istanbul => Some(Config::istanbul()),
+            Self::Berlin => Some(Config::berlin()),
+            Self::London => Some(Config::london()),
+            Self::Merge => Some(Config::merge()),
+            Self::Shanghai => Some(Config::shanghai()),
+            Self::Cancun => Some(Config::cancun()),
+            Self::Prague => Some(Config::prague()),
+            _ => None,
+        }
+    }
 }
 
 impl FromStr for Spec {

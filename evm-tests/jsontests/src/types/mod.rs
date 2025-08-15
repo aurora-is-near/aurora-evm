@@ -13,10 +13,14 @@ use std::collections::BTreeMap;
 
 mod account_state;
 pub mod blob;
+mod ecrecover;
+pub mod eip_4844;
+pub mod eip_7623;
+pub mod eip_7702;
 mod info;
 mod json_utils;
 pub(crate) mod spec;
-mod transaction;
+pub(crate) mod transaction;
 mod vm;
 
 pub use spec::Spec;
@@ -242,11 +246,11 @@ pub struct PostState {
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 pub struct PostStateIndexes {
     /// Index into transaction data set.
-    pub data: u64,
+    pub data: usize,
     /// Index into transaction gas limit set.
-    pub gas: u64,
+    pub gas: usize,
     /// Index into transaction value set.
-    pub value: u64,
+    pub value: usize,
 }
 
 #[derive(Debug)]

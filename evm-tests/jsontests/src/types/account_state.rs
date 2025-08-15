@@ -3,6 +3,7 @@ use super::json_utils::{
     h160_from_str, strip_0x_prefix,
 };
 use aurora_evm::backend::MemoryAccount;
+use aurora_evm::executor::stack::Authorization;
 use primitive_types::{H160, H256, U256};
 use serde::{Deserialize, Deserializer};
 use sha3::{Digest, Keccak256};
@@ -160,5 +161,23 @@ impl MemoryAccountsState {
         let root = H256(ethereum::util::sec_trie_root(tree).0);
         let expect = h;
         (root == *expect, root)
+    }
+
+    pub fn caller_balance(&self, caller: H160) -> U256 {
+        self.0
+            .get(&caller)
+            .map_or_else(U256::zero, |acc| acc.balance)
+    }
+
+    pub fn caller_code(&self, caller: H160) -> Vec<u8> {
+        self.0
+            .get(&caller)
+            .map_or_else(Vec::new, |acc| acc.code.clone())
+    }
+
+    pub fn is_delegated(&self, caller: H160) -> bool {
+        self.0
+            .get(&caller)
+            .is_some_and(|c| Authorization::is_delegated(&c.code))
     }
 }

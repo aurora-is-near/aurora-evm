@@ -26,9 +26,9 @@ hex = "0.4"
 clap = { version = "4.5", features = ["cargo"] }
 ethereum = "0.15"
 libsecp256k1 = "0.7"
-#bytecount = "0.6"
+bytecount = "0.6"
+hex-literal = "0.4"
 #parity-bytes = "0.1"
-#hex-literal = "0.4"
 
 #ethjson = { path = "../ethjson", features = ["test-helpers"] }
 #ethcore-builtin = { path = "../ethcore-builtin" }

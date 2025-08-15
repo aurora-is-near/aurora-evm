@@ -3,7 +3,7 @@ use crate::config::TestConfig;
 use crate::types::Spec;
 use crate::types::{InvalidTxReason, PostState};
 
-/// Assert vicinity validation to ensure that test os expected validation error
+/// Assert vicinity validation to ensure that test hos expected validation error
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub fn assert_vicinity_validation(
     reason: &InvalidTxReason,
@@ -192,87 +192,9 @@ pub fn assert_vicinity_validation(
     }
 }
 
-/*
-/// Validate EIP-3607 - empty create caller
-fn assert_empty_create_caller(expect_exception: Option<&String>, name: &str) {
-    let exception = expect_exception.expect("expected evm-json-test exception");
-    let check_exception =
-        exception == "SenderNotEOA" || exception == "TransactionException.SENDER_NOT_EOA";
-    assert!(
-        check_exception,
-        "expected EmptyCaller exception for test: {name}: {expect_exception:?}"
-    );
-}
-
-/// Check call expected exception
-fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str) {
-    assert!(
-        expect_exception.is_none(),
-        "unexpected call exception: {expect_exception:?} for test: {name}"
-    );
-}
-
-/// Check Exit Reason of EVM execution
-fn check_create_exit_reason(
-    reason: &ExitReason,
-    expect_exception: Option<&String>,
-    name: &str,
-) -> bool {
-    match reason {
-        ExitReason::Error(err) => {
-            if let Some(exception) = expect_exception {
-                match err {
-                    ExitError::CreateContractLimit => {
-                        let check_result = exception == "TR_InitCodeLimitExceeded"
-                            || exception == "TransactionException.INITCODE_SIZE_EXCEEDED";
-                        assert!(
-                            check_result,
-                            "unexpected exception {exception:?} for CreateContractLimit error for test: {name}"
-                        );
-                        return true;
-                    }
-                    ExitError::MaxNonce => {
-                        let check_result = exception == "TR_NonceHasMaxValue"
-                            || exception == "TransactionException.NONCE_IS_MAX";
-                        assert!(check_result,
-                                "unexpected exception {exception:?} for MaxNonce error for test: {name}"
-                        );
-                        return true;
-                    }
-                    ExitError::OutOfGas => {
-                        let check_result =
-                            exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
-                        assert!(check_result,
-                                "unexpected exception {exception:?} for OutOfGas error for test: {name}"
-                        );
-                        return true;
-                    }
-                    _ => {
-                        panic!(
-                            "unexpected error: {err:?} for exception: {exception} for test: {name}"
-                        )
-                    }
-                }
-            } else {
-                return false;
-            }
-        }
-        ExitReason::Fatal(err) => {
-            panic!("Unexpected error: {err:?}")
-        }
-        _ => {
-            assert!(
-                expect_exception.is_none(),
-                "Unexpected json-test error: {expect_exception:?}"
-            );
-        }
-    }
-    false
-}
-
 /// Check Exit Reason of EVM execution
 #[allow(clippy::too_many_lines)]
-fn check_validate_exit_reason(
+pub fn check_validate_exit_reason(
     reason: &InvalidTxReason,
     expect_exception: Option<&String>,
     name: &str,
@@ -417,5 +339,83 @@ fn check_validate_exit_reason(
             true
         },
     )
+}
+
+/*
+/// Validate EIP-3607 - empty create caller
+fn assert_empty_create_caller(expect_exception: Option<&String>, name: &str) {
+    let exception = expect_exception.expect("expected evm-json-test exception");
+    let check_exception =
+        exception == "SenderNotEOA" || exception == "TransactionException.SENDER_NOT_EOA";
+    assert!(
+        check_exception,
+        "expected EmptyCaller exception for test: {name}: {expect_exception:?}"
+    );
+}
+
+/// Check call expected exception
+fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str) {
+    assert!(
+        expect_exception.is_none(),
+        "unexpected call exception: {expect_exception:?} for test: {name}"
+    );
+}
+
+/// Check Exit Reason of EVM execution
+fn check_create_exit_reason(
+    reason: &ExitReason,
+    expect_exception: Option<&String>,
+    name: &str,
+) -> bool {
+    match reason {
+        ExitReason::Error(err) => {
+            if let Some(exception) = expect_exception {
+                match err {
+                    ExitError::CreateContractLimit => {
+                        let check_result = exception == "TR_InitCodeLimitExceeded"
+                            || exception == "TransactionException.INITCODE_SIZE_EXCEEDED";
+                        assert!(
+                            check_result,
+                            "unexpected exception {exception:?} for CreateContractLimit error for test: {name}"
+                        );
+                        return true;
+                    }
+                    ExitError::MaxNonce => {
+                        let check_result = exception == "TR_NonceHasMaxValue"
+                            || exception == "TransactionException.NONCE_IS_MAX";
+                        assert!(check_result,
+                                "unexpected exception {exception:?} for MaxNonce error for test: {name}"
+                        );
+                        return true;
+                    }
+                    ExitError::OutOfGas => {
+                        let check_result =
+                            exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
+                        assert!(check_result,
+                                "unexpected exception {exception:?} for OutOfGas error for test: {name}"
+                        );
+                        return true;
+                    }
+                    _ => {
+                        panic!(
+                            "unexpected error: {err:?} for exception: {exception} for test: {name}"
+                        )
+                    }
+                }
+            } else {
+                return false;
+            }
+        }
+        ExitReason::Fatal(err) => {
+            panic!("Unexpected error: {err:?}")
+        }
+        _ => {
+            assert!(
+                expect_exception.is_none(),
+                "Unexpected json-test error: {expect_exception:?}"
+            );
+        }
+    }
+    false
 }
 */
