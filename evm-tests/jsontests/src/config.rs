@@ -15,4 +15,5 @@ pub struct TestConfig {
     pub verbose_output: VerboseOutput,
     pub spec: Option<Spec>,
     pub file_name: PathBuf,
+    pub name: String,
 }

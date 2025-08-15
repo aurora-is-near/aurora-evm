@@ -127,12 +127,7 @@ fn main() -> Result<(), String> {
                 path.display()
             );
             if path.is_file() {
-                let test_config = TestConfig {
-                    verbose_output: verbose_output.clone(),
-                    spec: spec.clone(),
-                    file_name: path.to_path_buf(),
-                };
-                run_test_for_file(&test_config, &mut tests_result);
+                run_test_for_file(spec.as_ref(), &verbose_output, path, &mut tests_result);
             } else if path.is_dir() {
                 run_test_for_dir(spec.as_ref(), &verbose_output, path, &mut tests_result);
             }
@@ -236,59 +231,65 @@ fn run_test_for_dir(
         if path.is_dir() {
             run_test_for_dir(spec, verbose_output, path.as_path(), tests_result);
         } else {
-            let test_config = TestConfig {
-                verbose_output: verbose_output.clone(),
-                spec: spec.cloned(),
-                file_name: path.clone(),
-            };
-            run_test_for_file(&test_config, tests_result);
+            run_test_for_file(spec, verbose_output, path.as_path(), tests_result);
         }
     }
 }
 
-fn run_test_for_file(test_config: &TestConfig, tests_result: &mut TestExecutionResult) {
-    if should_skip(&test_config.file_name) {
-        if test_config.verbose_output.verbose {
-            println!("Skipping test case {}", test_config.file_name.display());
+fn run_test_for_file(
+    spec: Option<&Spec>,
+    verbose_output: &VerboseOutput,
+    file_name: &Path,
+    tests_result: &mut TestExecutionResult,
+) {
+    if should_skip(&file_name) {
+        if verbose_output.verbose {
+            println!("Skipping test case {}", file_name.display());
         }
         return;
     }
-    if test_config.verbose_output.verbose {
+    if verbose_output.verbose {
         println!(
             "RUN for: {}",
-            short_test_file_name(test_config.file_name.to_str().unwrap())
+            short_test_file_name(file_name.to_str().unwrap())
         );
     }
-    let file = File::open(&test_config.file_name).expect("Open file failed");
+    let file = File::open(&file_name).expect("Open file failed");
     let reader = BufReader::new(file);
 
     let test_suite = serde_json::from_reader::<_, HashMap<String, StateTestCase>>(reader)
         .expect("Parse test cases failed");
 
     for (name, test) in test_suite {
-        let test_res = state::test(test_config.clone(), name, test);
+        let test_config = TestConfig {
+            verbose_output: verbose_output.clone(),
+            spec: spec.cloned(),
+            file_name: file_name.to_path_buf(),
+            name,
+        };
+        let test_res = state::test(test_config, test);
 
         if test_res.failed > 0 {
-            if test_config.verbose_output.verbose {
+            if verbose_output.verbose {
                 println!("Tests count:\t{}", test_res.total);
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(test_config.file_name.to_str().unwrap())
+                    short_test_file_name(file_name.to_str().unwrap())
                 );
-            } else if test_config.verbose_output.verbose_failed {
+            } else if verbose_output.verbose_failed {
                 println!(
                     "RUN for: {}",
-                    short_test_file_name(test_config.file_name.to_str().unwrap())
+                    short_test_file_name(file_name.to_str().unwrap())
                 );
                 println!("Tests count:\t{}", test_res.total);
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(test_config.file_name.to_str().unwrap())
+                    short_test_file_name(file_name.to_str().unwrap())
                 );
             }
-        } else if test_config.verbose_output.verbose {
+        } else if verbose_output.verbose {
             println!("Tests count: {}\n", test_res.total);
         }
 
