@@ -18,10 +18,10 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> Te
         io::stdout().flush().expect("Could not flush stdout");
     }
 
-    let original_state = test.pre_state.to_memory_accounts();
+    let original_state = test.pre_state.to_memory_accounts_state();
     let vicinity = test.get_memory_vicinity();
     let config = Config::frontier();
-    let mut backend = MemoryBackend::new(&vicinity, original_state);
+    let mut backend = MemoryBackend::new(&vicinity, original_state.0);
     let metadata = StackSubstateMetadata::new(test.get_gas_limit(), &config);
     let state = MemoryStackState::new(metadata, &backend);
     let precompile = BTreeMap::new();

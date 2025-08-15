@@ -127,7 +127,7 @@ impl rlp::Decodable for TrieAccount {
 }
 
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
-pub struct MemoryAccountsState(BTreeMap<H160, MemoryAccount>);
+pub struct MemoryAccountsState(pub BTreeMap<H160, MemoryAccount>);
 
 impl MemoryAccountsState {
     pub fn check_valid_hash(&self, h: &H256) -> (bool, H256) {

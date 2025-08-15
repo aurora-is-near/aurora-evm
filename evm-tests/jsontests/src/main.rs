@@ -242,7 +242,7 @@ fn run_test_for_file(
     file_name: &Path,
     tests_result: &mut TestExecutionResult,
 ) {
-    if should_skip(&file_name) {
+    if should_skip(file_name) {
         if verbose_output.verbose {
             println!("Skipping test case {}", file_name.display());
         }
@@ -254,7 +254,7 @@ fn run_test_for_file(
             short_test_file_name(file_name.to_str().unwrap())
         );
     }
-    let file = File::open(&file_name).expect("Open file failed");
+    let file = File::open(file_name).expect("Open file failed");
     let reader = BufReader::new(file);
 
     let test_suite = serde_json::from_reader::<_, HashMap<String, StateTestCase>>(reader)

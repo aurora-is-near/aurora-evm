@@ -63,7 +63,13 @@ impl VmTestCase {
 
     #[must_use]
     pub fn validate_state(&self, state: &BTreeMap<H160, MemoryAccount>) -> bool {
-        &self.post_state.clone().unwrap().to_memory_accounts() == state
+        &self
+            .post_state
+            .clone()
+            .unwrap()
+            .to_memory_accounts_state()
+            .0
+            == state
     }
 
     #[must_use]

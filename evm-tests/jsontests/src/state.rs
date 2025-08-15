@@ -1,3 +1,4 @@
+use crate::assertions::assert_vicinity_validation;
 use crate::config::TestConfig;
 use crate::execution_results::{FailedTestDetails, TestExecutionResult};
 use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
@@ -80,7 +81,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                     index: 0,
                     name: String::from_str(&test_config.name).unwrap(),
                     spec: spec.clone(),
-                    state: original_state,
+                    state: original_state.0,
                 });
                 if test_config.verbose_output.verbose_failed {
                     println!(
@@ -91,7 +92,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 tests_result.failed += 1;
                 continue;
             }
-            assert_vicinity_validation(&tx_err, states, spec, &test_config);
+            assert_vicinity_validation(&tx_err, states, spec, test_config);
             // As it's expected validation error - skip the test run
             continue;
         }
