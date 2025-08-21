@@ -100,13 +100,14 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
         let caller_balance = original_state.caller_balance(caller);
         // EIP-3607
-        let caller_code = original_state.caller_code(caller);
+        let _caller_code = original_state.caller_code(caller);
         // EIP-7702 - check if it's delegated designation. If it's delegation designation then
         // even if `caller_code` is non-empty transaction should be executed.
-        let is_delegated = original_state.is_delegated(caller);
+        let _is_delegated = original_state.is_delegated(caller);
 
-        for (i, state) in states.iter().enumerate() {
-            let mut backend = MemoryBackend::new(&vicinity, original_state.0.clone());
+        for (_i, state) in states.iter().enumerate() {
+            // mut
+            let backend = MemoryBackend::new(&vicinity, original_state.0.clone());
             tests_result.total += 1;
 
             // Test case may be expected to fail with an unsupported tx type if the current fork is
@@ -133,7 +134,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 state,
             );
             // Only execute valid transactions
-            let authorization_list = match valid_tx {
+            let _authorization_list = match valid_tx {
                 Ok(list) => list,
                 Err(err)
                     if assertions::check_validate_exit_reason(
@@ -149,7 +150,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             };
 
             // We do not check overflow after TX validation
-            let total_fee = if let Some(data_fee) = data_fee {
+            let _total_fee = if let Some(data_fee) = data_fee {
                 vicinity.effective_gas_price * gas_limit + data_fee
             } else {
                 vicinity.effective_gas_price * gas_limit
@@ -161,7 +162,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             state_tests_dump.set_vicinity(&vicinity);
 
             let metadata = StackSubstateMetadata::new(gas_limit, &gasometer_config);
-            let executor_state = MemoryStackState::new(metadata, &backend);
+            let _executor_state = MemoryStackState::new(metadata, &backend);
             /*
             let precompile = JsonPrecompile::precompile(spec).unwrap();
             let mut executor =
