@@ -45,6 +45,7 @@ pub struct AccountsState(BTreeMap<H160, StateAccount>);
 
 impl AccountsState {
     /// Converts the `AccountsState` into a `BTreeMap` of `H160` addresses to `MemoryAccount`.   
+    #[must_use]
     pub fn to_memory_accounts_state(&self) -> MemoryAccountsState {
         MemoryAccountsState(
             self.0
@@ -131,6 +132,7 @@ impl rlp::Decodable for TrieAccount {
 pub struct MemoryAccountsState(pub BTreeMap<H160, MemoryAccount>);
 
 impl MemoryAccountsState {
+    #[must_use]
     pub fn check_valid_hash(&self, h: &H256) -> (bool, H256) {
         let tree = self
             .0
@@ -175,6 +177,7 @@ impl MemoryAccountsState {
             .map_or_else(Vec::new, |acc| acc.code.clone())
     }
 
+    #[must_use]
     pub fn is_delegated(&self, caller: H160) -> bool {
         self.0
             .get(&caller)

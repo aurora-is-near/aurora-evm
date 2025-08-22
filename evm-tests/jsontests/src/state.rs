@@ -1,12 +1,19 @@
 use crate::assertions;
+use crate::assertions::{
+    assert_call_exit_exception, assert_empty_create_caller, check_create_exit_reason,
+};
 use crate::config::TestConfig;
 use crate::execution_results::{FailedTestDetails, TestExecutionResult};
+use crate::old_precompiles::JsonPrecompile;
 use crate::state_dump::{StateTestsDump, StateTestsDumper};
+use crate::types::account_state::MemoryAccountsState;
 use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
 use crate::types::transaction::TxType;
-use crate::types::StateTestCase;
-use aurora_evm::backend::MemoryBackend;
-use aurora_evm::executor::stack::{MemoryStackState, StackSubstateMetadata};
+use crate::types::{Spec, StateTestCase};
+use aurora_evm::backend::{ApplyBackend, MemoryBackend};
+use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
+use aurora_evm::utils::U256_ZERO;
+use primitive_types::H160;
 use std::str::FromStr;
 /*
 impl Test {
@@ -100,14 +107,13 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
         let caller_balance = original_state.caller_balance(caller);
         // EIP-3607
-        let _caller_code = original_state.caller_code(caller);
+        let caller_code = original_state.caller_code(caller);
         // EIP-7702 - check if it's delegated designation. If it's delegation designation then
         // even if `caller_code` is non-empty transaction should be executed.
-        let _is_delegated = original_state.is_delegated(caller);
+        let is_delegated = original_state.is_delegated(caller);
 
-        for (_i, state) in states.iter().enumerate() {
-            // mut
-            let backend = MemoryBackend::new(&vicinity, original_state.0.clone());
+        for (i, state) in states.iter().enumerate() {
+            let mut backend = MemoryBackend::new(&vicinity, original_state.0.clone());
             tests_result.total += 1;
 
             // Test case may be expected to fail with an unsupported tx type if the current fork is
@@ -121,7 +127,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             }
 
             let gas_limit: u64 = test.transaction.get_gas_limit(state).as_u64();
-            let _data: Vec<u8> = test.transaction.get_data(state);
+            let data: Vec<u8> = test.transaction.get_data(state);
 
             let valid_tx = test.transaction.validate(
                 test.env.block_gas_limit,
@@ -134,7 +140,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 state,
             );
             // Only execute valid transactions
-            let _authorization_list = match valid_tx {
+            let authorization_list = match valid_tx {
                 Ok(list) => list,
                 Err(err)
                     if assertions::check_validate_exit_reason(
@@ -150,7 +156,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             };
 
             // We do not check overflow after TX validation
-            let _total_fee = if let Some(data_fee) = data_fee {
+            let total_fee = if let Some(data_fee) = data_fee {
                 vicinity.effective_gas_price * gas_limit + data_fee
             } else {
                 vicinity.effective_gas_price * gas_limit
@@ -162,59 +168,49 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             state_tests_dump.set_vicinity(&vicinity);
 
             let metadata = StackSubstateMetadata::new(gas_limit, &gasometer_config);
-            let _executor_state = MemoryStackState::new(metadata, &backend);
-            /*
+            let executor_state = MemoryStackState::new(metadata, &backend);
             let precompile = JsonPrecompile::precompile(spec).unwrap();
             let mut executor =
                 StackExecutor::new_with_precompiles(executor_state, &gasometer_config, &precompile);
             executor.state_mut().withdraw(caller, total_fee).unwrap();
 
-            let access_list: Vec<(H160, Vec<H256>)> = transaction
-                .access_list
-                .into_iter()
-                .map(|(address, keys)| (address.0, keys.into_iter().map(|k| k.0).collect()))
-                .collect();
+            let access_list = test.transaction.get_access_list(state);
 
             // EIP-3607: Reject transactions from senders with deployed code
             // EIP-7702: Accept transaction even if caller has code.
             if caller_code.is_empty() || is_delegated {
-                match transaction.to {
-                    ethjson::maybe::MaybeEmpty::Some(to) => {
-                        let value = transaction.value.into();
+                let value = test.transaction.get_value(state);
+                if let Some(to) = test.transaction.to {
+                    state_tests_dump.set_tx_data(
+                        to,
+                        value,
+                        data.clone(),
+                        gas_limit,
+                        access_list.clone(),
+                    );
 
-                        state_tests_dump.set_tx_data(
-                            to.0,
-                            value,
-                            data.clone(),
-                            gas_limit,
-                            access_list.clone(),
-                        );
+                    // Exit reason for Call do not analyzed as it mostly do not expect exceptions
+                    let _reason = executor.transact_call(
+                        caller,
+                        to,
+                        value,
+                        data,
+                        gas_limit,
+                        access_list,
+                        authorization_list,
+                    );
+                    assert_call_exit_exception(state.expect_exception.as_ref(), &test_config.name);
+                } else {
+                    let code = data;
 
-                        // Exit reason for Call do not analyzed as it mostly do not expect exceptions
-                        let _reason = executor.transact_call(
-                            caller,
-                            to.into(),
-                            value,
-                            data,
-                            gas_limit,
-                            access_list,
-                            authorization_list,
-                        );
-                        assert_call_exit_exception(state.expect_exception.as_ref(), name);
-                    }
-                    ethjson::maybe::MaybeEmpty::None => {
-                        let code = data;
-                        let value = transaction.value.into();
-
-                        let reason =
-                            executor.transact_create(caller, value, code, gas_limit, access_list);
-                        if check_create_exit_reason(
-                            &reason.0,
-                            state.expect_exception.as_ref(),
-                            &format!("{spec:?}-{name}-{i}"),
-                        ) {
-                            continue;
-                        }
+                    let reason =
+                        executor.transact_create(caller, value, code, gas_limit, access_list);
+                    if check_create_exit_reason(
+                        &reason.0,
+                        state.expect_exception.as_ref(),
+                        &format!("{spec:?}-{}-{i}", test_config.name),
+                    ) {
+                        continue;
                     }
                 }
             } else {
@@ -222,15 +218,15 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 // allow EOAs whose code is a valid delegation designation, i.e. `0xef0100 || address`,
                 // to continue to originate transactions.
                 #[allow(clippy::collapsible_if)]
-                if !(*spec >= ForkSpec::Prague
-                    && TxType::from_txbytes(&state.txbytes) == TxType::EOAAccountCode)
+                if !(*spec >= Spec::Prague
+                    && TxType::from_tx_bytes(&state.tx_bytes) == TxType::EOAAccountCode)
                 {
-                    assert_empty_create_caller(state.expect_exception.as_ref(), name);
+                    assert_empty_create_caller(state.expect_exception.as_ref(), &test_config.name);
                 }
             }
 
             let used_gas = executor.used_gas();
-            if verbose_output.print_state {
+            if test_config.verbose_output.print_state {
                 println!("gas_limit: {gas_limit}\nused_gas: {used_gas}");
             }
 
@@ -268,37 +264,36 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             // is not success. And it means, that it don't appear in Apply::Modify, then as untouched it
             // can't be removed by backend.apply event. In that particular case we should manage it manually.
             // NOTE: it's not realistic situation for real life flow.
-            if *spec <= ForkSpec::London && name == "failed_tx_xcf416c53" {
+            if *spec <= Spec::London && test_config.name == "failed_tx_xcf416c53" {
                 let state = backend.state_mut();
                 state.retain(|addr, account| {
                     // Check is account empty for precompile 0x03
                     !(addr == &H160::from_low_u64_be(3)
-                        && account.balance == U256::zero()
-                        && account.nonce == U256::zero()
+                        && account.balance == U256_ZERO
+                        && account.nonce == U256_ZERO
                         && account.code.is_empty())
                 });
             }
 
-            let (is_valid_hash, actual_hash) =
-                crate::utils::check_valid_hash(&state.hash.0, backend.state());
-
+            let backend_state = MemoryAccountsState(backend.state().clone());
+            let (is_valid_hash, actual_hash) = backend_state.check_valid_hash(&state.hash);
             if !is_valid_hash {
                 let failed_res = FailedTestDetails {
-                    expected_hash: state.hash.0,
+                    expected_hash: state.hash,
                     actual_hash,
                     index: i,
-                    name: String::from_str(name).unwrap(),
+                    name: test_config.name.clone(),
                     spec: spec.clone(),
                     state: backend.state().clone(),
                 };
                 tests_result.failed_tests.push(failed_res);
                 tests_result.failed += 1;
 
-                if verbose_output.verbose_failed {
-                    println!("\n[{spec:?}] {name}:{i} ... failed\t<----");
+                if test_config.verbose_output.verbose_failed {
+                    println!("\n[{spec:?}] {}:{i} ... failed\t<----", test_config.name);
                 }
 
-                if verbose_output.print_state {
+                if test_config.verbose_output.print_state {
                     // Print detailed state data
                     println!(
                         "expected_hash:\t{:?}\nactual_hash:\t{actual_hash:?}",
@@ -319,15 +314,16 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         println!("-> expect_exception: {e}");
                     }
                 }
-            } else if verbose_output.very_verbose && !verbose_output.verbose_failed {
-                println!(" [{spec:?}]  {name}:{i} ... passed");
+            } else if test_config.verbose_output.very_verbose
+                && !test_config.verbose_output.verbose_failed
+            {
+                println!(" [{spec:?}]  {}:{i} ... passed", test_config.name);
             }
 
             state_tests_dump.set_used_gas(used_gas);
             state_tests_dump.set_state_hash(actual_hash);
             state_tests_dump.set_result_state(backend.state());
             state_tests_dump.dump_to_file(spec);
-             */
         }
     }
     tests_result

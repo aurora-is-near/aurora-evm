@@ -1,3 +1,4 @@
+use aurora_evm::{ExitError, ExitReason};
 // use aurora_evm::{ExitError, ExitReason};
 use crate::config::TestConfig;
 use crate::types::Spec;
@@ -341,9 +342,8 @@ pub fn check_validate_exit_reason(
     )
 }
 
-/*
 /// Validate EIP-3607 - empty create caller
-fn assert_empty_create_caller(expect_exception: Option<&String>, name: &str) {
+pub fn assert_empty_create_caller(expect_exception: Option<&String>, name: &str) {
     let exception = expect_exception.expect("expected evm-json-test exception");
     let check_exception =
         exception == "SenderNotEOA" || exception == "TransactionException.SENDER_NOT_EOA";
@@ -354,7 +354,7 @@ fn assert_empty_create_caller(expect_exception: Option<&String>, name: &str) {
 }
 
 /// Check call expected exception
-fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str) {
+pub fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str) {
     assert!(
         expect_exception.is_none(),
         "unexpected call exception: {expect_exception:?} for test: {name}"
@@ -362,7 +362,7 @@ fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str) {
 }
 
 /// Check Exit Reason of EVM execution
-fn check_create_exit_reason(
+pub fn check_create_exit_reason(
     reason: &ExitReason,
     expect_exception: Option<&String>,
     name: &str,
@@ -418,4 +418,3 @@ fn check_create_exit_reason(
     }
     false
 }
-*/

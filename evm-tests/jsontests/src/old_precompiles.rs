@@ -1,6 +1,13 @@
+use crate::types::Spec;
 use aurora_evm::executor::stack::{PrecompileFailure, PrecompileFn, PrecompileOutput};
 use aurora_evm::utils::U64_MAX;
-use aurora_evm::{ExitError, ExitSucceed};
+use aurora_evm::{Context, ExitError, ExitSucceed};
+use ethjson::hash::Address;
+use ethjson::spec::builtin::{
+    AltBn128ConstOperations, AltBn128Pairing, BuiltinCompat, PricingAt, PricingCompat,
+};
+use ethjson::spec::{ForkSpec, Linear, Pricing};
+use ethjson::uint::Uint;
 use primitive_types::{H160, U256};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -8,11 +15,11 @@ use std::sync::LazyLock;
 #[derive(Debug, Clone)]
 struct Precompile;
 
-type LazyPrecompiles = LazyLock<BTreeMap<H160, Precompile>>;
-static ISTANBUL_BUILTINS: LazyPrecompiles = LazyLock::new(crate::state::istanbul_builtins);
-static BERLIN_BUILTINS: LazyPrecompiles = LazyLock::new(crate::state::berlin_builtins);
-static CANCUN_BUILTINS: LazyPrecompiles = LazyLock::new(crate::state::cancun_builtins);
-static PRAGUE_BUILTINS: LazyPrecompiles = LazyLock::new(crate::state::prague_builtins);
+type LazyPrecompiles = LazyLock<BTreeMap<H160, ethcore_builtin::Builtin>>;
+static ISTANBUL_BUILTINS: LazyPrecompiles = LazyLock::new(istanbul_builtins);
+static BERLIN_BUILTINS: LazyPrecompiles = LazyLock::new(berlin_builtins);
+static CANCUN_BUILTINS: LazyPrecompiles = LazyLock::new(cancun_builtins);
+static PRAGUE_BUILTINS: LazyPrecompiles = LazyLock::new(prague_builtins);
 
 macro_rules! precompile_entry {
     ($map:expr, $builtins:expr, $index:expr) => {
@@ -27,84 +34,81 @@ macro_rules! precompile_entry {
 
 pub struct JsonPrecompile;
 
-#[allow(clippy::match_same_arms)]
-#[must_use]
-pub fn precompile(spec: &ForkSpec) -> Option<BTreeMap<H160, PrecompileFn>> {
-    match spec {
-        ForkSpec::Istanbul => {
-            let mut map = BTreeMap::new();
-            precompile_entry!(map, ISTANBUL_BUILTINS, 1);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 2);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 3);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 4);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 5);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 6);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 7);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 8);
-            precompile_entry!(map, ISTANBUL_BUILTINS, 9);
-            Some(map)
-        }
-        ForkSpec::Berlin => {
-            let mut map = BTreeMap::new();
-            precompile_entry!(map, BERLIN_BUILTINS, 1);
-            precompile_entry!(map, BERLIN_BUILTINS, 2);
-            precompile_entry!(map, BERLIN_BUILTINS, 3);
-            precompile_entry!(map, BERLIN_BUILTINS, 4);
-            precompile_entry!(map, BERLIN_BUILTINS, 5);
-            precompile_entry!(map, BERLIN_BUILTINS, 6);
-            precompile_entry!(map, BERLIN_BUILTINS, 7);
-            precompile_entry!(map, BERLIN_BUILTINS, 8);
-            precompile_entry!(map, BERLIN_BUILTINS, 9);
-            Some(map)
-        }
-        // precompiles for London and Berlin are the same
-        ForkSpec::London => Self::precompile(&ForkSpec::Berlin),
-        // precompiles for Merge and Berlin are the same
-        ForkSpec::Merge => Self::precompile(&ForkSpec::Berlin),
-        // precompiles for Paris and Berlin are the same
-        ForkSpec::Paris => Self::precompile(&ForkSpec::Berlin),
-        // precompiles for Shanghai and Berlin are the same
-        ForkSpec::Shanghai => Self::precompile(&ForkSpec::Berlin),
-        ForkSpec::Cancun => {
-            let mut map = BTreeMap::new();
-            precompile_entry!(map, CANCUN_BUILTINS, 1);
-            precompile_entry!(map, CANCUN_BUILTINS, 2);
-            precompile_entry!(map, CANCUN_BUILTINS, 3);
-            precompile_entry!(map, CANCUN_BUILTINS, 4);
-            precompile_entry!(map, CANCUN_BUILTINS, 5);
-            precompile_entry!(map, CANCUN_BUILTINS, 6);
-            precompile_entry!(map, CANCUN_BUILTINS, 7);
-            precompile_entry!(map, CANCUN_BUILTINS, 8);
-            precompile_entry!(map, CANCUN_BUILTINS, 9);
-            precompile_entry!(map, CANCUN_BUILTINS, 0xA);
-            Some(map)
-        }
-        ForkSpec::Prague => {
-            let mut map = BTreeMap::new();
-            precompile_entry!(map, PRAGUE_BUILTINS, 1);
-            precompile_entry!(map, PRAGUE_BUILTINS, 2);
-            precompile_entry!(map, PRAGUE_BUILTINS, 3);
-            precompile_entry!(map, PRAGUE_BUILTINS, 4);
-            precompile_entry!(map, PRAGUE_BUILTINS, 5);
-            precompile_entry!(map, PRAGUE_BUILTINS, 6);
-            precompile_entry!(map, PRAGUE_BUILTINS, 7);
-            precompile_entry!(map, PRAGUE_BUILTINS, 8);
-            precompile_entry!(map, PRAGUE_BUILTINS, 9);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x0A);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x0B);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x0C);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x0D);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x0E);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x0F);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x10);
-            precompile_entry!(map, PRAGUE_BUILTINS, 0x11);
-            Some(map)
-        }
-        _ => None,
-    }
-}
-
 impl JsonPrecompile {
+    #[allow(clippy::match_same_arms)]
+    pub fn precompile(spec: &Spec) -> Option<BTreeMap<H160, PrecompileFn>> {
+        match spec {
+            Spec::Istanbul => {
+                let mut map = BTreeMap::new();
+                precompile_entry!(map, ISTANBUL_BUILTINS, 1);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 2);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 3);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 4);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 5);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 6);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 7);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 8);
+                precompile_entry!(map, ISTANBUL_BUILTINS, 9);
+                Some(map)
+            }
+            Spec::Berlin => {
+                let mut map = BTreeMap::new();
+                precompile_entry!(map, BERLIN_BUILTINS, 1);
+                precompile_entry!(map, BERLIN_BUILTINS, 2);
+                precompile_entry!(map, BERLIN_BUILTINS, 3);
+                precompile_entry!(map, BERLIN_BUILTINS, 4);
+                precompile_entry!(map, BERLIN_BUILTINS, 5);
+                precompile_entry!(map, BERLIN_BUILTINS, 6);
+                precompile_entry!(map, BERLIN_BUILTINS, 7);
+                precompile_entry!(map, BERLIN_BUILTINS, 8);
+                precompile_entry!(map, BERLIN_BUILTINS, 9);
+                Some(map)
+            }
+            // precompiles for London and Berlin are the same
+            Spec::London => Self::precompile(&Spec::Berlin),
+            // precompiles for Merge and Berlin are the same
+            Spec::Merge => Self::precompile(&Spec::Berlin),
+            // precompiles for Shanghai and Berlin are the same
+            Spec::Shanghai => Self::precompile(&Spec::Berlin),
+            Spec::Cancun => {
+                let mut map = BTreeMap::new();
+                precompile_entry!(map, CANCUN_BUILTINS, 1);
+                precompile_entry!(map, CANCUN_BUILTINS, 2);
+                precompile_entry!(map, CANCUN_BUILTINS, 3);
+                precompile_entry!(map, CANCUN_BUILTINS, 4);
+                precompile_entry!(map, CANCUN_BUILTINS, 5);
+                precompile_entry!(map, CANCUN_BUILTINS, 6);
+                precompile_entry!(map, CANCUN_BUILTINS, 7);
+                precompile_entry!(map, CANCUN_BUILTINS, 8);
+                precompile_entry!(map, CANCUN_BUILTINS, 9);
+                precompile_entry!(map, CANCUN_BUILTINS, 0xA);
+                Some(map)
+            }
+            Spec::Prague => {
+                let mut map = BTreeMap::new();
+                precompile_entry!(map, PRAGUE_BUILTINS, 1);
+                precompile_entry!(map, PRAGUE_BUILTINS, 2);
+                precompile_entry!(map, PRAGUE_BUILTINS, 3);
+                precompile_entry!(map, PRAGUE_BUILTINS, 4);
+                precompile_entry!(map, PRAGUE_BUILTINS, 5);
+                precompile_entry!(map, PRAGUE_BUILTINS, 6);
+                precompile_entry!(map, PRAGUE_BUILTINS, 7);
+                precompile_entry!(map, PRAGUE_BUILTINS, 8);
+                precompile_entry!(map, PRAGUE_BUILTINS, 9);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0A);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0B);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0C);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0D);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0E);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x0F);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x10);
+                precompile_entry!(map, PRAGUE_BUILTINS, 0x11);
+                Some(map)
+            }
+            _ => None,
+        }
+    }
+
     fn exec_as_precompile(
         builtin: &ethcore_builtin::Builtin,
         input: &[u8],
@@ -137,7 +141,7 @@ impl JsonPrecompile {
 }
 
 #[allow(clippy::too_many_lines)]
-fn istanbul_builtins() -> BTreeMap<H160, Precompile> {
+fn istanbul_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
     use ethjson::spec::builtin::{BuiltinCompat, Linear, Modexp, PricingCompat};
 
     let builtins: BTreeMap<Address, BuiltinCompat> = BTreeMap::from([
@@ -250,12 +254,19 @@ fn istanbul_builtins() -> BTreeMap<H160, Precompile> {
     ]);
     builtins
         .into_iter()
-        .map(|(address, builtin)| (address.into(), Precompile))
+        .map(|(address, builtin)| {
+            (
+                address.into(),
+                ethjson::spec::Builtin::from(builtin).try_into().unwrap(),
+            )
+        })
         .collect()
 }
 
 #[allow(clippy::too_many_lines)]
-fn berlin_builtins() -> BTreeMap<H160, Precompile> {
+fn berlin_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
+    use ethjson::spec::builtin::{BuiltinCompat, Linear, Modexp, PricingCompat};
+
     let builtins: BTreeMap<Address, BuiltinCompat> = BTreeMap::from([
         (
             Address(H160::from_low_u64_be(1)),
@@ -375,7 +386,9 @@ fn berlin_builtins() -> BTreeMap<H160, Precompile> {
         .collect()
 }
 
-fn cancun_builtins() -> BTreeMap<H160, Precompile> {
+fn cancun_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
+    use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
+
     let mut builtins = berlin_builtins();
     builtins.insert(
         Address(H160::from_low_u64_be(0xA)).into(),
@@ -393,7 +406,9 @@ fn cancun_builtins() -> BTreeMap<H160, Precompile> {
     builtins
 }
 
-fn prague_builtins() -> BTreeMap<H160, Precompile> {
+fn prague_builtins() -> BTreeMap<H160, ethcore_builtin::Builtin> {
+    use ethjson::spec::builtin::{BuiltinCompat, Linear, PricingCompat};
+
     let mut builtins = cancun_builtins();
     builtins.insert(
         Address(H160::from_low_u64_be(0xB)).into(),

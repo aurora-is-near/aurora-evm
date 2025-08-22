@@ -11,7 +11,7 @@ use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-mod account_state;
+pub mod account_state;
 pub mod blob;
 mod ecrecover;
 pub mod eip_4844;
@@ -19,8 +19,8 @@ pub mod eip_7623;
 pub mod eip_7702;
 mod info;
 mod json_utils;
-pub(crate) mod spec;
-pub(crate) mod transaction;
+pub mod spec;
+pub mod transaction;
 mod vm;
 
 pub use spec::Spec;

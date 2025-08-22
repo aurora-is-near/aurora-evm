@@ -69,21 +69,25 @@ pub struct Transaction {
 
 impl Transaction {
     /// Get `data` from with state data
+    #[must_use]
     pub fn get_data(&self, state: &PostState) -> Vec<u8> {
         self.data[state.indexes.data].clone()
     }
 
     /// Get `gas_limit` from with state data
+    #[must_use]
     pub fn get_gas_limit(&self, state: &PostState) -> U256 {
         self.gas_limit[state.indexes.gas]
     }
 
     /// Get `value` from with state data
-    pub fn get_gas_value(&self, state: &PostState) -> U256 {
+    #[must_use]
+    pub fn get_value(&self, state: &PostState) -> U256 {
         self.value[state.indexes.value]
     }
 
     /// Get `access_list` from with state data
+    #[must_use]
     pub fn get_access_list(&self, state: &PostState) -> Vec<(H160, Vec<H256>)> {
         if state.indexes.data < self.access_lists.len() {
             self.access_lists
@@ -136,6 +140,10 @@ impl Transaction {
         Some(g.total_used_gas())
     }
 
+    /// Validate the transaction against block, payment, and EIP constraints.
+    ///
+    /// # Errors
+    /// Returns `InvalidTxReason` if validation fails.
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub fn validate(
         &self,
@@ -166,7 +174,7 @@ impl Transaction {
         let required_funds = gas_limit
             .checked_mul(vicinity.gas_price)
             .ok_or(InvalidTxReason::OutOfFund)?
-            .checked_add(self.get_gas_value(state))
+            .checked_add(self.get_value(state))
             .ok_or(InvalidTxReason::OutOfFund)?;
 
         let required_funds = if let Some(data_fee) = data_fee {
