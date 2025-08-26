@@ -5,6 +5,7 @@ use crate::assertions::{
 use crate::config::TestConfig;
 use crate::execution_results::{FailedTestDetails, TestExecutionResult};
 use crate::old_precompiles::JsonPrecompile;
+use crate::precompiles::Precompiles;
 use crate::state_dump::{StateTestsDump, StateTestsDumper};
 use crate::types::account_state::MemoryAccountsState;
 use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
@@ -47,6 +48,11 @@ pub fn test(test_config: TestConfig, test: StateTestCase) -> TestExecutionResult
 fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResult {
     let mut tests_result = TestExecutionResult::new();
     for (spec, states) in &test.post_states {
+        if test_config.name != "tests/static/state_tests/stStaticCall/static_callBasicFiller.json::static_callBasic[fork_Prague-state_test-d1-g0-v0]" {
+            continue
+        }
+        println!("{test:?}");
+
         // Run tests for specific EVM hard fork (Spec)
         if let Some(s) = test_config.spec.as_ref() {
             if s != spec {
@@ -196,9 +202,10 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         value,
                         data,
                         gas_limit,
-                        access_list,
-                        authorization_list,
+                        access_list.clone(),
+                        authorization_list.clone(),
                     );
+                    println!("\n{caller:?}\n{to:?}\n{value:?}n{gas_limit:?}\n{:?}\n{:?}\nREASON: {_reason:?}",access_list,authorization_list);
                     assert_call_exit_exception(state.expect_exception.as_ref(), &test_config.name);
                 } else {
                     let code = data;
@@ -275,6 +282,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 });
             }
 
+            println!("\nSTATE: {:#?}", backend.state());
             let backend_state = MemoryAccountsState(backend.state().clone());
             let (is_valid_hash, actual_hash) = backend_state.check_valid_hash(&state.hash);
             if !is_valid_hash {

@@ -59,6 +59,11 @@ fn main() -> Result<(), String> {
                         .required(true)
                         .value_parser(value_parser!(PathBuf)),
                 )
+                .arg(
+                    arg!(-n --"test-name" <TEST_NAME> "filer for the test name, for ex: \"test/name\")")
+                        .required(false)
+                        .value_parser(value_parser!(String))
+                )
                 .arg(arg!(-s --spec <SPEC> "Ethereum hard fork"))
                 .arg(
                     arg!(-v --verbose "Verbose output")
@@ -112,6 +117,8 @@ fn main() -> Result<(), String> {
             .get_one::<String>("spec")
             .and_then(|spec| Spec::from_str(spec).ok());
 
+        let test_name: Option<&String> = matches.get_one::<String>("test-name");
+
         let verbose_output = VerboseOutput {
             verbose: matches.get_flag("verbose"),
             verbose_failed: matches.get_flag("verbose_failed"),
@@ -128,9 +135,21 @@ fn main() -> Result<(), String> {
                 path.display()
             );
             if path.is_file() {
-                run_test_for_file(spec.as_ref(), &verbose_output, path, &mut tests_result);
+                run_test_for_file(
+                    spec.as_ref(),
+                    &verbose_output,
+                    path,
+                    &mut tests_result,
+                    test_name,
+                );
             } else if path.is_dir() {
-                run_test_for_dir(spec.as_ref(), &verbose_output, path, &mut tests_result);
+                run_test_for_dir(
+                    spec.as_ref(),
+                    &verbose_output,
+                    path,
+                    &mut tests_result,
+                    test_name,
+                );
             }
         }
         println!("\nTOTAL: {}", tests_result.total);
@@ -216,6 +235,7 @@ fn run_test_for_dir(
     verbose_output: &VerboseOutput,
     dir_name: &Path,
     tests_result: &mut TestExecutionResult,
+    test_name: Option<&String>,
 ) {
     if should_skip(dir_name) {
         println!("Skipping test case {}", dir_name.display());
@@ -230,9 +250,21 @@ fn run_test_for_dir(
         }
         let path = entry.path();
         if path.is_dir() {
-            run_test_for_dir(spec, verbose_output, path.as_path(), tests_result);
+            run_test_for_dir(
+                spec,
+                verbose_output,
+                path.as_path(),
+                tests_result,
+                test_name,
+            );
         } else {
-            run_test_for_file(spec, verbose_output, path.as_path(), tests_result);
+            run_test_for_file(
+                spec,
+                verbose_output,
+                path.as_path(),
+                tests_result,
+                test_name,
+            );
         }
     }
 }
@@ -242,6 +274,7 @@ fn run_test_for_file(
     verbose_output: &VerboseOutput,
     file_name: &Path,
     tests_result: &mut TestExecutionResult,
+    test_name: Option<&String>,
 ) {
     if should_skip(file_name) {
         if verbose_output.verbose {
@@ -262,6 +295,12 @@ fn run_test_for_file(
         .expect("Parse test cases failed");
 
     for (name, test) in test_suite {
+        if let Some(t) = test_name {
+            if !name.contains(t) {
+                continue;
+            }
+        }
+
         let test_config = TestConfig {
             verbose_output: verbose_output.clone(),
             spec: spec.cloned(),
