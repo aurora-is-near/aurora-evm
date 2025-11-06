@@ -48,6 +48,7 @@ pub fn test(test_config: TestConfig, test: StateTestCase) -> TestExecutionResult
 fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResult {
     let mut tests_result = TestExecutionResult::new();
     for (spec, states) in &test.post_states {
+        // TODO
         if test_config.name != "tests/static/state_tests/stStaticCall/static_callBasicFiller.json::static_callBasic[fork_Prague-state_test-d1-g0-v0]" {
             continue
         }
@@ -205,6 +206,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         access_list.clone(),
                         authorization_list.clone(),
                     );
+                    // TODO
                     println!("\nCALLER: {caller:?}\nTO: {to:?}\nVALUE: {value:?}n{gas_limit:?}\n{:?}\n{:?}\nREASON: {_reason:?}",access_list,authorization_list);
                     assert_call_exit_exception(state.expect_exception.as_ref(), &test_config.name);
                 } else {
