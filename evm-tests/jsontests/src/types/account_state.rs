@@ -31,7 +31,18 @@ impl From<StateAccount> for MemoryAccount {
         Self {
             nonce: account.nonce,
             balance: account.balance,
-            storage: account.storage,
+            storage: account
+                .storage
+                .iter()
+                .filter_map(|(k, v)| {
+                    if v.is_zero() {
+                        // If value is zero then the key is not really there
+                        None
+                    } else {
+                        Some((*k, *v))
+                    }
+                })
+                .collect(),
             code: account.code.unwrap_or_default(),
         }
     }

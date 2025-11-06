@@ -49,10 +49,10 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
     let mut tests_result = TestExecutionResult::new();
     for (spec, states) in &test.post_states {
         // TODO
-        if test_config.name != "tests/static/state_tests/stStaticCall/static_callBasicFiller.json::static_callBasic[fork_Prague-state_test-d1-g0-v0]" {
-            continue
-        }
-        println!("{test:?}");
+        // if test_config.name != "tests/static/state_tests/stStaticCall/static_callBasicFiller.json::static_callBasic[fork_Prague-state_test-d1-g0-v0]" {
+        //     continue
+        // }
+        // println!("{test:?}");
 
         // Run tests for specific EVM hard fork (Spec)
         if let Some(s) = test_config.spec.as_ref() {
@@ -121,6 +121,8 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
         for (i, state) in states.iter().enumerate() {
             let mut backend = MemoryBackend::new(&vicinity, original_state.0.clone());
+            // TODO
+            // println!("\nSTATE BEFORE: {:#?}", backend.state());
             tests_result.total += 1;
 
             // Test case may be expected to fail with an unsupported tx type if the current fork is
@@ -207,7 +209,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         authorization_list.clone(),
                     );
                     // TODO
-                    println!("\nCALLER: {caller:?}\nTO: {to:?}\nVALUE: {value:?}n{gas_limit:?}\n{:?}\n{:?}\nREASON: {_reason:?}",access_list,authorization_list);
+                    // println!("\nCALLER: {caller:?}\nTO: {to:?}\nVALUE: {value:?}n{gas_limit:?}\n{:?}\n{:?}\nREASON: {_reason:?}",access_list,authorization_list);
                     assert_call_exit_exception(state.expect_exception.as_ref(), &test_config.name);
                 } else {
                     let code = data;
@@ -284,7 +286,8 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 });
             }
 
-            println!("\nSTATE: {:#?}", backend.state());
+            // TODO
+            // println!("\nSTATE AFTER: {:#?}", backend.state());
             let backend_state = MemoryAccountsState(backend.state().clone());
             let (is_valid_hash, actual_hash) = backend_state.check_valid_hash(&state.hash);
             if !is_valid_hash {
