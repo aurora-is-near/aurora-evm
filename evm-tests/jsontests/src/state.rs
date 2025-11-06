@@ -205,7 +205,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         access_list.clone(),
                         authorization_list.clone(),
                     );
-                    println!("\n{caller:?}\n{to:?}\n{value:?}n{gas_limit:?}\n{:?}\n{:?}\nREASON: {_reason:?}",access_list,authorization_list);
+                    println!("\nCALLER: {caller:?}\nTO: {to:?}\nVALUE: {value:?}n{gas_limit:?}\n{:?}\n{:?}\nREASON: {_reason:?}",access_list,authorization_list);
                     assert_call_exit_exception(state.expect_exception.as_ref(), &test_config.name);
                 } else {
                     let code = data;
