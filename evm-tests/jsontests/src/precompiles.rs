@@ -1,3 +1,7 @@
+mod kzg;
+
+use crate::precompiles::kzg::Kzg;
+use crate::types::Spec;
 use aurora_engine_modexp::AuroraModExp;
 use aurora_engine_precompiles::{
     alt_bn256::{Bn256Add, Bn256Mul, Bn256Pair},
@@ -6,7 +10,7 @@ use aurora_engine_precompiles::{
     identity::Identity,
     modexp::ModExp,
     secp256k1::ECRecover,
-    Byzantium, EthGas, Istanbul, Precompile,
+    Berlin, Byzantium, EthGas, Istanbul, Precompile,
 };
 use aurora_evm::executor::stack::{
     PrecompileFailure, PrecompileHandle, PrecompileOutput, PrecompileSet,
@@ -33,6 +37,22 @@ impl PrecompileSet for Precompiles {
 }
 
 impl Precompiles {
+    pub fn new(spec: &Spec) -> Self {
+        match *spec {
+            Spec::Frontier
+            | Spec::Homestead
+            | Spec::Tangerine
+            | Spec::SpuriousDragon
+            | Spec::Byzantium
+            | Spec::Constantinople
+            | Spec::Petersburg
+            | Spec::Istanbul => Self::new_istanbul(),
+            Spec::Berlin | Spec::London | Spec::Merge | Spec::Shanghai => Self::new_berlin(),
+            Spec::Cancun => Self::new_cancun(),
+            Spec::Prague | Spec::Osaka => Self::new_prague(),
+        }
+    }
+
     pub fn new_istanbul() -> Self {
         let mut map = BTreeMap::new();
         map.insert(
@@ -59,6 +79,46 @@ impl Precompiles {
             Box::new(Bn256Pair::<Istanbul>::new()),
         );
         map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
+        Self(map)
+    }
+
+    pub fn new_berlin() -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(
+            ECRecover::ADDRESS.raw(),
+            Box::new(ECRecover) as Box<dyn Precompile>,
+        );
+        map.insert(SHA256::ADDRESS.raw(), Box::new(SHA256));
+        map.insert(RIPEMD160::ADDRESS.raw(), Box::new(RIPEMD160));
+        map.insert(Identity::ADDRESS.raw(), Box::new(Identity));
+        map.insert(
+            ModExp::<Berlin, AuroraModExp>::ADDRESS.raw(),
+            Box::new(ModExp::<Berlin, AuroraModExp>::new()),
+        );
+        map.insert(
+            Bn256Add::<Istanbul>::ADDRESS.raw(),
+            Box::new(Bn256Add::<Istanbul>::new()),
+        );
+        map.insert(
+            Bn256Mul::<Istanbul>::ADDRESS.raw(),
+            Box::new(Bn256Mul::<Istanbul>::new()),
+        );
+        map.insert(
+            Bn256Pair::<Istanbul>::ADDRESS.raw(),
+            Box::new(Bn256Pair::<Istanbul>::new()),
+        );
+        map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
+        Self(map)
+    }
+
+    pub fn new_cancun() -> Self {
+        let mut map = Self::new_berlin().0;
+        map.insert(Kzg::ADDRESS, Box::new(Kzg));
+        Self(map)
+    }
+
+    pub fn new_prague() -> Self {
+        let map = Self::new_cancun().0;
         Self(map)
     }
 }

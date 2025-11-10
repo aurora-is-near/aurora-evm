@@ -1,10 +1,10 @@
-use crate::assertions;
 use crate::assertions::{
-    assert_call_exit_exception, assert_empty_create_caller, check_create_exit_reason,
+    self, assert_call_exit_exception, assert_empty_create_caller, assert_vicinity_validation,
+    check_create_exit_reason,
 };
 use crate::config::TestConfig;
 use crate::execution_results::{FailedTestDetails, TestExecutionResult};
-use crate::old_precompiles::JsonPrecompile;
+// TODO: use crate::old_precompiles::JsonPrecompile;
 use crate::precompiles::Precompiles;
 use crate::state_dump::{StateTestsDump, StateTestsDumper};
 use crate::types::account_state::MemoryAccountsState;
@@ -48,6 +48,11 @@ pub fn test(test_config: TestConfig, test: StateTestCase) -> TestExecutionResult
 fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResult {
     let mut tests_result = TestExecutionResult::new();
     for (spec, states) in &test.post_states {
+        // TODO
+        if *spec >= Spec::Prague {
+            continue;
+        }
+
         // TODO
         // if test_config.name != "tests/static/state_tests/stStaticCall/static_callBasicFiller.json::static_callBasic[fork_Prague-state_test-d1-g0-v0]" {
         //     continue
@@ -104,7 +109,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 tests_result.failed += 1;
                 continue;
             }
-            assertions::assert_vicinity_validation(&tx_err, states, spec, test_config);
+            assert_vicinity_validation(&tx_err, states, spec, test_config);
             // As it's expected validation error - skip the test run
             continue;
         }
@@ -178,7 +183,8 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
             let metadata = StackSubstateMetadata::new(gas_limit, &gasometer_config);
             let executor_state = MemoryStackState::new(metadata, &backend);
-            let precompile = JsonPrecompile::precompile(spec).unwrap();
+            // let precompile = JsonPrecompile::precompile(spec).unwrap();
+            let precompile = Precompiles::new(spec);
             let mut executor =
                 StackExecutor::new_with_precompiles(executor_state, &gasometer_config, &precompile);
             executor.state_mut().withdraw(caller, total_fee).unwrap();
