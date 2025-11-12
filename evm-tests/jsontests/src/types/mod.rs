@@ -75,7 +75,7 @@ impl StateTestCase {
             tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default()
         } else {
             if tx.max_fee_per_gas.is_some() {
-                return Err(InvalidTxReason::GasPriseEip1559);
+                return Err(InvalidTxReason::GasPriceEip1559);
             }
             tx.gas_price.expect("expect gas price")
         };
@@ -267,7 +267,7 @@ pub enum InvalidTxReason {
     BlobGasPriceGreaterThanMax,
     BlobVersionedHashesNotSupported,
     MaxFeePerBlobGasNotSupported,
-    GasPriseEip1559,
+    GasPriceEip1559,
     AuthorizationListNotExist,
     AuthorizationListNotSupported,
     InvalidAuthorizationChain,

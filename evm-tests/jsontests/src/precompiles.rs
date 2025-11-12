@@ -3,6 +3,9 @@ mod kzg;
 use crate::precompiles::kzg::Kzg;
 use crate::types::Spec;
 use aurora_engine_modexp::AuroraModExp;
+use aurora_engine_precompiles::bls12_381::{
+    BlsG1Add, BlsG1Msm, BlsG2Add, BlsG2Msm, BlsMapFp2ToG2, BlsMapFpToG1, BlsPairingCheck,
+};
 use aurora_engine_precompiles::{
     alt_bn256::{Bn256Add, Bn256Mul, Bn256Pair},
     blake2::Blake2F,
@@ -118,7 +121,14 @@ impl Precompiles {
     }
 
     pub fn new_prague() -> Self {
-        let map = Self::new_cancun().0;
+        let mut map = Self::new_cancun().0;
+        map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
+        map.insert(BlsG1Msm::ADDRESS.raw(), Box::new(BlsG1Msm));
+        map.insert(BlsG2Add::ADDRESS.raw(), Box::new(BlsG2Add));
+        map.insert(BlsG2Msm::ADDRESS.raw(), Box::new(BlsG2Msm));
+        map.insert(BlsPairingCheck::ADDRESS.raw(), Box::new(BlsPairingCheck));
+        map.insert(BlsMapFpToG1::ADDRESS.raw(), Box::new(BlsMapFpToG1));
+        map.insert(BlsMapFp2ToG2::ADDRESS.raw(), Box::new(BlsMapFp2ToG2));
         Self(map)
     }
 }

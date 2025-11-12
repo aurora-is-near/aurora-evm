@@ -4,7 +4,7 @@ use crate::config::TestConfig;
 use crate::types::Spec;
 use crate::types::{InvalidTxReason, PostState};
 
-/// Assert vicinity validation to ensure that test hos expected validation error
+/// Assert vicinity validation to ensure that test expected validation error
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub fn assert_vicinity_validation(
     reason: &InvalidTxReason,
@@ -16,7 +16,7 @@ pub fn assert_vicinity_validation(
     let file_name = &test_config.file_name;
     match *spec {
         Spec::Istanbul | Spec::Berlin => match reason {
-            InvalidTxReason::GasPriseEip1559 => {
+            InvalidTxReason::GasPriceEip1559 => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
                         panic!(
@@ -175,7 +175,7 @@ pub fn assert_vicinity_validation(
             InvalidTxReason::GasPriceLessThenBlockBaseFee => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
-                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i})\n{file_name:?}")
+                        panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
                     });
                     let is_checked = expected == "TR_FeeCapLessThanBlocks"
                         || expected == "TransactionException.INSUFFICIENT_MAX_FEE_PER_GAS";

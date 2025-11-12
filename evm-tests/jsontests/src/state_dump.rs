@@ -1,10 +1,9 @@
-// TODO: fix it
-#![allow(dead_code)]
 use crate::types::Spec;
 use aurora_evm::backend::{MemoryAccount, MemoryVicinity};
 use primitive_types::{H160, H256, U256};
 use std::collections::BTreeMap;
 
+#[allow(dead_code)]
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(feature = "dump-state", derive(serde::Serialize, serde::Deserialize))]
 pub struct StateTestsDump {

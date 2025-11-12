@@ -355,8 +355,6 @@ pub mod transaction {
     use ethjson::uint::Uint;
     use primitive_types::{H160, H256, U256};
 
-    // TODO: it will be refactored as old solution inefficient, also will be removed clippy-allow flag
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     pub fn validate(
         tx: &Transaction,
         block_gas_limit: U256,
@@ -557,7 +555,7 @@ pub mod transaction {
         BlobGasPriceGreaterThanMax,
         BlobVersionedHashesNotSupported,
         MaxFeePerBlobGasNotSupported,
-        GasPriseEip1559,
+        GasPriceEip1559,
         AuthorizationListNotExist,
         AuthorizationListNotSupported,
         InvalidAuthorizationChain,

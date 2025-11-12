@@ -20,11 +20,8 @@ pub mod vm;
 mod assertions;
 mod config;
 mod execution_results;
-// TODO
-// mod old_precompiles;
 mod precompiles;
 mod state_dump;
-// mod utils;
 
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 fn main() -> Result<(), String> {

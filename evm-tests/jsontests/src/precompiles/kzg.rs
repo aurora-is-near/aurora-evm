@@ -1,6 +1,8 @@
 #![allow(clippy::module_inception, clippy::large_stack_arrays)]
 
-use aurora_engine_precompiles::{Context, EthGas, ExitError, Precompile, PrecompileOutput};
+use aurora_engine_precompiles::{
+    Context, EthGas, EvmPrecompileResult, ExitError, Precompile, PrecompileOutput,
+};
 use primitive_types::H160;
 use std::borrow::Cow::Borrowed;
 
@@ -271,7 +273,7 @@ impl Precompile for Kzg {
         target_gas: Option<EthGas>,
         _context: &Context,
         _is_static: bool,
-    ) -> Result<PrecompileOutput, ExitError> {
+    ) -> EvmPrecompileResult {
         let cost = Self::required_gas(input)?;
         if let Some(target_gas) = target_gas {
             if cost > target_gas {
