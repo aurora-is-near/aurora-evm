@@ -21,10 +21,10 @@ aurora-evm.workspace = true
 bytecount = "0.6"
 clap = { version = "4.5", features = ["cargo"] }
 c-kzg = "1.0"
-derive_more = "0.99"
-ethereum = "0.15"
+derive_more = { version = "2", features = ["full"] }
+ethereum = "0.18"
 hex = "0.4"
-hex-literal = "0.4"
+hex-literal = "1.1"
 libsecp256k1 = "0.7"
 primitive-types = { workspace = true, features = ["serde"] }
 rlp.workspace = true
