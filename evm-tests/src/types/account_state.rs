@@ -158,7 +158,8 @@ impl MemoryAccountsState {
                     )
                     .0,
                 );
-                let code_hash = H256::from_slice(Keccak256::digest(&account.code).as_slice());
+                let code_hash =
+                    H256::from_slice(<[u8; 32]>::from(Keccak256::digest(&account.code)).as_slice());
 
                 let account = TrieAccount {
                     nonce: account.nonce,

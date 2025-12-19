@@ -117,7 +117,9 @@ impl Transaction {
         let mut res = [0u8; 64];
         res.copy_from_slice(&public.serialize()[1..65]);
 
-        H160::from(H256::from_slice(sha3::Keccak256::digest(res).as_slice()))
+        H160::from(H256::from_slice(
+            <[u8; 32]>::from(sha3::Keccak256::digest(res)).as_slice(),
+        ))
     }
 
     fn intrinsic_gas(&self, config: &aurora_evm::Config, state: &PostState) -> Option<u64> {

@@ -713,7 +713,8 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             }
         }
 
-        let code_hash = H256::from_slice(Keccak256::digest(&init_code).as_slice());
+        let code_hash =
+            H256::from_slice(<[u8; 32]>::from(Keccak256::digest(&init_code)).as_slice());
         let address = self.create_address(CreateScheme::Create2 {
             caller,
             code_hash,
@@ -887,14 +888,15 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                 hasher.update(&caller[..]);
                 hasher.update(&salt[..]);
                 hasher.update(&code_hash[..]);
-                H256::from_slice(hasher.finalize().as_slice()).into()
+                H256::from_slice(<[u8; 32]>::from(hasher.finalize()).as_slice()).into()
             }
             CreateScheme::Legacy { caller } => {
                 let nonce = self.nonce(caller);
                 let mut stream = rlp::RlpStream::new_list(2);
                 stream.append(&caller);
                 stream.append(&nonce);
-                H256::from_slice(Keccak256::digest(stream.out()).as_slice()).into()
+                H256::from_slice(<[u8; 32]>::from(Keccak256::digest(stream.out())).as_slice())
+                    .into()
             }
             CreateScheme::Fixed(address) => address,
         }
@@ -1492,7 +1494,7 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
             return H256::default();
         }
         let code = self.code(address);
-        H256::from_slice(Keccak256::digest(code).as_slice())
+        H256::from_slice(<[u8; 32]>::from(Keccak256::digest(code)).as_slice())
     }
 
     /// Get account code

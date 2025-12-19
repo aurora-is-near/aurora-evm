@@ -22,7 +22,7 @@ auto_impl = "1.0"
 primitive-types = { version = "0.13", default-features = false }
 rlp = { version = "0.6", default-features = false, features = ["derive"] }
 sha3 = { version = "0.10", default-features = false }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", default-features = false }
 
 [patch.crates-io]
 # Constrain to v0.14.6 to ensure compatibility with sha3 0.10 and prevent unexpected upgrades

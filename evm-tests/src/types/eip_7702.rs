@@ -48,7 +48,7 @@ impl Authorization {
         let mut rlp_stream = RlpStream::new();
         rlp_stream.append(&MAGIC);
         self.rlp_append(&mut rlp_stream);
-        H256::from_slice(Keccak256::digest(rlp_stream.as_raw()).as_slice())
+        H256::from_slice(<[u8; 32]>::from(Keccak256::digest(rlp_stream.as_raw())).as_slice())
     }
 }
 
