@@ -102,7 +102,7 @@ pub fn assert_vicinity_validation(
                     let is_checked = expected == "TR_TipGtFeeCap";
                     assert!(
                         is_checked,
-                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}\n{file_name:?}",
+                        "unexpected error message {expected:?} for: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}",
                     );
                 }
             }

@@ -170,14 +170,16 @@ fn process_precompile(
             exit_status: get_exit_error(err),
         });
     #[cfg(feature = "dump-state")]
-    if let Ok(out) = &output {
-        dump_precompile_state(
-            "bn256_pairing_all.json",
-            input,
-            &out.output,
-            evm_context.address,
-            Bn256Pair::<Istanbul>::ADDRESS.raw(),
-        );
+    if let Ok(_out) = &output {
+        /* EXAMPLE:
+            dump_precompile_state(
+                "bn256_pairing_all.json",
+                input,
+                &out.output,
+                evm_context.address,
+                Bn256Pair::<Istanbul>::ADDRESS.raw(),
+            );
+        */
     }
 
     output
@@ -222,7 +224,10 @@ fn get_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError
 }
 
 /// Dumps precompile input and output data to a JSON file for test case generation.
+///
+/// It can be used for debbugging and creating new test cases for precompiles.
 #[cfg(feature = "dump-state")]
+#[allow(dead_code)]
 fn dump_precompile_state(
     file_name: &str,
     input: &[u8],

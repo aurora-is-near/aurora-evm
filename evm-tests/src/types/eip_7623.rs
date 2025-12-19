@@ -1,4 +1,4 @@
-//! EIP-7623 form Prague hard fork
+//! EIP-7623 from Prague hard fork
 
 /// The standard cost of calldata token.
 pub const STANDARD_TOKEN_COST: usize = 4;
