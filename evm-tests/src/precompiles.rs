@@ -225,7 +225,7 @@ fn get_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError
 
 /// Dumps precompile input and output data to a JSON file for test case generation.
 ///
-/// It can be used for debbugging and creating new test cases for precompiles.
+/// It can be used for debugging and creating new test cases for precompiles.
 #[cfg(feature = "dump-state")]
 #[allow(dead_code)]
 fn dump_precompile_state(
