@@ -3,12 +3,12 @@ mod kzg;
 use crate::precompiles::kzg::Kzg;
 use crate::types::Spec;
 use aurora_engine_modexp::AuroraModExp;
-use aurora_engine_precompiles::bls12_381::{
-    BlsG1Add, BlsG1Msm, BlsG2Add, BlsG2Msm, BlsMapFp2ToG2, BlsMapFpToG1, BlsPairingCheck,
-};
 use aurora_engine_precompiles::{
     alt_bn256::{Bn256Add, Bn256Mul, Bn256Pair},
     blake2::Blake2F,
+    bls12_381::{
+        BlsG1Add, BlsG1Msm, BlsG2Add, BlsG2Msm, BlsMapFp2ToG2, BlsMapFpToG1, BlsPairingCheck,
+    },
     hash::{RIPEMD160, SHA256},
     identity::Identity,
     modexp::ModExp,
@@ -133,6 +133,23 @@ impl Precompiles {
     }
 }
 
+/// Precompile input and output data struct
+#[cfg(feature = "dump-state")]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct PrecompileStandaloneData {
+    pub input: String,
+    pub output: String,
+}
+
+/// Standalone data for precompile tests.
+/// It contains input data for precompile and expected
+/// output after precompile execution.
+#[cfg(feature = "dump-state")]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct PrecompileStandalone {
+    pub precompile_data: Vec<PrecompileStandaloneData>,
+}
+
 fn process_precompile(
     p: &dyn Precompile,
     handle: &impl PrecompileHandle,
@@ -147,10 +164,23 @@ fn process_precompile(
     };
     let is_static = handle.is_static();
 
-    p.run(input, gas_limit.map(EthGas::new), &context, is_static)
+    let output = p
+        .run(input, gas_limit.map(EthGas::new), &context, is_static)
         .map_err(|err| PrecompileFailure::Error {
             exit_status: get_exit_error(err),
-        })
+        });
+    #[cfg(feature = "dump-state")]
+    if let Ok(out) = &output {
+        dump_precompile_state(
+            "bn256_pairing_all.json",
+            input,
+            &out.output,
+            evm_context.address,
+            Bn256Pair::<Istanbul>::ADDRESS.raw(),
+        );
+    }
+
+    output
 }
 
 fn post_process(
@@ -187,6 +217,55 @@ fn get_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError
         aurora_engine_precompiles::ExitError::UsizeOverflow => ExitError::UsizeOverflow,
         aurora_engine_precompiles::ExitError::CreateContractStartingWithEF => {
             ExitError::CreateContractStartingWithEF
+        }
+    }
+}
+
+/// Dumps precompile input and output data to a JSON file for test case generation.
+#[cfg(feature = "dump-state")]
+fn dump_precompile_state(
+    file_name: &str,
+    input: &[u8],
+    output: &[u8],
+    evm_context_address: H160,
+    precompile_address: H160,
+) {
+    use std::fs;
+
+    if input.is_empty() || evm_context_address != precompile_address {
+        return;
+    }
+
+    let mut data = fs::read_to_string(file_name)
+        .ok()
+        .and_then(|content| {
+            if content.trim().is_empty() {
+                None
+            } else {
+                serde_json::from_str::<PrecompileStandalone>(&content).ok()
+            }
+        })
+        .unwrap_or_else(|| PrecompileStandalone {
+            precompile_data: Vec::new(),
+        });
+
+    let hex_input = hex::encode(input);
+    let hex_output = hex::encode(output);
+
+    if !data
+        .precompile_data
+        .iter()
+        .any(|entry| entry.input == hex_input)
+    {
+        data.precompile_data.push(PrecompileStandaloneData {
+            input: hex_input,
+            output: hex_output,
+        });
+
+        if let Ok(serialized) = serde_json::to_string(&data) {
+            fs::write(file_name, serialized).expect("Unable to write file");
+        } else {
+            panic!("Unable to parse file");
         }
     }
 }
