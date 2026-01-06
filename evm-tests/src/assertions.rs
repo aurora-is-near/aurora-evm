@@ -3,7 +3,7 @@ use crate::types::Spec;
 use crate::types::{InvalidTxReason, PostState};
 use aurora_evm::{ExitError, ExitReason};
 
-/// Assert vicinity validation to ensure that test expected validation error
+/// Assert vicinity validation to ensure that the test expected validation error
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 pub fn assert_vicinity_validation(
     reason: &InvalidTxReason,

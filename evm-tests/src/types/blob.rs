@@ -75,7 +75,7 @@ impl BlobExcessGasAndPrice {
     /// Calculate this block excess gas and price from the parent excess gas and gas used
     /// and the target blob gas per block.
     ///
-    /// This fields will be used to calculate `excess_blob_gas` with [`calc_excess_blob_gas`] func.
+    /// These fields will be used to calculate `excess_blob_gas` with [`calc_excess_blob_gas`] func.
     #[must_use]
     pub fn from_parent(parent_excess_blob_gas: u64, parent_blob_gas_used: u64) -> Self {
         Self::new(calc_excess_blob_gas(

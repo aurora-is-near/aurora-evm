@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 /// Represents vm execution environment before and after execution of transaction.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 pub struct VmTestCase {
-    /// Contract calls made internaly by executed transaction.
+    /// Contract calls made internally by executed transaction.
     #[serde(rename = "callcreates")]
     pub calls: Option<Vec<Call>>,
     /// Env info.
@@ -27,7 +27,7 @@ pub struct VmTestCase {
         deserialize_with = "deserialize_u256_from_str_opt"
     )]
     pub gas_left: Option<U256>,
-    /// Hash of logs created during execution of transaction.
+    /// Hash of logs created during execution of the transaction.
     #[serde(default, deserialize_with = "deserialize_h256_from_u256_str_opt")]
     pub logs: Option<H256>,
     /// Transaction output.

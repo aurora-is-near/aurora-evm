@@ -103,7 +103,7 @@ impl Transaction {
         }
     }
 
-    /// Get caller from transaction secret key.
+    /// Get caller from transaction's secret key.
     ///
     /// # Panics
     /// If the transaction secret is missing or if parsing the secret key fails.
@@ -191,7 +191,7 @@ impl Transaction {
         }
 
         // CANCUN tx validation
-        // Presence of max_fee_per_blob_gas means that this is blob transaction.
+        // Presence of max_fee_per_blob_gas means that this is a blob transaction.
         if *spec >= Spec::Cancun {
             if let Some(max) = self.max_fee_per_blob_gas {
                 // ensure that the user was willing to at least pay the current blob gasprice

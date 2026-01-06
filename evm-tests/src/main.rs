@@ -32,7 +32,7 @@ fn main() -> Result<(), String> {
             Command::new("vm")
                 .about("vm tests runner")
                 .arg(
-                    arg!([PATH] "json file or directory for tests run")
+                    arg!([PATH] "JSON file or directory for tests run")
                         .action(ArgAction::Append)
                         .required(true)
                         .value_parser(value_parser!(PathBuf)),
@@ -52,7 +52,7 @@ fn main() -> Result<(), String> {
             Command::new("state")
                 .about("state tests runner")
                 .arg(
-                    arg!([PATH] "json file or directory for tests run")
+                    arg!([PATH] "JSON file or directory for tests run")
                         .action(ArgAction::Append)
                         .required(true)
                         .value_parser(value_parser!(PathBuf)),
@@ -79,7 +79,7 @@ fn main() -> Result<(), String> {
                         .action(ArgAction::SetTrue),
                 )
                 .arg(
-                    arg!(-p --print_state "When test failed print state")
+                    arg!(-p --print_state "Print state when the test fails")
                         .default_value("false")
                         .action(ArgAction::SetTrue),
                 ),
@@ -96,7 +96,7 @@ fn main() -> Result<(), String> {
         let mut tests_result = TestExecutionResult::new();
         for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
             let path = Path::new(src_name);
-            assert!(path.exists(), "data source is not exist");
+            assert!(path.exists(), "data source does not exist");
             if path.is_file() {
                 run_vm_test_for_file(&verbose_output, path, &mut tests_result);
             } else if path.is_dir() {
@@ -129,7 +129,7 @@ fn main() -> Result<(), String> {
 
             assert!(
                 path.exists(),
-                "data source is not exist: {}",
+                "data source does not exist: {}",
                 path.display()
             );
             if path.is_file() {
@@ -236,7 +236,7 @@ fn run_test_for_dir(
     test_name: Option<&String>,
 ) {
     if should_skip(dir_name) {
-        println!("Skipping test case {}", dir_name.display());
+        println!("Skipping the test case {}", dir_name.display());
         return;
     }
     for entry in fs::read_dir(dir_name).unwrap() {
@@ -276,7 +276,7 @@ fn run_test_for_file(
 ) {
     if should_skip(file_name) {
         if verbose_output.verbose {
-            println!("Skipping test case {}", file_name.display());
+            println!("Skipping the test case {}", file_name.display());
         }
         return;
     }
@@ -387,7 +387,7 @@ const SKIPPED_CASES: &[&str] = &[
 /// Check if a path should be skipped.
 /// It checks:
 /// - `path/and_file_stem` - check path and file name (without extension)
-/// - `path/with/sub/path` - recursively check path
+/// - `path/with/sub/path` - recursively check a path
 fn should_skip(path: &Path) -> bool {
     let matches = |case: &str| {
         let case_path = Path::new(case);
@@ -396,7 +396,7 @@ fn should_skip(path: &Path) -> bool {
         let case_path_len = case_path_components.len();
         let path_len = path_components.len();
 
-        // Check path length without file name
+        // Check path length without a file name
         if case_path_len > path_len {
             return false;
         }
@@ -405,7 +405,7 @@ fn should_skip(path: &Path) -> bool {
             (path.file_stem(), case_path.file_stem())
         {
             if file_path_stem == case_file_path_stem {
-                // If case path contains only file name
+                // If a case path contains only a file name
                 if case_path_len == 1 {
                     return true;
                 }
@@ -419,7 +419,7 @@ fn should_skip(path: &Path) -> bool {
                 }
             }
         }
-        // Check recursively path from the end without file name
+        // Check recursively path from the end without a file name
         if case_path_len < path_len && path_len > 1 {
             for i in 1..=path_len - case_path_len {
                 if case_path_components

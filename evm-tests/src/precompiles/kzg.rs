@@ -15,6 +15,7 @@ mod kzg {
     use sha2::Digest;
     use std::convert::TryFrom;
     use std::rc::Rc;
+    use std::str::Lines;
 
     pub const RETURN_VALUE: &[u8; 64] = &hex!(
         "0000000000000000000000000000000000000000000000000000000000001000"
@@ -27,7 +28,7 @@ mod kzg {
     /// Number of G2 Points.
     const NUM_G2_POINTS: usize = 65;
 
-    /// A newtype over list of G1 point from kzg trusted setup.
+    /// A new type over the list of G1 point from kzg trusted setup.
     #[derive(Debug, Clone, PartialEq, AsRef, AsMut, Deref, DerefMut)]
     #[repr(transparent)]
     struct G1Points(pub [[u8; BYTES_PER_G1_POINT]; NUM_G1_POINTS]);
@@ -38,7 +39,7 @@ mod kzg {
         }
     }
 
-    /// A newtype over list of G2 point from kzg trusted setup.
+    /// A new type over the list of G2 point from kzg trusted setup.
     #[derive(Debug, Clone, Eq, PartialEq, AsRef, AsMut, Deref, DerefMut)]
     #[repr(transparent)]
     struct G2Points(pub [[u8; BYTES_PER_G2_POINT]; NUM_G2_POINTS]);
@@ -95,17 +96,11 @@ mod kzg {
 
         // load g1 points
         let mut g1_points = Box::<G1Points>::default();
-        for bytes in &mut g1_points.0 {
-            let line = lines.next().ok_or("KzgFileFormatError")?;
-            hex::decode_to_slice(line, bytes).map_err(|_| "KzgParseError")?;
-        }
+        decode_points(&mut g1_points.0, &mut lines)?;
 
         // load g2 points
         let mut g2_points = Box::<G2Points>::default();
-        for bytes in &mut g2_points.0 {
-            let line = lines.next().ok_or("KzgFileFormatError")?;
-            hex::decode_to_slice(line, bytes).map_err(|_| "KzgParseError")?;
-        }
+        decode_points(&mut g2_points.0, &mut lines)?;
 
         if lines.next().is_some() {
             return Err("KzgFileFormatError");
@@ -142,7 +137,7 @@ mod kzg {
             core::mem::discriminant(self).hash(state);
             match self {
                 Self::Default => {}
-                Self::Custom(settings) => Rc::as_ptr(settings).hash(state),
+                Self::Custom(settings) => settings.hash(state),
             }
         }
     }
@@ -236,6 +231,18 @@ mod kzg {
     fn as_bytes48(bytes: &[u8]) -> &Bytes48 {
         // SAFETY: `#[repr(C)] Bytes48([u8; 48])`
         unsafe { &*as_array::<48>(bytes).as_ptr().cast() }
+    }
+
+    #[inline]
+    fn decode_points<const LEN: usize>(
+        points: &mut [[u8; LEN]],
+        lines: &mut Lines<'_>,
+    ) -> Result<(), &'static str> {
+        for bytes in points {
+            let line = lines.next().ok_or("KzgFileFormatError")?;
+            hex::decode_to_slice(line, bytes).map_err(|_| "KzgParseError")?;
+        }
+        Ok(())
     }
 }
 

@@ -15,13 +15,6 @@ use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstate
 use aurora_evm::utils::U256_ZERO;
 use primitive_types::H160;
 use std::str::FromStr;
-/*
-impl Test {
-    pub fn unwrap_caller_secret_key(&self) -> H256 {
-        self.0.transaction.secret.unwrap().into()
-    }
-}
-*/
 
 /// Runs a test in a separate thread with a specified stack size.
 ///
@@ -39,7 +32,7 @@ pub fn test(test_config: TestConfig, test: StateTestCase) -> TestExecutionResult
         .spawn(move || test_run(&test_config, &test))
         .unwrap();
 
-    // Wait for thread to join
+    // Wait for the thread to join
     child.join().unwrap()
 }
 
@@ -47,7 +40,7 @@ pub fn test(test_config: TestConfig, test: StateTestCase) -> TestExecutionResult
 fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResult {
     let mut tests_result = TestExecutionResult::new();
     for (spec, states) in &test.post_states {
-        // Run tests for specific EVM hard fork (Spec)
+        // Run tests for the specific EVM hard fork (Spec)
         if let Some(s) = test_config.spec.as_ref() {
             if s != spec {
                 continue;
@@ -76,7 +69,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
         if let Err(tx_err) = vicinity {
             tests_result.total += states.len() as u64;
             let h = states.first().unwrap().hash;
-            // if vicinity could not be computed then the transaction was invalid so we simply
+            // if vicinity could not be computed, then the transaction was invalid, so we simply
             // check the original state and move on
             let (is_valid_hash, actual_hash) = original_state.check_valid_hash(&h);
             if !is_valid_hash {
@@ -98,7 +91,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 continue;
             }
             assert_vicinity_validation(&tx_err, states, spec, test_config);
-            // As it's expected validation error - skip the test run
+            // As it's an expected validation error-skip the test run
             continue;
         }
 
@@ -108,8 +101,8 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
         let caller_balance = original_state.caller_balance(caller);
         // EIP-3607
         let caller_code = original_state.caller_code(caller);
-        // EIP-7702 - check if it's delegated designation. If it's delegation designation then
-        // even if `caller_code` is non-empty transaction should be executed.
+        // EIP-7702 - check if it's delegated designation. If it's a delegation designation, then,
+        // even if `caller_code` is non-empty, the transaction should be executed.
         let is_delegated = original_state.is_delegated(caller);
 
         for (i, state) in states.iter().enumerate() {
@@ -178,7 +171,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             let access_list = test.transaction.get_access_list(state);
 
             // EIP-3607: Reject transactions from senders with deployed code
-            // EIP-7702: Accept transaction even if caller has code.
+            // EIP-7702: Accept transaction even if the caller has code.
             if caller_code.is_empty() || is_delegated {
                 let value = test.transaction.get_value(state);
                 if let Some(to) = test.transaction.to {
@@ -190,7 +183,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         access_list.clone(),
                     );
 
-                    // Exit reason for Call do not analyzed as it mostly do not expect exceptions
+                    // Exit reason for the call is not analyzed as it mostly does not expect exceptions
                     let _reason = executor.transact_call(
                         caller,
                         to,
@@ -258,17 +251,17 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             let (values, logs) = executor.into_state().deconstruct();
 
             backend.apply(values, logs, true);
-            // It's special case for hard forks: London or before London
-            // According to EIP-160 empty account should be removed. But in that particular test - original test state
-            // contains account 0x03 (it's precompile), and when precompile 0x03 was called it exit with
-            // OutOfGas result. And after exit of substate account not marked as touched, as exit reason
-            // is not success. And it means, that it don't appear in Apply::Modify, then as untouched it
-            // can't be removed by backend.apply event. In that particular case we should manage it manually.
+            // It's a special case for hard forks: London and before,
+            // According to EIP-160, an empty account should be removed. But in that particular test - original test state
+            // contains account 0x03 (it's a precompile), and when precompile 0x03 was called it exit with
+            // OutOfGas result. And after exit of the substate, the account is not marked as touched, as exit reason
+            // is not a success. And it means that it doesn't appear in Apply::Modify, then as untouched it
+            // can't be removed by the backend.apply event. In that particular case we should manage it manually.
             // NOTE: it's not realistic situation for real life flow.
             if *spec <= Spec::London && test_config.name == "failed_tx_xcf416c53" {
                 let state = backend.state_mut();
                 state.retain(|addr, account| {
-                    // Check is account empty for precompile 0x03
+                    // Check if the account is empty for the precompile `0x03`
                     !(addr == &H160::from_low_u64_be(3)
                         && account.balance == U256_ZERO
                         && account.nonce == U256_ZERO

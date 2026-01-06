@@ -141,9 +141,9 @@ pub struct PrecompileStandaloneData {
     pub output: String,
 }
 
-/// Standalone data for precompile tests.
+/// Standalone data for the precompile tests.
 /// It contains input data for precompile and expected
-/// output after precompile execution.
+/// output after the precompile execution.
 #[cfg(feature = "dump-state")]
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct PrecompileStandalone {
@@ -268,9 +268,9 @@ fn dump_precompile_state(
         });
 
         if let Ok(serialized) = serde_json::to_string(&data) {
-            fs::write(file_name, serialized).expect("Unable to write file");
+            fs::write(file_name, serialized).expect("Unable to write the file");
         } else {
-            panic!("Unable to parse file");
+            panic!("Unable to parse the file");
         }
     }
 }

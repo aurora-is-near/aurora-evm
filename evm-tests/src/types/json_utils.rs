@@ -2,6 +2,7 @@ use primitive_types::{H160, H256, U256};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::str::FromStr;
 
 /// Removes the "0x" prefix from a string if it exists.
@@ -11,64 +12,69 @@ pub fn strip_0x_prefix(s: &str) -> &str {
 
 /// Converts a hexadecimal string into a `u64` value.
 /// Returns an error if the string length is greater than 16 or parsing fails.
-pub fn u64_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u64, D::Error> {
+pub fn u64_from_hex_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u64, D::Error> {
     if value.len() > 16 {
-        return Err(Error::custom(
-            format!("u64 value too big (length={})", value.len()).as_str(),
-        ));
+        return Err(Error::custom(format!(
+            "u64 value too big (length={})",
+            value.len()
+        )));
     }
 
-    u64::from_str_radix(value, 16)
-        .map_err(|e| Error::custom(format!("Invalid u64 value: {e}").as_str()))
+    u64::from_str_radix(value, 16).map_err(|e| convert_error::<D>(e, "u64"))
 }
 
 /// Converts a hexadecimal string into a `u8` value.
 /// Returns an error if the string length is greater than 16 or parsing fails.
-pub fn u8_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u8, D::Error> {
+pub fn u8_from_hex_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u8, D::Error> {
     if value.len() > 16 {
-        return Err(Error::custom(
-            format!("u8 value too big (length={})", value.len()).as_str(),
-        ));
+        return Err(Error::custom(format!(
+            "u8 value too big (length={})",
+            value.len()
+        )));
     }
 
-    u8::from_str_radix(value, 16)
-        .map_err(|e| Error::custom(format!("Invalid u8 value: {e}").as_str()))
+    u8::from_str_radix(value, 16).map_err(|e| convert_error::<D>(e, "u8"))
 }
 
 /// Converts a hexadecimal string into a `U256` value.
 /// Returns an error if the string length is greater than 64 or parsing fails.
-pub fn u256_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<U256, D::Error> {
+pub fn u256_from_hex_str<'de, D: Deserializer<'de>>(value: &str) -> Result<U256, D::Error> {
     if value.len() > 64 {
-        return Err(Error::custom(
-            format!("U256 value too big (length={})", value.len()).as_str(),
-        ));
+        return Err(Error::custom(format!(
+            "U256 value too big (length={})",
+            value.len()
+        )));
     }
 
-    U256::from_str_radix(value, 16)
-        .map_err(|e| Error::custom(format!("Invalid U256 value: {e}").as_str()))
+    U256::from_str_radix(value, 16).map_err(|e| convert_error::<D>(e, "U256"))
 }
 
 /// Converts a hexadecimal string into a `H160` value.
 /// Returns an error if the string length is greater than 40 or parsing fails.
-pub fn h160_from_str<'de, D: Deserializer<'de>>(value: &str) -> Result<H160, D::Error> {
+pub fn h160_from_hex_str<'de, D: Deserializer<'de>>(value: &str) -> Result<H160, D::Error> {
     if value.len() > 40 {
-        return Err(Error::custom(
-            format!("H160 value too big (length={})", value.len()).as_str(),
-        ));
+        return Err(Error::custom(format!(
+            "H160 value too big (length={})",
+            value.len()
+        )));
     }
-    H160::from_str(value).map_err(|e| Error::custom(format!("Invalid H160 value: {e}").as_str()))
+    H160::from_str(value).map_err(|e| convert_error::<D>(e, "H160"))
+}
+
+fn convert_error<'de, D: Deserializer<'de>>(error: impl Display, primitive: &str) -> D::Error {
+    Error::custom(format!("Invalid {primitive} value: {error}"))
 }
 
 /// Converts a `BTreeMap` with hexadecimal string keys and values into a `BTreeMap` with `U256` keys and values.
 /// The hexadecimal strings may optionally start with the "0x" prefix.
 /// Returns an error if any key or value cannot be parsed into a U256.
-pub fn btree_u256_u256_from_str<'de, D: Deserializer<'de>>(
+pub fn btree_u256_u256_from_hex_str<'de, D: Deserializer<'de>>(
     map_str: BTreeMap<String, String>,
 ) -> Result<BTreeMap<U256, U256>, D::Error> {
     let mut map = BTreeMap::new();
     for (k, v) in map_str {
-        let key = u256_from_str::<D>(strip_0x_prefix(&k))?;
-        let value = u256_from_str::<D>(strip_0x_prefix(&v))?;
+        let key = u256_from_hex_str::<D>(strip_0x_prefix(&k))?;
+        let value = u256_from_hex_str::<D>(strip_0x_prefix(&v))?;
         map.insert(key, value);
     }
     Ok(map)
@@ -85,8 +91,8 @@ where
 
     let mut map = BTreeMap::new();
     for (k, v) in map_str {
-        let key_u256 = u256_from_str::<D>(strip_0x_prefix(&k))?;
-        let value_u256 = u256_from_str::<D>(strip_0x_prefix(&v))?;
+        let key_u256 = u256_from_hex_str::<D>(strip_0x_prefix(&k))?;
+        let value_u256 = u256_from_hex_str::<D>(strip_0x_prefix(&v))?;
         let key = H256::from(key_u256.to_big_endian());
         let value = H256::from(value_u256.to_big_endian());
         map.insert(key, value);
@@ -100,7 +106,7 @@ where
 pub fn deserialize_h160_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<H160, D::Error> {
-    h160_from_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))
+    h160_from_hex_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))
 }
 
 /// Deserializes a hexadecimal string into an `H256` hash by converting it to `U256` first.
@@ -108,7 +114,7 @@ pub fn deserialize_h160_from_str<'de, D: Deserializer<'de>>(
 pub fn deserialize_h256_from_u256_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<H256, D::Error> {
-    let v = u256_from_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))?;
+    let v = u256_from_hex_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))?;
     Ok(H256::from(v.to_big_endian()))
 }
 
@@ -117,7 +123,7 @@ pub fn deserialize_h256_from_u256_str<'de, D: Deserializer<'de>>(
 pub fn deserialize_u256_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<U256, D::Error> {
-    u256_from_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))
+    u256_from_hex_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))
 }
 
 /// Deserializes a hexadecimal string into a `u64` value.
@@ -126,7 +132,7 @@ pub fn deserialize_u256_from_str<'de, D: Deserializer<'de>>(
 pub fn deserialize_u64_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<u64, D::Error> {
-    u64_from_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))
+    u64_from_hex_str::<D>(strip_0x_prefix(&String::deserialize(deserializer)?))
 }
 
 /// Deserializes an optional hexadecimal string into an optional `H256` hash.
@@ -135,7 +141,7 @@ pub fn deserialize_h256_from_u256_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<H256>, D::Error> {
     Option::<String>::deserialize(deserializer)?
-        .map(|s| u256_from_str::<D>(strip_0x_prefix(&s)).map(|v| H256::from(v.to_big_endian())))
+        .map(|s| u256_from_hex_str::<D>(strip_0x_prefix(&s)).map(|v| H256::from(v.to_big_endian())))
         .transpose()
 }
 
@@ -146,7 +152,7 @@ pub fn deserialize_u256_from_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<U256>, D::Error> {
     Option::<String>::deserialize(deserializer)?
-        .map(|s| u256_from_str::<D>(strip_0x_prefix(&s)))
+        .map(|s| u256_from_hex_str::<D>(strip_0x_prefix(&s)))
         .transpose()
 }
 
@@ -156,7 +162,7 @@ pub fn deserialize_u64_from_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<u64>, D::Error> {
     Option::<String>::deserialize(deserializer)?
-        .map(|s| u64_from_str::<D>(strip_0x_prefix(&s)))
+        .map(|s| u64_from_hex_str::<D>(strip_0x_prefix(&s)))
         .transpose()
 }
 
@@ -166,7 +172,7 @@ pub fn deserialize_u8_from_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<u8>, D::Error> {
     Option::<String>::deserialize(deserializer)?
-        .map(|s| u8_from_str::<D>(strip_0x_prefix(&s)))
+        .map(|s| u8_from_hex_str::<D>(strip_0x_prefix(&s)))
         .transpose()
 }
 
@@ -219,7 +225,7 @@ pub fn deserialize_btree_u256_u256_from_str_opt<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<BTreeMap<U256, U256>>, D::Error> {
     Option::<BTreeMap<String, String>>::deserialize(deserializer)?
-        .map(btree_u256_u256_from_str::<D>)
+        .map(btree_u256_u256_from_hex_str::<D>)
         .transpose()
 }
 
@@ -229,7 +235,7 @@ pub fn deserialize_vec_u256_from_str<'de, D: Deserializer<'de>>(
 ) -> Result<Vec<U256>, D::Error> {
     let vec = Vec::<String>::deserialize(deserializer)?;
     vec.into_iter()
-        .map(|s| u256_from_str::<D>(strip_0x_prefix(&s)))
+        .map(|s| u256_from_hex_str::<D>(strip_0x_prefix(&s)))
         .collect()
 }
 
@@ -241,7 +247,7 @@ pub fn deserialize_vec_h256_from_str<'de, D: Deserializer<'de>>(
     let vec = Vec::<String>::deserialize(deserializer)?;
     vec.into_iter()
         .map(|s| {
-            let v = u256_from_str::<D>(strip_0x_prefix(&s))?;
+            let v = u256_from_hex_str::<D>(strip_0x_prefix(&s))?;
             Ok(H256::from(v.to_big_endian()))
         })
         .collect()
@@ -254,6 +260,6 @@ pub fn deserialize_h160_from_str_opt<'de, D: Deserializer<'de>>(
 ) -> Result<Option<H160>, D::Error> {
     Option::<String>::deserialize(deserializer)?
         .filter(|s| !s.is_empty())
-        .map(|s| h160_from_str::<D>(strip_0x_prefix(&s)))
+        .map(|s| h160_from_hex_str::<D>(strip_0x_prefix(&s)))
         .transpose()
 }

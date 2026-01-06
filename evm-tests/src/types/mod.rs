@@ -94,7 +94,7 @@ impl StateTestCase {
             },
         );
 
-        // gas price cannot be lower than base fee
+        // the gas price cannot be lower than the base fee
         if gas_price < block_base_fee_per_gas {
             return Err(InvalidTxReason::GasPriceLessThenBlockBaseFee);
         }

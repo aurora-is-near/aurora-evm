@@ -1,6 +1,6 @@
 use super::json_utils::{
     btree_h256_h256_from_str, deserialize_bytes_from_str_opt, deserialize_u256_from_str,
-    h160_from_str, strip_0x_prefix,
+    h160_from_hex_str, strip_0x_prefix,
 };
 use aurora_evm::backend::MemoryAccount;
 use aurora_evm::executor::stack::Authorization;
@@ -74,7 +74,7 @@ impl<'de> Deserialize<'de> for AccountsState {
         let map: BTreeMap<String, StateAccount> = Deserialize::deserialize(deserializer)?;
         let mut inner = BTreeMap::new();
         for (k, v) in map {
-            let address = h160_from_str::<D>(strip_0x_prefix(&k))?;
+            let address = h160_from_hex_str::<D>(strip_0x_prefix(&k))?;
             inner.insert(address, v);
         }
         Ok(Self(inner))
