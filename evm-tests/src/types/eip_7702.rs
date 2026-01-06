@@ -1,8 +1,8 @@
 //! EIP-7702 - Prague hard fork
 #![allow(clippy::missing_errors_doc)]
 
-use crate::types::ecrecover::ecrecover;
-use aurora_evm::ExitError;
+use aurora_engine_precompiles::secp256k1::ecrecover;
+use aurora_engine_precompiles::ExitError;
 use primitive_types::{H160, H256, U256};
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
@@ -77,7 +77,7 @@ impl SignedAuthorization {
 
     pub fn recover_address(&self) -> Result<H160, ExitError> {
         let auth = Authorization::new(self.chain_id, self.address, self.nonce).signature_hash();
-        ecrecover(auth, &vrs_to_arr(self.v, self.r, self.s))
+        ecrecover(auth, &vrs_to_arr(self.v, self.r, self.s)).map(|a| a.raw())
     }
 }
 

@@ -13,7 +13,6 @@ use std::collections::BTreeMap;
 
 pub mod account_state;
 pub mod blob;
-mod ecrecover;
 pub mod eip_4844;
 pub mod eip_7623;
 pub mod eip_7702;
