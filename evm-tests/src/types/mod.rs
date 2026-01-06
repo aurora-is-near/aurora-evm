@@ -95,7 +95,7 @@ impl StateTestCase {
 
         // the gas price cannot be lower than the base fee
         if gas_price < block_base_fee_per_gas {
-            return Err(InvalidTxReason::GasPriceLessThenBlockBaseFee);
+            return Err(InvalidTxReason::GasPriceLessThanBlockBaseFee);
         }
 
         let blob_hashes = tx.blob_versioned_hashes.clone();
@@ -258,7 +258,7 @@ pub enum InvalidTxReason {
     OutOfFund,
     GasLimitReached,
     PriorityFeeTooLarge,
-    GasPriceLessThenBlockBaseFee,
+    GasPriceLessThanBlockBaseFee,
     BlobCreateTransaction,
     BlobVersionNotSupported,
     TooManyBlobs,

@@ -46,7 +46,7 @@ pub fn assert_vicinity_validation(
                     );
                 }
             }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+            InvalidTxReason::GasPriceLessThanBlockBaseFee => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
                         panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
@@ -76,7 +76,7 @@ pub fn assert_vicinity_validation(
                     );
                 }
             }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+            InvalidTxReason::GasPriceLessThanBlockBaseFee => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
                         panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
@@ -105,7 +105,7 @@ pub fn assert_vicinity_validation(
                     );
                 }
             }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+            InvalidTxReason::GasPriceLessThanBlockBaseFee => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
                         panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
@@ -137,7 +137,7 @@ pub fn assert_vicinity_validation(
                     );
                 }
             }
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+            InvalidTxReason::GasPriceLessThanBlockBaseFee => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
                         panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
@@ -171,7 +171,7 @@ pub fn assert_vicinity_validation(
                 }
             }
 
-            InvalidTxReason::GasPriceLessThenBlockBaseFee => {
+            InvalidTxReason::GasPriceLessThanBlockBaseFee => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
                         panic!("expected error message for test: {reason:?} [{spec:?}] {name}:{i}\n{file_name:?}")
