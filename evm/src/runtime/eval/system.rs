@@ -27,7 +27,7 @@ pub fn sha3<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     };
 
     let ret = Keccak256::digest(data.as_slice());
-    push_h256!(runtime, H256::from_slice(ret.as_slice()));
+    push_h256!(runtime, H256::from_slice(<[u8; 32]>::from(ret).as_slice()));
 
     Control::Continue
 }
@@ -204,7 +204,7 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
         .resize_offset(memory_offset, len));
     if data_offset
         .checked_add(len.into())
-        .map_or(true, |l| l > U256::from(runtime.return_data_buffer.len()))
+        .is_none_or(|l| l > U256::from(runtime.return_data_buffer.len()))
     {
         return Control::Exit(ExitError::OutOfOffset.into());
     }
@@ -432,7 +432,7 @@ pub fn create<H: Handler>(runtime: &mut Runtime, is_create2: bool, handler: &mut
 
     let scheme = if is_create2 {
         pop_h256!(runtime, salt);
-        let code_hash = H256::from_slice(Keccak256::digest(&code).as_slice());
+        let code_hash = H256::from_slice(<[u8; 32]>::from(Keccak256::digest(&code)).as_slice());
         CreateScheme::Create2 {
             caller: runtime.context.address,
             salt,

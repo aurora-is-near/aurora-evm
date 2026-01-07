@@ -1,0 +1,39 @@
+[package]
+name = "aurora-evm-jsontests"
+version.workspace = true
+license = "MIT"
+authors.workspace = true
+description = "Aurora EVM json tests"
+repository.workspace = true
+keywords.workspace = true
+edition.workspace = true
+publish = false
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+[dependencies]
+aurora-engine-modexp = { git = "https://github.com/aurora-is-near/aurora-engine.git", tag = "3.10.0-rc.1" }
+aurora-engine-precompiles = { git = "https://github.com/aurora-is-near/aurora-engine.git", tag = "3.10.0-rc.1" }
+aurora-evm.workspace = true
+bytecount = "0.6"
+clap = { version = "4.5", features = ["cargo"] }
+c-kzg = "1.0"
+derive_more = { version = "2", features = ["full"] }
+ethereum = "0.18"
+hex = "0.4"
+hex-literal = "1.1"
+libsecp256k1 = "0.7"
+primitive-types = { workspace = true, features = ["serde"] }
+rlp.workspace = true
+sha2 = { version = "0.10.0", default-features = false }
+sha3.workspace = true
+serde.workspace = true
+serde_json = "1.0"
+
+[features]
+enable-slow-tests = []
+print-debug = ["aurora-evm/print-debug"]
+dump-state = ["aurora-evm/with-serde"]
