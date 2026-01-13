@@ -97,3 +97,68 @@ pub fn sar(shift: U256, value: U256) -> U256 {
         }
     }
 }
+
+/// EIP-7939: CLZ - Count Leading Zeros. Osaka hard fork.
+#[inline]
+pub fn clz(op1: U256) -> U256 {
+    U256::from(op1.leading_zeros())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[allow(clippy::cognitive_complexity)]
+    #[test]
+    fn test_clz() {
+        // Zero case (EIP spec: returns 256)
+        assert_eq!(clz(U256::zero()), U256::from(256));
+
+        // Max value and MSB cases
+        assert_eq!(clz(U256::MAX), U256::zero());
+        assert_eq!(clz(U256::one() << 255), U256::zero());
+        assert_eq!(clz((U256::one() << 255) | U256::one()), U256::zero());
+
+        // High bit boundaries
+        assert_eq!(clz(U256::one() << 254), U256::from(1));
+        assert_eq!(clz((U256::one() << 255) - U256::one()), U256::from(1)); // 0x7FFFF...
+        assert_eq!(clz(U256::MAX >> 1), U256::from(1));
+
+        // Random high shifts
+        assert_eq!(clz(U256::one() << 250), U256::from(5));
+
+        // 192 bit boundary (Transition from word[3] to word[2])
+        assert_eq!(clz(U256::one() << 192), U256::from(63));
+        assert_eq!(clz(U256::one() << 191), U256::from(64));
+        assert_eq!(clz(U256::from(u64::MAX)), U256::from(192)); // Only lowest 64 bits set
+
+        // 128 bit boundary (Transition from word[2] to word[1])
+        assert_eq!(clz(U256::one() << 128), U256::from(127));
+        assert_eq!(clz(U256::one() << 127), U256::from(128));
+        assert_eq!(clz(U256::from(u128::MAX)), U256::from(128));
+        assert_eq!(clz(U256::MAX >> 128), U256::from(128));
+
+        // 64 bit boundary (Transition from word[1] to word[0])
+        assert_eq!(clz(U256::one() << 64), U256::from(191));
+        assert_eq!(clz(U256::one() << 63), U256::from(192));
+
+        // Small numbers and masks
+        assert_eq!(clz(U256::from(0xFFFF)), U256::from(240));
+        assert_eq!(clz(U256::from(0x100)), U256::from(247));
+        assert_eq!(clz(U256::from(0xFF)), U256::from(248));
+
+        // Low bit shifts
+        assert_eq!(clz(U256::one() << 20), U256::from(235));
+        assert_eq!(clz(U256::one() << 10), U256::from(245));
+
+        // Very small numbers
+        assert_eq!(clz(U256::from(16)), U256::from(251));
+        assert_eq!(clz(U256::from(15)), U256::from(252));
+        assert_eq!(clz(U256::from(8)), U256::from(252));
+        assert_eq!(clz(U256::from(7)), U256::from(253));
+        assert_eq!(clz(U256::from(4)), U256::from(253));
+        assert_eq!(clz(U256::from(3)), U256::from(254));
+        assert_eq!(clz(U256::from(2)), U256::from(254));
+        assert_eq!(clz(U256::from(1)), U256::from(255));
+    }
+}

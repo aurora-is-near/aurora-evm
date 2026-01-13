@@ -254,6 +254,8 @@ pub struct Config {
     pub has_restricted_selfdestruct: bool,
     /// EIP-7702
     pub has_authorization_list: bool,
+    /// EIP-7939
+    pub has_clz: bool,
     /// EIP-7702
     pub gas_per_empty_account_cost: u64,
     /// EIP-7702
@@ -323,6 +325,7 @@ impl Config {
             has_mcopy: false,
             has_restricted_selfdestruct: false,
             has_authorization_list: false,
+            has_clz: false,
             gas_per_empty_account_cost: 0,
             gas_per_auth_base_cost: 0,
             has_floor_gas: false,
@@ -388,6 +391,7 @@ impl Config {
             has_mcopy: false,
             has_restricted_selfdestruct: false,
             has_authorization_list: false,
+            has_clz: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
             has_floor_gas: false,
@@ -431,6 +435,12 @@ impl Config {
         Self::config_with_derived_values(DerivedConfigInputs::prague())
     }
 
+    /// Osaka hard fork configuration.
+    #[must_use]
+    pub const fn osaka() -> Self {
+        Self::config_with_derived_values(DerivedConfigInputs::osaka())
+    }
+
     const fn config_with_derived_values(inputs: DerivedConfigInputs) -> Self {
         let DerivedConfigInputs {
             gas_storage_read_warm,
@@ -448,6 +458,7 @@ impl Config {
             has_mcopy,
             has_restricted_selfdestruct,
             has_authorization_list,
+            has_clz,
             gas_per_empty_account_cost,
             gas_per_auth_base_cost,
             has_floor_gas,
@@ -523,6 +534,7 @@ impl Config {
             has_mcopy,
             has_restricted_selfdestruct,
             has_authorization_list,
+            has_clz,
             gas_per_empty_account_cost,
             gas_per_auth_base_cost,
             has_floor_gas,
@@ -551,6 +563,7 @@ struct DerivedConfigInputs {
     has_mcopy: bool,
     has_restricted_selfdestruct: bool,
     has_authorization_list: bool,
+    has_clz: bool,
     gas_per_empty_account_cost: u64,
     gas_per_auth_base_cost: u64,
     has_floor_gas: bool,
@@ -575,6 +588,7 @@ impl DerivedConfigInputs {
             has_mcopy: false,
             has_restricted_selfdestruct: false,
             has_authorization_list: false,
+            has_clz: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
             has_floor_gas: false,
@@ -599,6 +613,7 @@ impl DerivedConfigInputs {
             has_mcopy: false,
             has_restricted_selfdestruct: false,
             has_authorization_list: false,
+            has_clz: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
             has_floor_gas: false,
@@ -623,6 +638,7 @@ impl DerivedConfigInputs {
             has_mcopy: false,
             has_restricted_selfdestruct: false,
             has_authorization_list: false,
+            has_clz: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
             has_floor_gas: false,
@@ -648,6 +664,7 @@ impl DerivedConfigInputs {
             has_mcopy: false,
             has_restricted_selfdestruct: false,
             has_authorization_list: false,
+            has_clz: false,
             gas_per_auth_base_cost: 0,
             gas_per_empty_account_cost: 0,
             has_floor_gas: false,
@@ -672,6 +689,12 @@ impl DerivedConfigInputs {
         config.gas_per_auth_base_cost = 12500;
         config.has_floor_gas = true;
         config.total_cost_floor_per_token = 10;
+        config
+    }
+
+    const fn osaka() -> Self {
+        let mut config = Self::prague();
+        config.has_clz = true;
         config
     }
 }
