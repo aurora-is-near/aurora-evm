@@ -83,6 +83,7 @@ fn eval_table<H: InterpreterHandler>(
         table_elem!(SHL, state, op2_u256_fn!(state, self::bitwise::shl));
         table_elem!(SHR, state, op2_u256_fn!(state, self::bitwise::shr));
         table_elem!(SAR, state, op2_u256_fn!(state, self::bitwise::sar));
+        table_elem!(CLZ, state, op1_u256_fn!(state, self::bitwise::clz));
         table_elem!(POP, state, self::misc::pop(state));
         table_elem!(PC, state, position, self::misc::pc(state, position));
         table_elem!(MSIZE, state, self::misc::msize(state));

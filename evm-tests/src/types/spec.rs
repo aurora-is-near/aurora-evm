@@ -79,6 +79,7 @@ impl Spec {
             Self::Shanghai => Some(Config::shanghai()),
             Self::Cancun => Some(Config::cancun()),
             Self::Prague => Some(Config::prague()),
+            Self::Osaka => Some(Config::osaka()),
             _ => None,
         }
     }

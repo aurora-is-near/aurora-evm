@@ -2,7 +2,7 @@ mod kzg;
 
 use crate::precompiles::kzg::Kzg;
 use crate::types::Spec;
-use aurora_engine_modexp::AuroraModExp;
+use aurora_engine_precompiles::modexp::AuroraModExp;
 use aurora_engine_precompiles::{
     alt_bn256::{Bn256Add, Bn256Mul, Bn256Pair},
     blake2::Blake2F,
@@ -13,7 +13,7 @@ use aurora_engine_precompiles::{
     identity::Identity,
     modexp::ModExp,
     secp256k1::ECRecover,
-    Berlin, Byzantium, EthGas, Istanbul, Precompile,
+    Berlin, Byzantium, EthGas, Istanbul, Osaka, Precompile,
 };
 use aurora_evm::executor::stack::{
     PrecompileFailure, PrecompileHandle, PrecompileOutput, PrecompileSet,
@@ -52,7 +52,8 @@ impl Precompiles {
             | Spec::Istanbul => Self::new_istanbul(),
             Spec::Berlin | Spec::London | Spec::Merge | Spec::Shanghai => Self::new_berlin(),
             Spec::Cancun => Self::new_cancun(),
-            Spec::Prague | Spec::Osaka => Self::new_prague(),
+            Spec::Prague => Self::new_prague(),
+            Spec::Osaka => Self::new_osaka(),
         }
     }
 
@@ -122,6 +123,44 @@ impl Precompiles {
 
     pub fn new_prague() -> Self {
         let mut map = Self::new_cancun().0;
+        map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
+        map.insert(BlsG1Msm::ADDRESS.raw(), Box::new(BlsG1Msm));
+        map.insert(BlsG2Add::ADDRESS.raw(), Box::new(BlsG2Add));
+        map.insert(BlsG2Msm::ADDRESS.raw(), Box::new(BlsG2Msm));
+        map.insert(BlsPairingCheck::ADDRESS.raw(), Box::new(BlsPairingCheck));
+        map.insert(BlsMapFpToG1::ADDRESS.raw(), Box::new(BlsMapFpToG1));
+        map.insert(BlsMapFp2ToG2::ADDRESS.raw(), Box::new(BlsMapFp2ToG2));
+        Self(map)
+    }
+
+    pub fn new_osaka() -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(
+            ECRecover::ADDRESS.raw(),
+            Box::new(ECRecover) as Box<dyn Precompile>,
+        );
+        map.insert(SHA256::ADDRESS.raw(), Box::new(SHA256));
+        map.insert(RIPEMD160::ADDRESS.raw(), Box::new(RIPEMD160));
+        map.insert(Identity::ADDRESS.raw(), Box::new(Identity));
+        map.insert(
+            ModExp::<Osaka, AuroraModExp>::ADDRESS.raw(),
+            Box::new(ModExp::<Osaka, AuroraModExp>::new()),
+        );
+        map.insert(
+            Bn256Add::<Istanbul>::ADDRESS.raw(),
+            Box::new(Bn256Add::<Istanbul>::new()),
+        );
+        map.insert(
+            Bn256Mul::<Istanbul>::ADDRESS.raw(),
+            Box::new(Bn256Mul::<Istanbul>::new()),
+        );
+        map.insert(
+            Bn256Pair::<Istanbul>::ADDRESS.raw(),
+            Box::new(Bn256Pair::<Istanbul>::new()),
+        );
+        map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
+
+        map.insert(Kzg::ADDRESS, Box::new(Kzg));
         map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
         map.insert(BlsG1Msm::ADDRESS.raw(), Box::new(BlsG1Msm));
         map.insert(BlsG2Add::ADDRESS.raw(), Box::new(BlsG2Add));
