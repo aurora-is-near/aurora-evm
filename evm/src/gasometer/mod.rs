@@ -353,8 +353,13 @@ impl<'config> Gasometer<'config> {
             if config.has_floor_gas {
                 // According to EIP-2028: non-zero byte = 16, zero-byte = 4
                 // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
-                let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
-                tokens_in_calldata * config.total_cost_floor_per_token + config.gas_floor_base_cost
+                let tokens_in_calldata = non_zero_data_len
+                    .saturating_mul(4)
+                    .saturating_add(zero_data_len) as u64;
+
+                tokens_in_calldata
+                    .saturating_mul(config.total_cost_floor_per_token)
+                    .saturating_add(config.gas_floor_base_cost)
             } else {
                 0
             }
@@ -369,12 +374,33 @@ impl<'config> Gasometer<'config> {
                 authorization_list_len,
             } => {
                 #[deny(clippy::let_and_return)]
-                let cost = config.gas_transaction_call
-                    + zero_data_len as u64 * config.gas_transaction_zero_data
-                    + non_zero_data_len as u64 * config.gas_transaction_non_zero_data
-                    + access_list_address_len as u64 * config.gas_access_list_address
-                    + access_list_storage_len as u64 * config.gas_access_list_storage_key
-                    + authorization_list_len as u64 * config.gas_per_empty_account_cost;
+                let cost = config
+                    .gas_transaction_call
+                    .saturating_add(
+                        config
+                            .gas_transaction_zero_data
+                            .saturating_mul(zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_transaction_non_zero_data
+                            .saturating_mul(non_zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_address
+                            .saturating_mul(access_list_address_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_storage_key
+                            .saturating_mul(access_list_storage_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_per_empty_account_cost
+                            .saturating_mul(authorization_list_len as u64),
+                    );
                 let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
 
                 (cost, floor_gas)
@@ -386,14 +412,31 @@ impl<'config> Gasometer<'config> {
                 access_list_storage_len,
                 initcode_cost,
             } => {
-                let mut cost = config.gas_transaction_create
-                    + zero_data_len as u64 * config.gas_transaction_zero_data
-                    + non_zero_data_len as u64 * config.gas_transaction_non_zero_data
-                    + access_list_address_len as u64 * config.gas_access_list_address
-                    + access_list_storage_len as u64 * config.gas_access_list_storage_key;
+                let mut cost = config
+                    .gas_transaction_create
+                    .saturating_add(
+                        config
+                            .gas_transaction_zero_data
+                            .saturating_mul(zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_transaction_non_zero_data
+                            .saturating_mul(non_zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_address
+                            .saturating_mul(access_list_address_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_storage_key
+                            .saturating_mul(access_list_storage_len as u64),
+                    );
 
                 if config.max_initcode_size.is_some() {
-                    cost += initcode_cost;
+                    cost = cost.saturating_add(initcode_cost);
                 }
 
                 let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
