@@ -343,10 +343,24 @@ impl<'config> Gasometer<'config> {
     /// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
     /// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
     #[must_use]
+    #[allow(clippy::as_conversions)] // NOTE: in that context usize->u64 `as_conversions` is safe
     pub const fn intrinsic_gas_and_gas_floor(cost: TransactionCost, config: &Config) -> (u64, u64) {
+        const fn floor_gas_calc(
+            config: &Config,
+            zero_data_len: usize,
+            non_zero_data_len: usize,
+        ) -> u64 {
+            if config.has_floor_gas {
+                // According to EIP-2028: non-zero byte = 16, zero-byte = 4
+                // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
+                let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
+                tokens_in_calldata * config.total_cost_floor_per_token + config.gas_floor_base_cost
+            } else {
+                0
+            }
+        }
+
         match cost {
-            // NOTE: in that context usize->u64 `as_conversions` is safe
-            #[allow(clippy::as_conversions)]
             TransactionCost::Call {
                 zero_data_len,
                 non_zero_data_len,
@@ -361,21 +375,10 @@ impl<'config> Gasometer<'config> {
                     + access_list_address_len as u64 * config.gas_access_list_address
                     + access_list_storage_len as u64 * config.gas_access_list_storage_key
                     + authorization_list_len as u64 * config.gas_per_empty_account_cost;
-
-                let floor_gas = if config.has_floor_gas {
-                    // According to EIP-2028: non-zero byte = 16, zero-byte = 4
-                    // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
-                    let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
-                    tokens_in_calldata * config.total_cost_floor_per_token
-                        + config.gas_transaction_call
-                } else {
-                    0
-                };
+                let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
 
                 (cost, floor_gas)
             }
-            // NOTE: in that context usize->u64 `as_conversions` is safe
-            #[allow(clippy::as_conversions)]
             TransactionCost::Create {
                 zero_data_len,
                 non_zero_data_len,
@@ -388,19 +391,12 @@ impl<'config> Gasometer<'config> {
                     + non_zero_data_len as u64 * config.gas_transaction_non_zero_data
                     + access_list_address_len as u64 * config.gas_access_list_address
                     + access_list_storage_len as u64 * config.gas_access_list_storage_key;
+
                 if config.max_initcode_size.is_some() {
                     cost += initcode_cost;
                 }
 
-                let floor_gas = if config.has_floor_gas {
-                    // According to EIP-2028: non-zero byte = 16, zero-byte = 4
-                    // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
-                    let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
-                    tokens_in_calldata * config.total_cost_floor_per_token
-                        + config.gas_transaction_call
-                } else {
-                    0
-                };
+                let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
 
                 (cost, floor_gas)
             }
