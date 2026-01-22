@@ -319,6 +319,8 @@ impl<'config> Gasometer<'config> {
         Ok(())
     }
 
+    /// Calculate intrinsic gas and gas floor based on transaction data.
+    /// Returns intrinsic gas cost and gas floor.
     #[must_use]
     pub fn calculate_intrinsic_gas_and_gas_floor(
         data: &[u8],
