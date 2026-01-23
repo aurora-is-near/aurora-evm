@@ -173,7 +173,7 @@ pub struct Config {
     /// Gas paid for a contract creation transaction.
     pub gas_transaction_create: u64,
     /// Gas paid for a message call transaction.
-    pub gas_transaction_call: u64,
+    pub gas_transaction_call: u64, // TODO: Rename in 3.0.0 because the constant is related not to transaction call only.
     /// Gas paid for zero data in a transaction.
     pub gas_transaction_zero_data: u64,
     /// Gas paid for non-zero data in a transaction.
