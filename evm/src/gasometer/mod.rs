@@ -359,7 +359,7 @@ impl<'config> Gasometer<'config> {
 
                 tokens_in_calldata
                     .saturating_mul(config.total_cost_floor_per_token)
-                    .saturating_add(config.gas_floor_base_cost)
+                    .saturating_add(config.gas_transaction_call)
             } else {
                 0
             }
