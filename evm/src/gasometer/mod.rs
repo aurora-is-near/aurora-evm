@@ -319,17 +319,53 @@ impl<'config> Gasometer<'config> {
         Ok(())
     }
 
-    /// Record transaction cost.
+    /// Calculate intrinsic gas and gas floor based on transaction data.
+    /// Returns intrinsic gas cost and gas floor.
+    #[must_use]
+    pub fn calculate_intrinsic_gas_and_gas_floor(
+        data: &[u8],
+        access_list: &[(H160, Vec<H256>)],
+        authorization_list_len: usize,
+        config: &Config,
+        is_contract_creation: bool,
+    ) -> (u64, u64) {
+        let cost = if is_contract_creation {
+            create_transaction_cost(data, access_list)
+        } else {
+            call_transaction_cost(data, access_list, authorization_list_len)
+        };
+        Self::intrinsic_gas_and_gas_floor(cost, config)
+    }
+
+    /// Calculate intrinsic gas and gas floor based on `TransactionCost` type and config.
+    /// Returns intrinsic gas cost and gas floor.
     /// Related EIPs:
     /// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
     /// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
-    ///
-    /// # Errors
-    /// Return `ExitError`
-    pub fn record_transaction(&mut self, cost: TransactionCost) -> Result<(), ExitError> {
-        let gas_cost = match cost {
-            // NOTE: in that context usize->u64 `as_conversions` is safe
-            #[allow(clippy::as_conversions)]
+    #[must_use]
+    #[allow(clippy::as_conversions)] // NOTE: in that context usize->u64 `as_conversions` is safe
+    pub const fn intrinsic_gas_and_gas_floor(cost: TransactionCost, config: &Config) -> (u64, u64) {
+        const fn floor_gas_calc(
+            config: &Config,
+            zero_data_len: usize,
+            non_zero_data_len: usize,
+        ) -> u64 {
+            if config.has_floor_gas {
+                // According to EIP-2028: non-zero byte = 16, zero-byte = 4
+                // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
+                let tokens_in_calldata = non_zero_data_len
+                    .saturating_mul(4)
+                    .saturating_add(zero_data_len) as u64;
+
+                tokens_in_calldata
+                    .saturating_mul(config.total_cost_floor_per_token)
+                    .saturating_add(config.gas_transaction_call)
+            } else {
+                0
+            }
+        }
+
+        match cost {
             TransactionCost::Call {
                 zero_data_len,
                 non_zero_data_len,
@@ -338,22 +374,98 @@ impl<'config> Gasometer<'config> {
                 authorization_list_len,
             } => {
                 #[deny(clippy::let_and_return)]
-                let cost = self.config.gas_transaction_call
-                    + zero_data_len as u64 * self.config.gas_transaction_zero_data
-                    + non_zero_data_len as u64 * self.config.gas_transaction_non_zero_data
-                    + access_list_address_len as u64 * self.config.gas_access_list_address
-                    + access_list_storage_len as u64 * self.config.gas_access_list_storage_key
-                    + authorization_list_len as u64 * self.config.gas_per_empty_account_cost;
+                let cost = config
+                    .gas_transaction_call
+                    .saturating_add(
+                        config
+                            .gas_transaction_zero_data
+                            .saturating_mul(zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_transaction_non_zero_data
+                            .saturating_mul(non_zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_address
+                            .saturating_mul(access_list_address_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_storage_key
+                            .saturating_mul(access_list_storage_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_per_empty_account_cost
+                            .saturating_mul(authorization_list_len as u64),
+                    );
+                let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
 
-                if self.config.has_floor_gas {
-                    // According to EIP-2028: non-zero byte = 16, zero-byte = 4
-                    // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
-                    let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
-                    self.inner_mut()?.floor_gas = tokens_in_calldata
-                        * self.config.total_cost_floor_per_token
-                        + self.config.gas_transaction_call;
+                (cost, floor_gas)
+            }
+            TransactionCost::Create {
+                zero_data_len,
+                non_zero_data_len,
+                access_list_address_len,
+                access_list_storage_len,
+                initcode_cost,
+            } => {
+                let mut cost = config
+                    .gas_transaction_create
+                    .saturating_add(
+                        config
+                            .gas_transaction_zero_data
+                            .saturating_mul(zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_transaction_non_zero_data
+                            .saturating_mul(non_zero_data_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_address
+                            .saturating_mul(access_list_address_len as u64),
+                    )
+                    .saturating_add(
+                        config
+                            .gas_access_list_storage_key
+                            .saturating_mul(access_list_storage_len as u64),
+                    );
+
+                if config.max_initcode_size.is_some() {
+                    cost = cost.saturating_add(initcode_cost);
                 }
 
+                let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
+
+                (cost, floor_gas)
+            }
+        }
+    }
+
+    /// Verify transaction cost against gas limit and gas floor based on `TransactionCost` type.
+    /// Returns intrinsic gas cost.
+    /// For `force-debug` feature, it will log the transaction cost details.
+    /// Related EIPs:
+    /// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
+    /// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
+    ///
+    /// ## Errors
+    /// Return `ExitError` if gas limit is less than intrinsic gas or gas floor.
+    pub fn verify_transaction(&mut self, cost: TransactionCost) -> Result<(u64, u64), ExitError> {
+        let (gas_cost, floor_gas) = Self::intrinsic_gas_and_gas_floor(cost, self.config);
+        #[cfg(feature = "force-debug")]
+        match cost {
+            TransactionCost::Call {
+                zero_data_len,
+                non_zero_data_len,
+                access_list_address_len,
+                access_list_storage_len,
+                authorization_list_len,
+            } => {
                 log_gas!(
 					self,
 					"Record Call {} [gas_transaction_call: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}, authorization_list_len: {}]",
@@ -365,11 +477,7 @@ impl<'config> Gasometer<'config> {
 					access_list_storage_len,
 					authorization_list_len
 				);
-
-                cost
             }
-            // NOTE: in that context usize->u64 `as_conversions` is safe
-            #[allow(clippy::as_conversions)]
             TransactionCost::Create {
                 zero_data_len,
                 non_zero_data_len,
@@ -377,24 +485,6 @@ impl<'config> Gasometer<'config> {
                 access_list_storage_len,
                 initcode_cost,
             } => {
-                let mut cost = self.config.gas_transaction_create
-                    + zero_data_len as u64 * self.config.gas_transaction_zero_data
-                    + non_zero_data_len as u64 * self.config.gas_transaction_non_zero_data
-                    + access_list_address_len as u64 * self.config.gas_access_list_address
-                    + access_list_storage_len as u64 * self.config.gas_access_list_storage_key;
-                if self.config.max_initcode_size.is_some() {
-                    cost += initcode_cost;
-                }
-
-                if self.config.has_floor_gas {
-                    // According to EIP-2028: non-zero byte = 16, zero-byte = 4
-                    // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
-                    let tokens_in_calldata = (zero_data_len + non_zero_data_len * 4) as u64;
-                    self.inner_mut()?.floor_gas = tokens_in_calldata
-                        * self.config.total_cost_floor_per_token
-                        + self.config.gas_transaction_call;
-                }
-
                 log_gas!(
 					self,
 					"Record Create {} [gas_transaction_create: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}, initcode_cost: {}]",
@@ -406,18 +496,41 @@ impl<'config> Gasometer<'config> {
 					access_list_storage_len,
 					initcode_cost
 				);
-                cost
             }
-        };
+        }
+        if self.gas() < gas_cost {
+            self.inner = Err(ExitError::OutOfGas);
+            return Err(ExitError::OutOfGas);
+        }
+        // EIP-7623 gas floor check for gas_limit
+        // It's equivalent to checking: max(cas_cost, floor_gas). But as we need to check
+        // `config.has_floor_gas` anyway, we can do it this way to avoid an extra max() call.
+        if self.config.has_floor_gas && self.gas_limit() < floor_gas {
+            self.inner = Err(ExitError::OutOfGas);
+            return Err(ExitError::OutOfGas);
+        }
+
+        Ok((gas_cost, floor_gas))
+    }
+
+    /// Record transaction cost.
+    /// Related EIPs:
+    /// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
+    /// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
+    ///
+    /// # Errors
+    /// Return `ExitError`
+    pub fn record_transaction(&mut self, cost: TransactionCost) -> Result<(), ExitError> {
+        let (gas_cost, floor_gas) = self.verify_transaction(cost)?;
 
         event!(RecordTransaction {
             cost: gas_cost,
             snapshot: self.snapshot(),
         });
 
-        if self.gas() < gas_cost {
-            self.inner = Err(ExitError::OutOfGas);
-            return Err(ExitError::OutOfGas);
+        // EIP-7623 gas floor update
+        if self.config.has_floor_gas {
+            self.inner_mut()?.floor_gas = floor_gas;
         }
 
         self.inner_mut()?.used_gas += gas_cost;
