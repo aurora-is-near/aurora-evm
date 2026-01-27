@@ -1,0 +1,12 @@
+[package]
+name = "zk_evm"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+aurora-evm = { path = "../../../evm" }
+# aurora-evm-jsontests = { path = "../../../evm-test" }
+aurora-zk-evm-core = { path = "../../core" }
+risc0-zkvm = { version = "^3.0.4", default-features = false, features = ['std'] }
