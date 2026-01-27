@@ -160,7 +160,7 @@ impl Precompiles {
         );
         map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
 
-        map.insert(Kzg::ADDRESS, Box::new(Kzg));
+        // map.insert(Kzg::ADDRESS, Box::new(Kzg));
         map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
         map.insert(BlsG1Msm::ADDRESS.raw(), Box::new(BlsG1Msm));
         map.insert(BlsG2Add::ADDRESS.raw(), Box::new(BlsG2Add));

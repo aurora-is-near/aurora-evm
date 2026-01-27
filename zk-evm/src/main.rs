@@ -29,7 +29,7 @@ fn main() {
     receipt.verify(ZK_EVM_ID).unwrap();
 }
 
-fn execute_evm(tests_suit: RawTestCase) -> (Receipt, u32) {
+fn execute_evm(tests_suit: String) -> (Receipt, u32) {
     let env = ExecutorEnv::builder()
         .write(&tests_suit)
         .unwrap()
@@ -45,18 +45,17 @@ fn execute_evm(tests_suit: RawTestCase) -> (Receipt, u32) {
     (receipt, output)
 }
 
-fn get_tests_suite(file_name: &Path) -> RawTestCase {
+fn get_tests_suite(file_name: &Path) -> String {
     let file = File::open(file_name).expect("Open file failed");
     let reader = BufReader::new(file);
 
     // We parse the JSON test cases to verify is it deserialized correctly
     let _ = serde_json::from_reader::<_, HashMap<String, StateTestCase>>(reader)
         .expect("Parse test cases failed");
-    let data = std::fs::read_to_string(file_name).unwrap();
-    RawTestCase { data }
+    std::fs::read_to_string(file_name).unwrap()
 }
 
-fn run_cli() -> RawTestCase {
+fn run_cli() -> String {
     let matches = command!()
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
