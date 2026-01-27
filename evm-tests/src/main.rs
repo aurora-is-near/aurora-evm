@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
 pub mod state;
@@ -94,13 +94,13 @@ fn main() -> Result<(), String> {
             print_state: false,
         };
         let mut tests_result = TestExecutionResult::new();
-        for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
-            let path = Path::new(src_name);
-            assert!(path.exists(), "data source does not exist");
-            if path.is_file() {
-                run_vm_test_for_file(&verbose_output, path, &mut tests_result);
-            } else if path.is_dir() {
-                run_vm_test_for_dir(&verbose_output, path, &mut tests_result);
+        for src_path in matches.get_many::<PathBuf>("PATH").unwrap() {
+            assert!(src_path.exists(), "data source does not exist");
+
+            if src_path.is_file() {
+                run_vm_test_for_file(&verbose_output, src_path, &mut tests_result);
+            } else if src_path.is_dir() {
+                run_vm_test_for_dir(&verbose_output, src_path, &mut tests_result);
             }
         }
         println!("\nTOTAL: {}", tests_result.total);
@@ -124,27 +124,25 @@ fn main() -> Result<(), String> {
             print_state: matches.get_flag("print_state"),
         };
         let mut tests_result = TestExecutionResult::new();
-        for src_name in matches.get_many::<PathBuf>("PATH").unwrap() {
-            let path = Path::new(src_name);
-
+        for src_path in matches.get_many::<PathBuf>("PATH").unwrap() {
             assert!(
-                path.exists(),
+                src_path.exists(),
                 "data source does not exist: {}",
-                path.display()
+                src_path.display()
             );
-            if path.is_file() {
+            if src_path.is_file() {
                 run_test_for_file(
                     spec.as_ref(),
                     &verbose_output,
-                    path,
+                    src_path,
                     &mut tests_result,
                     test_name,
                 );
-            } else if path.is_dir() {
+            } else if src_path.is_dir() {
                 run_test_for_dir(
                     spec.as_ref(),
                     &verbose_output,
-                    path,
+                    src_path,
                     &mut tests_result,
                     test_name,
                 );
@@ -159,9 +157,9 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-fn run_vm_test_for_dir(
+fn run_vm_test_for_dir<P: AsRef<Path>>(
     verbose_output: &VerboseOutput,
-    dir_name: &Path,
+    dir_name: &P,
     tests_result: &mut TestExecutionResult,
 ) {
     for entry in fs::read_dir(dir_name).unwrap() {
@@ -173,26 +171,25 @@ fn run_vm_test_for_dir(
         }
         let path = entry.path();
         if path.is_dir() {
-            run_vm_test_for_dir(verbose_output, path.as_path(), tests_result);
+            run_vm_test_for_dir(verbose_output, &path, tests_result);
         } else {
-            run_vm_test_for_file(verbose_output, path.as_path(), tests_result);
+            run_vm_test_for_file(verbose_output, &path, tests_result);
         }
     }
 }
 
-fn run_vm_test_for_file(
+fn run_vm_test_for_file<P: AsRef<Path>>(
     verbose_output: &VerboseOutput,
-    file_name: &Path,
+    file_path: &P,
     tests_result: &mut TestExecutionResult,
 ) {
+    let file_name = file_path.as_ref().to_str().unwrap();
+
     if verbose_output.verbose {
-        println!(
-            "RUN for: {}",
-            short_test_file_name(file_name.to_str().unwrap())
-        );
+        println!("RUN for: {}", short_test_file_name(file_name));
     }
 
-    let file = File::open(file_name).expect("Open file failed");
+    let file = File::open(file_path).expect("Open file failed");
     let reader = BufReader::new(file);
     let test_suite = serde_json::from_reader::<_, HashMap<String, VmTestCase>>(reader)
         .expect("Parse test cases failed");
@@ -206,18 +203,15 @@ fn run_vm_test_for_file(
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(file_name.to_str().unwrap())
+                    short_test_file_name(file_name)
                 );
             } else if verbose_output.verbose_failed {
-                println!(
-                    "RUN for: {}",
-                    short_test_file_name(file_name.to_str().unwrap())
-                );
+                println!("RUN for: {}", short_test_file_name(file_name));
                 println!("Tests count:\t{}", test_res.total);
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(file_name.to_str().unwrap())
+                    short_test_file_name(file_name)
                 );
             }
         } else if verbose_output.verbose {
@@ -228,15 +222,15 @@ fn run_vm_test_for_file(
     }
 }
 
-fn run_test_for_dir(
+fn run_test_for_dir<P: AsRef<Path>>(
     spec: Option<&Spec>,
     verbose_output: &VerboseOutput,
-    dir_name: &Path,
+    dir_name: &P,
     tests_result: &mut TestExecutionResult,
     test_name: Option<&String>,
 ) {
-    if should_skip(dir_name) {
-        println!("Skipping the test case {}", dir_name.display());
+    if should_skip(dir_name.as_ref()) {
+        println!("Skipping the test case {}", dir_name.as_ref().display());
         return;
     }
     for entry in fs::read_dir(dir_name).unwrap() {
@@ -248,45 +242,33 @@ fn run_test_for_dir(
         }
         let path = entry.path();
         if path.is_dir() {
-            run_test_for_dir(
-                spec,
-                verbose_output,
-                path.as_path(),
-                tests_result,
-                test_name,
-            );
+            run_test_for_dir(spec, verbose_output, &path, tests_result, test_name);
         } else {
-            run_test_for_file(
-                spec,
-                verbose_output,
-                path.as_path(),
-                tests_result,
-                test_name,
-            );
+            run_test_for_file(spec, verbose_output, &path, tests_result, test_name);
         }
     }
 }
 
-fn run_test_for_file(
+fn run_test_for_file<P: AsRef<Path>>(
     spec: Option<&Spec>,
     verbose_output: &VerboseOutput,
-    file_name: &Path,
+    file_path: &P,
     tests_result: &mut TestExecutionResult,
     test_name: Option<&String>,
 ) {
-    if should_skip(file_name) {
+    if should_skip(file_path.as_ref()) {
         if verbose_output.verbose {
-            println!("Skipping the test case {}", file_name.display());
+            println!("Skipping the test case {}", file_path.as_ref().display());
         }
         return;
     }
+    let file_name = file_path.as_ref().to_str().unwrap();
+
     if verbose_output.verbose {
-        println!(
-            "RUN for: {}",
-            short_test_file_name(file_name.to_str().unwrap())
-        );
+        println!("RUN for: {}", short_test_file_name(file_name));
     }
-    let file = File::open(file_name).expect("Open file failed");
+
+    let file = File::open(file_path).expect("Open file failed");
     let reader = BufReader::new(file);
 
     let test_suite = serde_json::from_reader::<_, HashMap<String, StateTestCase>>(reader)
@@ -302,7 +284,7 @@ fn run_test_for_file(
         let test_config = TestConfig {
             verbose_output: verbose_output.clone(),
             spec: spec.cloned(),
-            file_name: file_name.to_path_buf(),
+            file_name: file_path.as_ref().to_path_buf(),
             name,
         };
         let test_res = state::test(test_config, test);
@@ -313,18 +295,15 @@ fn run_test_for_file(
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(file_name.to_str().unwrap())
+                    short_test_file_name(file_name)
                 );
             } else if verbose_output.verbose_failed {
-                println!(
-                    "RUN for: {}",
-                    short_test_file_name(file_name.to_str().unwrap())
-                );
+                println!("RUN for: {}", short_test_file_name(file_name));
                 println!("Tests count:\t{}", test_res.total);
                 println!(
                     "Failed:\t\t{} - {}\n",
                     test_res.failed,
-                    short_test_file_name(file_name.to_str().unwrap())
+                    short_test_file_name(file_name)
                 );
             }
         } else if verbose_output.verbose {
@@ -389,48 +368,44 @@ const SKIPPED_CASES: &[&str] = &[
 /// - `path/and_file_stem` - check path and file name (without extension)
 /// - `path/with/sub/path` - recursively check a path
 fn should_skip(path: &Path) -> bool {
-    let matches = |case: &str| {
-        let case_path = Path::new(case);
-        let case_path_components: Vec<_> = case_path.components().collect();
-        let path_components: Vec<_> = path.components().collect();
-        let case_path_len = case_path_components.len();
-        let path_len = path_components.len();
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let path_len = path_components.len();
+    let path_stem = path.file_stem();
 
-        // Check path length without a file name
-        if case_path_len > path_len {
+    SKIPPED_CASES.iter().any(|case| {
+        let case_path = Path::new(case);
+        let case_components: Vec<Component<'_>> = case_path.components().collect();
+        let case_len = case_components.len();
+
+        if case_len > path_len {
             return false;
         }
-        // Check stem file name (without extension)
-        if let (Some(file_path_stem), Some(case_file_path_stem)) =
-            (path.file_stem(), case_path.file_stem())
-        {
-            if file_path_stem == case_file_path_stem {
-                // If a case path contains only a file name
-                if case_path_len == 1 {
-                    return true;
-                }
-                // Check sub path without file names
-                if case_path_len > 1
-                    && path_len > 1
-                    && case_path_components[..case_path_len - 1]
-                        == path_components[path_len - case_path_len..path_len - 1]
-                {
-                    return true;
-                }
-            }
-        }
-        // Check recursively path from the end without a file name
-        if case_path_len < path_len && path_len > 1 {
-            for i in 1..=path_len - case_path_len {
-                if case_path_components
-                    == path_components[path_len - case_path_len - i..path_len - i]
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    };
 
-    SKIPPED_CASES.iter().any(|case| matches(case))
+        // 1) Match by stem + optional parent suffix match
+        if let (Some(ps), Some(cs)) = (path_stem, case_path.file_stem()) {
+            if ps == cs {
+                if case_len == 1 {
+                    return true; // "just a filename (stem)" matches anywhere
+                }
+                // Compare parent components suffix (excluding the filename)
+                if path_len >= case_len
+                    && case_components[..case_len - 1]
+                        == path_components[path_len - case_len..path_len - 1]
+                {
+                    return true;
+                }
+            }
+        }
+
+        // 2) Match any contiguous component window (excluding filename semantics)
+        if case_len < path_len {
+            for start in 0..=(path_len - case_len) {
+                if case_components == path_components[start..start + case_len] {
+                    return true;
+                }
+            }
+        }
+
+        false
+    })
 }
