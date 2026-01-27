@@ -1,6 +1,6 @@
-mod kzg;
+// mod kzg;
 
-use crate::precompiles::kzg::Kzg;
+// use crate::precompiles::kzg::Kzg;
 use crate::types::Spec;
 use aurora_engine_precompiles::modexp::AuroraModExp;
 use aurora_engine_precompiles::{
@@ -117,7 +117,7 @@ impl Precompiles {
 
     pub fn new_cancun() -> Self {
         let mut map = Self::new_berlin().0;
-        map.insert(Kzg::ADDRESS, Box::new(Kzg));
+        // map.insert(Kzg::ADDRESS, Box::new(Kzg));
         Self(map)
     }
 
