@@ -1,0 +1,13 @@
+[package]
+name = "aurora-zk-evm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aurora-evm-jsontests = { path = "../evm-tests" }
+clap = { version = "4.5", features = ["cargo"] }
+methods = { path = "methods" }
+risc0-zkvm = { version = "^3.0.4" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = "1.0"
+serde_json = "1.0"
