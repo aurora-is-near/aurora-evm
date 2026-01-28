@@ -1,5 +1,4 @@
 use aurora_evm_jsontests::types::StateTestCase;
-use aurora_zk_evm_core::RawTestCase;
 use clap::{arg, command, value_parser};
 use risc0_zkvm::{default_prover, ExecutorEnv, Receipt};
 
@@ -12,8 +11,6 @@ use std::path::{Path, PathBuf};
 // The ELF is used for proving and the ID is used for verification.
 use methods::{ZK_EVM_ELF, ZK_EVM_ID};
 
-mod types;
-
 fn main() {
     // Initialize tracing. In order to view logs, run `RUST_LOG=info cargo run`
     tracing_subscriber::fmt()
@@ -21,15 +18,14 @@ fn main() {
         .init();
 
     let input = run_cli();
-    let (receipt, output) = execute_evm(input);
-    println!("# {output}");
+    let (receipt, _) = execute_evm(input);
 
     // The receipt was verified at the end of proving, but the below code is an
     // example of how someone else could verify this receipt.
     receipt.verify(ZK_EVM_ID).unwrap();
 }
 
-fn execute_evm(tests_suit: String) -> (Receipt, u32) {
+fn execute_evm(tests_suit: String) -> (Receipt, String) {
     let env = ExecutorEnv::builder()
         .write(&tests_suit)
         .unwrap()

@@ -194,6 +194,7 @@ pub fn assert_vicinity_validation(
 
 /// Check Exit Reason of EVM execution
 #[allow(clippy::too_many_lines)]
+#[must_use]
 pub fn check_validate_exit_reason(
     reason: &InvalidTxReason,
     expect_exception: Option<&String>,
@@ -361,6 +362,7 @@ pub fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str)
 }
 
 /// Check Exit Reason of EVM execution
+#[must_use]
 pub fn check_create_exit_reason(
     reason: &ExitReason,
     expect_exception: Option<&String>,

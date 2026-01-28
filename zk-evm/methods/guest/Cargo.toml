@@ -8,6 +8,6 @@ edition = "2021"
 [dependencies]
 aurora-evm = { path = "../../../evm" }
 aurora-evm-jsontests = { path = "../../../evm-tests" }
-aurora-zk-evm-core = { path = "../../core" }
 risc0-zkvm = { version = "^3.0.4", default-features = false, features = ['std'] }
 serde_json = "1"
+serde = { version = "1.0.228", features = ["derive"] }

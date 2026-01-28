@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 aurora-evm-jsontests = { path = "../evm-tests" }
-aurora-zk-evm-core = { path = "core" }
 clap = { version = "4.5", features = ["cargo"] }
 methods = { path = "methods" }
 risc0-zkvm = { version = "^3.0.4" }
