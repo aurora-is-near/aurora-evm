@@ -65,6 +65,8 @@ impl Opcode {
     pub const SHR: Opcode = Opcode(0x1c);
     /// `SAR`
     pub const SAR: Opcode = Opcode(0x1d);
+    /// `CLZ`: EIP-7939 Osaka hard fork
+    pub const CLZ: Opcode = Opcode(0x1e);
 
     /// `SHA3`
     pub const SHA3: Opcode = Opcode(0x20);
@@ -360,6 +362,7 @@ impl Display for Opcode {
             Self::SHL => "SHL",
             Self::SHR => "SHR",
             Self::SAR => "SAR",
+            Self::CLZ => "CLZ",
             Self::POP => "POP",
             Self::MLOAD => "MLOAD",
             Self::MSTORE => "MSTORE",
