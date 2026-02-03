@@ -503,7 +503,7 @@ impl<'config> Gasometer<'config> {
             return Err(ExitError::OutOfGas);
         }
         // EIP-7623 gas floor check for gas_limit
-        // It's equivalent to checking: max(cas_cost, floor_gas). But as we need to check
+        // It's equivalent to checking: max(gas_cost, floor_gas). But as we need to check
         // `config.has_floor_gas` anyway, we can do it this way to avoid an extra max() call.
         if self.config.has_floor_gas && self.gas_limit() < floor_gas {
             self.inner = Err(ExitError::OutOfGas);
