@@ -4,10 +4,9 @@ use crate::types::json_utils::{
     deserialize_h256_from_u256_str_opt, deserialize_u256_from_str, deserialize_u256_from_str_opt,
     deserialize_u8_from_str_opt, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
 };
-use crate::types::{eip_4844, eip_7623, eip_7702, InvalidTxReason, PostState, Spec};
+use crate::types::{eip_4844, eip_7702, InvalidTxReason, PostState, Spec};
 use aurora_evm::backend::MemoryVicinity;
 use aurora_evm::executor::stack::Authorization;
-use aurora_evm::gasometer;
 use aurora_evm::gasometer::Gasometer;
 use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
@@ -122,24 +121,24 @@ impl Transaction {
         ))
     }
 
-    fn intrinsic_gas(&self, config: &aurora_evm::Config, state: &PostState) -> Option<u64> {
+    fn intrinsic_gas_and_gas_floor(
+        &self,
+        config: &aurora_evm::Config,
+        state: &PostState,
+    ) -> (u64, u64) {
         let is_contract_creation = self.to.is_none();
         let data = &self.get_data(state);
         let access_list = self.get_access_list(state);
-
         // EIP-7702
         let authorization_list_len = self.authorization_list.as_ref().map_or(0, Vec::len);
 
-        let cost = if is_contract_creation {
-            gasometer::create_transaction_cost(data, &access_list)
-        } else {
-            gasometer::call_transaction_cost(data, &access_list, authorization_list_len)
-        };
-
-        let mut g = Gasometer::new(u64::MAX, config);
-        g.record_transaction(cost).ok()?;
-
-        Some(g.total_used_gas())
+        Gasometer::calculate_intrinsic_gas_and_gas_floor(
+            data,
+            &access_list,
+            authorization_list_len,
+            config,
+            is_contract_creation,
+        )
     }
 
     /// Validate the transaction against block, payment, and EIP constraints.
@@ -160,13 +159,10 @@ impl Transaction {
     ) -> Result<Vec<Authorization>, InvalidTxReason> {
         let gas_limit = self.get_gas_limit(state);
         let mut authorization_list: Vec<Authorization> = vec![];
-        match self.intrinsic_gas(config, state) {
-            None => return Err(InvalidTxReason::IntrinsicGas),
-            Some(required_gas) => {
-                if gas_limit < U256::from(required_gas) {
-                    return Err(InvalidTxReason::IntrinsicGas);
-                }
-            }
+
+        let (intrinsic_gas, floor_gas) = self.intrinsic_gas_and_gas_floor(config, state);
+        if gas_limit < U256::from(intrinsic_gas) {
+            return Err(InvalidTxReason::IntrinsicGas);
         }
 
         if block_gas_limit < gas_limit {
@@ -252,9 +248,6 @@ impl Transaction {
 
         if *spec >= Spec::Prague {
             // EIP-7623 validation
-            let floor_gas = eip_7623::calc_tx_floor_cost(eip_7623::get_tokens_in_calldata(
-                &self.get_data(state),
-            ));
             if floor_gas > gas_limit.as_u64() {
                 return Err(InvalidTxReason::GasFloorMoreThanGasLimit);
             }
