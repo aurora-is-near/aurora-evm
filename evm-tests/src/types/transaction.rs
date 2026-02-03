@@ -190,6 +190,10 @@ impl Transaction {
             return Err(InvalidTxReason::OutOfFund);
         }
 
+        if TxType::from_tx_bytes(&state.tx_bytes) == TxType::AccessList && *spec < Spec::Berlin {
+            return Err(InvalidTxReason::AccessListNotSupported);
+        }
+
         // CANCUN tx validation
         // Presence of max_fee_per_blob_gas means that this is a blob transaction.
         if *spec >= Spec::Cancun {
@@ -263,6 +267,12 @@ impl Transaction {
                 && tx_authorization_list.is_empty()
             {
                 return Err(InvalidTxReason::AuthorizationListNotExist);
+            }
+
+            // EIP-7702 - if transaction is contract creation - validation fails
+            if TxType::from_tx_bytes(&state.tx_bytes) == TxType::EOAAccountCode && self.to.is_none()
+            {
+                return Err(InvalidTxReason::AuthorizationListNotSupportedForCreate);
             }
 
             // Check EIP-7702 Spec validation steps: 1 and 2

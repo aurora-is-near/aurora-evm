@@ -8,9 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v17.0
-  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-6%40v1.0.0/fixtures_pectra-devnet-6.tar.gz
-  ETHEREUM_SPEC_TESTS2_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_stable.tar.gz
-  ETHEREUM_SPEC_TESTS_STATIC_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v4.5.0/fixtures_static.tar.gz
+  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_stable.tar.gz
 
 jobs:
   unit-tests:
@@ -62,26 +60,12 @@ jobs:
           mkdir ethereum-spec-tests
           tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
-      - name: Download Ethereum spec tests 2 fixtures
-        run: |
-          curl -L ${{ env.ETHEREUM_SPEC_TESTS2_URL }} -o ethereum-spec-tests2.tar.gz
-          mkdir ethereum-spec-tests2
-          tar -xzf ethereum-spec-tests2.tar.gz -C ethereum-spec-tests2
-
-      - name: Download Ethereum spec tests fixtures static
-        run: |
-          curl -L ${{ env.ETHEREUM_SPEC_TESTS_STATIC_URL }} -o ethereum-spec-tests-static.tar.gz
-          mkdir ethereum-spec-tests-static
-          tar -xzf ethereum-spec-tests-static.tar.gz -C ethereum-spec-tests-static
-
       - name: Run Ethereum state tests
         run: |
           cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
           ethtests/GeneralStateTests/ \
-          ethereum-spec-tests-static/fixtures/state_tests/ \
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-          ethereum-spec-tests/fixtures/state_tests/ \
-          ethereum-spec-tests2/fixtures/state_tests/
+          ethereum-spec-tests/fixtures/state_tests/
 
       - name: Run Ethereum vm tests
         run: |
@@ -130,20 +114,10 @@ jobs:
             mkdir ethereum-spec-tests
             tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
-            curl -L ${{ env.ETHEREUM_SPEC_TESTS2_URL }} -o ethereum-spec-tests2.tar.gz
-            mkdir ethereum-spec-tests2
-            tar -xzf ethereum-spec-tests2.tar.gz -C ethereum-spec-tests2
-
-            curl -L ${{ env.ETHEREUM_SPEC_TESTS_STATIC_URL }} -o ethereum-spec-tests-static.tar.gz
-            mkdir ethereum-spec-tests-static
-            tar -xzf ethereum-spec-tests-static.tar.gz -C ethereum-spec-tests-static
-
             cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
               ethtests/GeneralStateTests/ \
-              ethereum-spec-tests-static/fixtures/state_tests/ \
               ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-              ethereum-spec-tests/fixtures/state_tests/ \
-              ethereum-spec-tests2/fixtures/state_tests/
+              ethereum-spec-tests/fixtures/state_tests/
 
             cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
               ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \

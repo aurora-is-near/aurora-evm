@@ -269,8 +269,10 @@ pub enum InvalidTxReason {
     GasPriceEip1559,
     AuthorizationListNotExist,
     AuthorizationListNotSupported,
+    AuthorizationListNotSupportedForCreate,
     InvalidAuthorizationChain,
     InvalidAuthorizationSignature,
     CreateTransaction,
     GasFloorMoreThanGasLimit,
+    AccessListNotSupported,
 }

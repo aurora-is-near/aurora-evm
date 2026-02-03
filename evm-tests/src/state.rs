@@ -193,7 +193,11 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         access_list.clone(),
                         authorization_list.clone(),
                     );
-                    assert_call_exit_exception(state.expect_exception.as_ref(), &test_config.name);
+                    assert_call_exit_exception(
+                        state.expect_exception.as_ref(),
+                        &test_config.name,
+                        spec,
+                    );
                 } else {
                     let code = data;
 
