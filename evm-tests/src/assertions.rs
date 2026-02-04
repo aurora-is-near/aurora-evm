@@ -23,8 +23,9 @@ pub fn assert_vicinity_validation(
                         )
                     });
 
-                    let is_checked =
-                        expected == "TR_TypeNotSupported" || expected == "TR_TypeNotSupportedBlob";
+                    let is_checked = expected == "TR_TypeNotSupported"
+                        || expected == "TR_TypeNotSupportedBlob"
+                        || expected == "TransactionException.TYPE_2_TX_PRE_FORK";
                     assert!(
                         is_checked,
                         "unexpected error message {expected:?} for: [{spec:?}] {name}:{i}\n{file_name:?}",
@@ -231,7 +232,8 @@ pub fn check_validate_exit_reason(
                         || exception == "TR_IntrinsicGas"
                         || exception == "TransactionException.INTRINSIC_GAS_TOO_LOW"
                         || exception == "IntrinsicGas"
-                        || exception == "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS|TransactionException.INTRINSIC_GAS_TOO_LOW";
+                        || exception == "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS|TransactionException.INTRINSIC_GAS_TOO_LOW"
+                        || exception == "TransactionException.INTRINSIC_GAS_TOO_LOW|TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST";
                     assert!(
                         check_result,
                         "unexpected exception {exception:?} for IntrinsicGas for test: [{spec:?}] {name}"
@@ -324,10 +326,33 @@ pub fn check_validate_exit_reason(
                     );
                 }
                 InvalidTxReason::GasFloorMoreThanGasLimit => {
-                    let check_result = exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
+                    let check_result = exception == "TransactionException.INTRINSIC_GAS_TOO_LOW"
+                        || exception == "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST"
+                        || exception == "TransactionException.INTRINSIC_GAS_TOO_LOW|TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST";
                     assert!(
                         check_result,
                         "unexpected exception {exception:?} for GasFloorMoreThanGasLimit for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::AuthorizationListNotSupportedForCreate => {
+                    let check_result = exception == "TransactionException.TYPE_4_TX_CONTRACT_CREATION";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for AuthorizationListNotSupportedForCreate for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::AuthorizationListNotSupported => {
+                    let check_result = exception == "TransactionException.TYPE_4_TX_PRE_FORK";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for AuthorizationListNotSupported for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::AccessListNotSupported => {
+                    let check_result = exception == "TransactionException.TYPE_1_TX_PRE_FORK";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for AccessListNotSupported for test: [{spec:?}] {name}"
                     );
                 }
                 _ => {
@@ -353,10 +378,10 @@ pub fn assert_empty_create_caller(expect_exception: Option<&String>, name: &str)
 }
 
 /// Check call expected exception
-pub fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str) {
+pub fn assert_call_exit_exception(expect_exception: Option<&String>, name: &str, spec: &Spec) {
     assert!(
         expect_exception.is_none(),
-        "unexpected call exception: {expect_exception:?} for test: {name}"
+        "unexpected call exception: {expect_exception:?} for test: {name} [{spec:?}]"
     );
 }
 
@@ -411,7 +436,7 @@ pub fn check_create_exit_reason(
         _ => {
             assert!(
                 expect_exception.is_none(),
-                "Unexpected json-test error: {expect_exception:?}"
+                "Unexpected json-test error: {expect_exception:?} with reason {reason:?} for: {name}"
             );
         }
     }

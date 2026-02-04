@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 pub mod account_state;
 pub mod blob;
 pub mod eip_4844;
-pub mod eip_7623;
 pub mod eip_7702;
 mod info;
 mod json_utils;
@@ -269,8 +268,10 @@ pub enum InvalidTxReason {
     GasPriceEip1559,
     AuthorizationListNotExist,
     AuthorizationListNotSupported,
+    AuthorizationListNotSupportedForCreate,
     InvalidAuthorizationChain,
     InvalidAuthorizationSignature,
     CreateTransaction,
     GasFloorMoreThanGasLimit,
+    AccessListNotSupported,
 }
