@@ -434,14 +434,10 @@ pub fn check_create_exit_reason(
             panic!("Unexpected error: {err:?}")
         }
         _ => {
-            // TODO
-            if expect_exception.is_some() {
-                println!("-> {expect_exception:?} {name}");
-            }
-            // assert!(
-            //     expect_exception.is_none(),
-            //     "Unexpected json-test error: {expect_exception:?} with reason {reason:?} for: {name}"
-            // );
+            assert!(
+                expect_exception.is_none(),
+                "Unexpected json-test error: {expect_exception:?} with reason {reason:?} for: {name}"
+            );
         }
     }
     false
