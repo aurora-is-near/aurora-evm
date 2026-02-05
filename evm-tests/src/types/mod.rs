@@ -15,7 +15,7 @@ pub mod account_state;
 pub mod blob;
 pub mod eip_4844;
 pub mod eip_7702;
-mod info;
+pub mod info;
 mod json_utils;
 pub mod spec;
 pub mod transaction;
@@ -207,7 +207,7 @@ impl From<StateEnv> for MemoryVicinity {
 /// corresponding state (`StateAccount`).
 /// Represents vis `AccountsState`.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
-pub struct PreState(AccountsState);
+pub struct PreState(pub AccountsState);
 
 impl AsRef<AccountsState> for PreState {
     fn as_ref(&self) -> &AccountsState {
