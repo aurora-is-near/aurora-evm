@@ -23,7 +23,7 @@ jobs:
       - name: Clippy no_std
         run: cargo clippy --no-default-features -- -D clippy::all -D clippy::nursery
       - name: Clippy with features
-        run: cargo clippy --features tracing,create-fixed -- -D clippy::all -D clippy::nursery
+        run: cargo clippy --features tracing,create-fixed,with-serde -- -D clippy::all -D clippy::nursery
       - name: Clippy with features for aurora-evm-jsontests
         run: cargo clippy -p aurora-evm-jsontests --features dump-state -- -D clippy::all -D clippy::nursery
 
@@ -39,5 +39,5 @@ jobs:
       - name: Build NoStd
         run: cargo build --no-default-features
 
-      - name: Build for feature (tracing)
-        run: cargo build --features tracing
+      - name: Build for feature (tracing & serde)
+        run: cargo build --features tracing,with-serde
