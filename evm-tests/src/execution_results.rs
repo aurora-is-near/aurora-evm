@@ -87,8 +87,6 @@ pub enum RawSpec {
     Istanbul,
     Berlin,
     London,
-    ArrowGlacier,
-    GrayGlacier,
     Merge,
     Shanghai,
     Cancun,

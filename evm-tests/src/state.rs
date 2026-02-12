@@ -162,7 +162,6 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
             let access_list = test.transaction.get_access_list(state);
 
-            // TODO
             let iter_start = std::time::Instant::now();
 
             let metadata = StackSubstateMetadata::new(gas_limit, &gasometer_config);
