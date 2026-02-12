@@ -3,14 +3,14 @@ use crate::assertions::{
     check_create_exit_reason,
 };
 use crate::config::TestConfig;
-use crate::execution_results::{FailedTestDetails, TestExecutionResult};
+use crate::execution_results::{FailedTestDetails, RawInput, TestBench, TestExecutionResult};
 use crate::precompiles::Precompiles;
 use crate::state_dump::{StateTestsDump, StateTestsDumper};
 use crate::types::account_state::MemoryAccountsState;
 use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
 use crate::types::transaction::TxType;
 use crate::types::{Spec, StateTestCase};
-use aurora_evm::backend::{ApplyBackend, MemoryBackend};
+use aurora_evm::backend::{Apply, ApplyBackend, MemoryBackend};
 use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
 use aurora_evm::utils::U256_ZERO;
 use primitive_types::H160;
@@ -160,6 +160,11 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             state_tests_dump.set_state(&original_state.0);
             state_tests_dump.set_vicinity(&vicinity);
 
+            let access_list = test.transaction.get_access_list(state);
+
+            // TODO
+            let iter_start = std::time::Instant::now();
+
             let metadata = StackSubstateMetadata::new(gas_limit, &gasometer_config);
             let executor_state = MemoryStackState::new(metadata, &backend);
             // let precompile = JsonPrecompile::precompile(spec).unwrap();
@@ -168,12 +173,11 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 StackExecutor::new_with_precompiles(executor_state, &gasometer_config, &precompile);
             executor.state_mut().withdraw(caller, total_fee).unwrap();
 
-            let access_list = test.transaction.get_access_list(state);
+            let value = test.transaction.get_value(state);
 
             // EIP-3607: Reject transactions from senders with deployed code
             // EIP-7702: Accept transaction even if the caller has code.
             if caller_code.is_empty() || is_delegated {
-                let value = test.transaction.get_value(state);
                 if let Some(to) = test.transaction.to {
                     state_tests_dump.set_tx_data(
                         to,
@@ -188,7 +192,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         caller,
                         to,
                         value,
-                        data,
+                        data.clone(),
                         gas_limit,
                         access_list.clone(),
                         authorization_list.clone(),
@@ -199,10 +203,15 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         spec,
                     );
                 } else {
-                    let code = data;
+                    let code = data.clone();
 
-                    let reason =
-                        executor.transact_create(caller, value, code, gas_limit, access_list);
+                    let reason = executor.transact_create(
+                        caller,
+                        value,
+                        code,
+                        gas_limit,
+                        access_list.clone(),
+                    );
                     if check_create_exit_reason(
                         &reason.0,
                         state.expect_exception.as_ref(),
@@ -254,7 +263,53 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
             let (values, logs) = executor.into_state().deconstruct();
 
-            backend.apply(values, logs, true);
+            // Separate Apply and dump logic to avoid dumping transactions
+            if test_config.verbose_output.dump_transactions.is_some() {
+                // As Apply iterator do not contains cloned values, we need to clone them to be able to dump them in the test results. And as Apply contains references, we need to convert them into owned values.
+                let apply_values: Vec<_> = values
+                    .into_iter()
+                    .map(|v| match v {
+                        Apply::Modify {
+                            address,
+                            basic,
+                            code,
+                            storage,
+                            reset_storage,
+                        } => Apply::Modify {
+                            address,
+                            basic,
+                            code,
+                            storage: storage.into_iter().collect::<Vec<_>>(),
+                            reset_storage,
+                        },
+                        Apply::Delete { address } => Apply::Delete { address },
+                    })
+                    .collect();
+
+                backend.apply(apply_values.clone(), logs, true);
+                tests_result.dump_successful_txs.push(RawInput {
+                    spec: spec.clone().into(),
+                    caller,
+                    value,
+                    data,
+                    gas_limit,
+                    access_list,
+                    authorization_list,
+                    apply_values: apply_values.into_iter().map(Into::into).collect(),
+                });
+            } else {
+                backend.apply(values, logs, true);
+            }
+
+            if test_config.verbose_output.print_slow {
+                let elapsed = iter_start.elapsed();
+                tests_result.set_benchmark(TestBench {
+                    spec: spec.clone(),
+                    name: test_config.name.clone(),
+                    elapsed,
+                });
+            }
+
             // It's a special case for hard forks: London and before,
             // According to EIP-160, an empty account should be removed. But in that particular test - original test state
             // contains account 0x03 (it's a precompile), and when precompile 0x03 was called it exit with

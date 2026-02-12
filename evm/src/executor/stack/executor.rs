@@ -65,6 +65,7 @@ pub enum StackExitKind {
 /// - `is_valid` is the flag that indicates the validity of the authorization. It is used to
 ///   charge gas for each authorization item, but if it's invalid exclude from EVM `authority_list` flow.
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Authorization {
     pub authority: H160,
     pub address: H160,

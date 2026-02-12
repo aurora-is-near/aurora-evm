@@ -8,6 +8,8 @@ pub struct VerboseOutput {
     pub verbose_failed: bool,
     pub very_verbose: bool,
     pub print_state: bool,
+    pub print_slow: bool,
+    pub dump_transactions: Option<PathBuf>,
 }
 
 #[derive(Default, Debug, Clone)]

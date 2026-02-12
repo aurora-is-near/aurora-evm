@@ -16,7 +16,7 @@ nursery = { level = "deny", priority = -1 }
 
 [dependencies]
 aurora-engine-precompiles = "2.1.0"
-aurora-evm.workspace = true
+aurora-evm = { workspace = true, features = ["with-serde"] }
 bytecount = "0.6"
 clap = { version = "4.5", features = ["cargo"] }
 c-kzg = "1.0"
