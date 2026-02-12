@@ -156,6 +156,11 @@ impl TestExecutionResult {
             return;
         }
 
+        if self.bench.len() < 100 {
+            self.bench.push(bench);
+            return;
+        }
+
         let mut has_smaller = false;
         for b in &self.bench {
             if bench.elapsed > b.elapsed {
@@ -164,11 +169,6 @@ impl TestExecutionResult {
             }
         }
         if !has_smaller {
-            return;
-        }
-
-        if self.bench.len() < 100 {
-            self.bench.push(bench);
             return;
         }
 
