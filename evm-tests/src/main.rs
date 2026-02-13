@@ -82,6 +82,16 @@ fn main() -> Result<(), String> {
                     arg!(-p --print_state "Print state when the test fails")
                         .default_value("false")
                         .action(ArgAction::SetTrue),
+                )
+                .arg(
+                    arg!(--dump_successful_tx <FILE_NAME> "Optional file name to dump all successful transactions")
+                        .required(false)
+                        .value_parser(value_parser!(PathBuf)),
+                )
+                .arg(
+                    arg!(--slow_tests "Print state slow tests")
+                        .default_value("false")
+                        .action(ArgAction::SetTrue),
                 ),
         )
         .get_matches();
@@ -92,6 +102,8 @@ fn main() -> Result<(), String> {
             verbose_failed: matches.get_flag("verbose_failed"),
             very_verbose: false,
             print_state: false,
+            print_slow: false,
+            dump_transactions: None,
         };
         let mut tests_result = TestExecutionResult::new();
         for src_path in matches.get_many::<PathBuf>("PATH").unwrap() {
@@ -122,6 +134,8 @@ fn main() -> Result<(), String> {
             verbose_failed: matches.get_flag("verbose_failed"),
             very_verbose: matches.get_flag("very_verbose"),
             print_state: matches.get_flag("print_state"),
+            print_slow: matches.get_flag("slow_tests"),
+            dump_transactions: matches.get_one::<PathBuf>("dump_successful_tx").cloned(),
         };
         let mut tests_result = TestExecutionResult::new();
         for src_path in matches.get_many::<PathBuf>("PATH").unwrap() {
@@ -150,8 +164,25 @@ fn main() -> Result<(), String> {
         }
         println!("\nTOTAL: {}", tests_result.total);
         println!("FAILED: {}\n", tests_result.failed);
+
         if tests_result.failed != 0 {
             return Err(format!("tests failed: {}", tests_result.failed));
+        }
+
+        if verbose_output.print_slow {
+            println!("SLOW TESTS:");
+            tests_result.print_bench();
+        }
+
+        if let Some(dunp_to_file) = verbose_output.dump_transactions {
+            let txs = tests_result.dump_successful_txs;
+            let data = serde_json::to_string(&txs).expect("JSON serialization failed");
+            fs::write(&dunp_to_file, data).expect("Unable to write file");
+            println!(
+                "TEST SUCCESSFUL TRANSACTIONS DUMPED TO: {} [{}]",
+                dunp_to_file.display(),
+                txs.len()
+            );
         }
     }
     Ok(())
