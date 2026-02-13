@@ -159,14 +159,8 @@ impl TestExecutionResult {
             return;
         }
 
-        let mut has_smaller = false;
-        for b in &self.bench {
-            if bench.elapsed > b.elapsed {
-                has_smaller = true;
-                break;
-            }
-        }
-        if !has_smaller {
+        // If has smaller elapsed than all existing then skip
+        if !self.bench.iter().any(|b| bench.elapsed > b.elapsed) {
             return;
         }
 
