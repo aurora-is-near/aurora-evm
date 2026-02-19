@@ -245,29 +245,6 @@ impl<'config> MemoryStackSubstate<'config> {
     }
 
     #[must_use]
-    pub fn known_empty(&self, address: H160) -> Option<bool> {
-        if let Some(account) = self.known_account(address) {
-            if account.basic.balance != U256_ZERO {
-                return Some(false);
-            }
-
-            if account.basic.nonce != U256_ZERO {
-                return Some(false);
-            }
-
-            if let Some(code) = &account.code {
-                return Some(
-                    account.basic.balance == U256_ZERO
-                        && account.basic.nonce == U256_ZERO
-                        && code.is_empty(),
-                );
-            }
-        }
-
-        None
-    }
-
-    #[must_use]
     pub fn known_storage(&self, address: H160, key: H256) -> Option<H256> {
         if let Some(value) = self.storages.get(&(address, key)) {
             return Some(*value);
@@ -620,14 +597,21 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
         self.substate.exit_discard()
     }
 
+    #[must_use]
     fn is_empty(&self, address: H160) -> bool {
-        if let Some(known_empty) = self.substate.known_empty(address) {
-            return known_empty;
+        if let Some(account) = self.substate.known_account(address) {
+            if !account.basic.balance.is_zero() || !account.basic.nonce.is_zero() {
+                return false;
+            }
+
+            if let Some(code) = &account.code {
+                return code.is_empty();
+            }
+            return self.backend.code(address).is_empty();
         }
 
-        self.backend.basic(address).balance == U256_ZERO
-            && self.backend.basic(address).nonce == U256_ZERO
-            && self.backend.code(address).is_empty()
+        let basic = self.backend.basic(address);
+        basic.balance.is_zero() && basic.nonce.is_zero() && self.backend.code(address).is_empty()
     }
 
     fn deleted(&self, address: H160) -> bool {
