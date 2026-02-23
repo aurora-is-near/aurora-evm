@@ -754,7 +754,7 @@ mod tests {
     fn memory_vicinity() -> MemoryVicinity {
         MemoryVicinity {
             gas_price: U256::from(1),
-            effective_gas_price: Default::default(),
+            effective_gas_price: U256::zero(),
             origin: H160::zero(),
             block_hashes: Vec::new(),
             block_number: U256::zero(),
