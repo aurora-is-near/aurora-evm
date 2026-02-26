@@ -223,48 +223,42 @@ impl<'config> MemoryStackSubstate<'config> {
         Ok(())
     }
 
+    /// Get known account from the current state. If it's `None` just take a look
+    /// recursively in the parent state.
+    #[must_use]
     pub fn known_account(&self, address: H160) -> Option<&MemoryStackAccount> {
-        self.accounts.get(&address).map_or_else(
-            || {
-                self.parent
-                    .as_ref()
-                    .and_then(|parent| parent.known_account(address))
-            },
-            Some,
-        )
+        self.accounts.get(&address).or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.known_account(address))
+        })
     }
 
+    /// Get known basic data from the current accounts state.
+    /// If it's `None` just take a look.
     #[must_use]
     pub fn known_basic(&self, address: H160) -> Option<Basic> {
         self.known_account(address).map(|acc| acc.basic.clone())
     }
 
+    /// Get known code from the current accounts state.
+    /// If it's `None` just take a look.
     #[must_use]
     pub fn known_code(&self, address: H160) -> Option<Vec<u8>> {
         self.known_account(address).and_then(|acc| acc.code.clone())
     }
 
+    /// Get known empty status of the account from the current accounts state.
+    /// If it's `None` just take a look.
     #[must_use]
     pub fn known_empty(&self, address: H160) -> Option<bool> {
-        if let Some(account) = self.known_account(address) {
-            if account.basic.balance != U256_ZERO {
-                return Some(false);
+        self.known_account(address).and_then(|account| {
+            if account.basic.balance != U256_ZERO || account.basic.nonce != U256_ZERO {
+                Some(false)
+            } else {
+                account.code.as_ref().map(Vec::is_empty)
             }
-
-            if account.basic.nonce != U256_ZERO {
-                return Some(false);
-            }
-
-            if let Some(code) = &account.code {
-                return Some(
-                    account.basic.balance == U256_ZERO
-                        && account.basic.nonce == U256_ZERO
-                        && code.is_empty(),
-                );
-            }
-        }
-
-        None
+        })
     }
 
     #[must_use]
@@ -312,25 +306,18 @@ impl<'config> MemoryStackSubstate<'config> {
     }
 
     fn recursive_is_cold<F: Fn(&Accessed) -> bool>(&self, f: &F) -> bool {
-        let local_is_accessed = self.metadata.accessed().as_ref().is_some_and(f);
-        if local_is_accessed {
-            false
-        } else {
-            self.parent.as_ref().is_none_or(|p| p.recursive_is_cold(f))
-        }
+        !self.metadata.accessed().as_ref().is_some_and(f)
+            && self.parent.as_ref().is_none_or(|p| p.recursive_is_cold(f))
     }
 
+    /// Check if the account was deleted in the current substate or any of its parents.
     #[must_use]
     pub fn deleted(&self, address: H160) -> bool {
-        if self.deletes.contains(&address) {
-            return true;
-        }
-
-        if let Some(parent) = self.parent.as_ref() {
-            return parent.deleted(address);
-        }
-
-        false
+        self.deletes.contains(&address)
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.deleted(address))
     }
 
     #[allow(clippy::map_entry)]
@@ -403,17 +390,14 @@ impl<'config> MemoryStackSubstate<'config> {
         self.creates.insert(address);
     }
 
+    /// Check if the account was created in the current substate or any of its parents.
     #[must_use]
     pub fn is_created(&self, address: H160) -> bool {
-        if self.creates.contains(&address) {
-            return true;
-        }
-
-        if let Some(parent) = self.parent.as_ref() {
-            return parent.is_created(address);
-        }
-
-        false
+        self.creates.contains(&address)
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.is_created(address))
     }
 
     pub fn set_code<B: Backend>(&mut self, address: H160, code: Vec<u8>, backend: &B) {
