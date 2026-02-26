@@ -251,17 +251,6 @@ impl<'config> MemoryStackSubstate<'config> {
     /// Get known empty status of the account from the current accounts state.
     /// If it's `None` just take a look.
     #[must_use]
-    pub fn known_empty(&self, address: H160) -> Option<bool> {
-        self.known_account(address).and_then(|account| {
-            if account.basic.balance != U256_ZERO || account.basic.nonce != U256_ZERO {
-                Some(false)
-            } else {
-                account.code.as_ref().map(Vec::is_empty)
-            }
-        })
-    }
-
-    #[must_use]
     pub fn known_storage(&self, address: H160, key: H256) -> Option<H256> {
         if let Some(value) = self.storages.get(&(address, key)) {
             return Some(*value);
@@ -604,14 +593,21 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
         self.substate.exit_discard()
     }
 
+    #[must_use]
     fn is_empty(&self, address: H160) -> bool {
-        if let Some(known_empty) = self.substate.known_empty(address) {
-            return known_empty;
+        if let Some(account) = self.substate.known_account(address) {
+            if !account.basic.balance.is_zero() || !account.basic.nonce.is_zero() {
+                return false;
+            }
+
+            if let Some(code) = &account.code {
+                return code.is_empty();
+            }
+            return self.backend.code(address).is_empty();
         }
 
-        self.backend.basic(address).balance == U256_ZERO
-            && self.backend.basic(address).nonce == U256_ZERO
-            && self.backend.code(address).is_empty()
+        let basic = self.backend.basic(address);
+        basic.balance.is_zero() && basic.nonce.is_zero() && self.backend.code(address).is_empty()
     }
 
     fn deleted(&self, address: H160) -> bool {
@@ -738,5 +734,162 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
 
     pub fn deposit(&mut self, address: H160, value: U256) {
         self.substate.deposit(address, value, self.backend);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::backend::{Backend, MemoryAccount, MemoryBackend, MemoryVicinity};
+    use crate::executor::stack::executor::StackSubstateMetadata;
+    use crate::executor::stack::memory::MemoryStackState;
+    use crate::executor::stack::StackState;
+    use crate::prelude::*;
+    use crate::Config;
+    use primitive_types::{H160, U256};
+
+    fn memory_vicinity() -> MemoryVicinity {
+        MemoryVicinity {
+            gas_price: U256::from(1),
+            effective_gas_price: U256::zero(),
+            origin: H160::zero(),
+            block_hashes: Vec::new(),
+            block_number: U256::zero(),
+            block_coinbase: H160::zero(),
+            block_timestamp: U256::zero(),
+            block_difficulty: U256::zero(),
+            block_randomness: None,
+            blob_gas_price: None,
+            block_gas_limit: U256::from(30_000_000),
+            block_base_fee_per_gas: U256::from(1),
+            chain_id: U256::from(1),
+            blob_hashes: vec![],
+        }
+    }
+
+    #[test]
+    fn test_is_empty_catch_backend_only() {
+        let mut state = BTreeMap::new();
+
+        let addr1 = H160::from_low_u64_be(1);
+        state.insert(
+            addr1,
+            MemoryAccount {
+                balance: U256::one(),
+                nonce: U256::zero(),
+                storage: BTreeMap::new(),
+                code: Vec::new(),
+            },
+        );
+
+        let addr2 = H160::from_low_u64_be(2);
+        state.insert(
+            addr2,
+            MemoryAccount {
+                balance: U256::zero(),
+                nonce: U256::one(),
+                storage: BTreeMap::new(),
+                code: Vec::new(),
+            },
+        );
+
+        let addr3 = H160::from_low_u64_be(3);
+        state.insert(
+            addr3,
+            MemoryAccount {
+                balance: U256::zero(),
+                nonce: U256::zero(),
+                storage: BTreeMap::new(),
+                code: vec![0x42],
+            },
+        );
+
+        let addr4 = H160::from_low_u64_be(4);
+        state.insert(
+            addr4,
+            MemoryAccount {
+                balance: U256::zero(),
+                nonce: U256::zero(),
+                storage: BTreeMap::new(),
+                code: Vec::new(),
+            },
+        );
+
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, state);
+        let config = Config::osaka();
+        let metadata = StackSubstateMetadata::new(0, &config);
+
+        let stack_state = MemoryStackState::new(metadata, &backend);
+
+        assert!(!stack_state.is_empty(addr1));
+        assert!(!stack_state.is_empty(addr2));
+        assert!(!stack_state.is_empty(addr3));
+        assert!(stack_state.is_empty(addr4));
+    }
+
+    #[test]
+    fn test_is_empty_with_cached_account() {
+        let mut state = BTreeMap::new();
+
+        let addr1 = H160::from_low_u64_be(1);
+        state.insert(
+            addr1,
+            MemoryAccount {
+                balance: U256::zero(),
+                nonce: U256::zero(),
+                storage: BTreeMap::new(),
+                code: Vec::new(),
+            },
+        );
+
+        let addr2 = H160::from_low_u64_be(2);
+        state.insert(
+            addr2,
+            MemoryAccount {
+                balance: U256::zero(),
+                nonce: U256::zero(),
+                storage: BTreeMap::new(),
+                code: vec![0x42],
+            },
+        );
+
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, state);
+        let config = Config::osaka();
+        let metadata = StackSubstateMetadata::new(0, &config);
+
+        let mut stack_state = MemoryStackState::new(metadata, &backend);
+        assert!(stack_state.is_empty(addr1));
+        assert!(!stack_state.is_empty(addr2));
+
+        // Accounts cached
+        stack_state.deposit(addr1, U256::one());
+        stack_state.deposit(addr2, U256::one());
+        // Cached account
+        assert!(!stack_state.is_empty(addr1));
+
+        // Ensure that code will pass `is_some` check to catch data from backend.
+        let acc1 = stack_state.substate.accounts.get(&addr1).unwrap();
+        let acc2 = stack_state.substate.accounts.get(&addr2).unwrap();
+        assert_eq!(acc1.basic.balance, U256::one());
+        assert!(acc1.code.is_none());
+        assert_eq!(acc2.basic.balance, U256::one());
+        // NOTE: code is not cached
+        assert!(acc2.code.is_none());
+
+        stack_state.reset_balance(addr1);
+        // Get from cache and code from backend.
+        assert!(stack_state.is_empty(addr1));
+        assert!(stack_state.code(addr1).is_empty());
+
+        stack_state.reset_balance(addr2);
+        let acc2 = stack_state.substate.accounts.get(&addr2).unwrap();
+        assert_eq!(acc2.basic.balance, U256::zero());
+        // NOTE: code is not cached
+        assert!(acc2.code.is_none());
+        // Get code from backend, but in backend code is not empty, so account is not empty.
+        assert!(!stack_state.is_empty(addr2));
+        // Get code from backend, but in backend code is not empty
+        assert_eq!(stack_state.code(addr2), vec![0x42]);
     }
 }
