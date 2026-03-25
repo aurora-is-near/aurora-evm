@@ -27,3 +27,4 @@ serde = { version = "1.0", default-features = false }
 [patch.crates-io]
 # Constrain to v0.14.6 to ensure compatibility with sha3 0.10 and prevent unexpected upgrades
 generic-array = { git = "https://github.com/fizyk20/generic-array", rev = "effb209dd7e61b8226e194dec2979314e27598d1" }
+unicode-segmentation = { git = "https://github.com/unicode-rs/unicode-segmentation", tag = "v1.12.0" }
