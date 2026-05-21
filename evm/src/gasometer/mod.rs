@@ -533,7 +533,13 @@ impl<'config> Gasometer<'config> {
             self.inner_mut()?.floor_gas = floor_gas;
         }
 
-        self.inner_mut()?.used_gas += gas_cost;
+        let effective_cost = if self.config.has_floor_gas {
+            core::cmp::max(gas_cost, floor_gas)
+        } else {
+            gas_cost
+        };
+
+        self.inner_mut()?.used_gas += effective_cost;
         Ok(())
     }
 
