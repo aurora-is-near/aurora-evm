@@ -593,6 +593,7 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
         self.substate.exit_discard()
     }
 
+    #[must_use]
     fn is_empty(&self, address: H160) -> bool {
         if let Some(account) = self.substate.known_account(address) {
             if !account.basic.balance.is_zero() || !account.basic.nonce.is_zero() {
