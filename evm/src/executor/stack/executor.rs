@@ -835,6 +835,46 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         }
     }
 
+    /// Execute a system-level call as defined by EIP-4788, EIP-2935, EIP-7002, EIP-7251,
+    /// and future EIPs.
+    ///
+    /// System calls are made by the protocol itself at the start of each block, before any user
+    /// transactions are processed. They follow the call semantics of a regular `CALL` with these
+    /// specific properties:
+    /// - `caller` is the protocol-defined `SYSTEM_ADDRESS` (`0xfffffffffffffffffffffffffffffffffffffffe`).
+    /// - `value` is always zero — no ETH is transferred.
+    /// - `address` — the system contract to call (e.g. the `beacon_root` or `blockhash` contract).
+    /// - `data` — ABI-encoded call data passed to the system contract.
+    /// - **Gas limit** is implicitly inherited from the executor's `metadata`. According to EIPs,
+    ///   the host must initialize the executor with exactly `30_000_000` gas prior to this call.
+    ///
+    /// Additional behavioral overrides:
+    /// - No `Transfer` is performed: balance checks on the caller are skipped entirely.
+    /// - The caller's nonce is not incremented, and no base transaction cost is recorded.
+    /// - The call is not static, meaning the callee can freely modify the state.
+    pub fn system_call(
+        &mut self,
+        caller: H160,
+        address: H160,
+        data: Vec<u8>,
+    ) -> (ExitReason, Vec<u8>) {
+        let context = Context {
+            caller,
+            address,
+            apparent_value: U256::zero(),
+        };
+
+        match self.call_inner(address, None, data, None, false, false, false, context) {
+            Capture::Exit((s, v)) => emit_exit!(s, v),
+            Capture::Trap(rt) => {
+                let mut cs: SmallVec<[TaggedRuntime<'_>; DEFAULT_CALL_STACK_CAPACITY]> =
+                    smallvec!(rt.0);
+                let (s, _, v) = self.execute_with_call_stack(&mut cs);
+                emit_exit!(s, v)
+            }
+        }
+    }
+
     /// Get used gas for the current executor, given the price.
     pub fn used_gas(&self) -> u64 {
         // Avoid uncontrolled `u64` casting

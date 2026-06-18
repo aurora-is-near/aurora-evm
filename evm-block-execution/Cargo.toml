@@ -1,0 +1,21 @@
+[package]
+name = "aurora-evm-block-execution"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+description = "Aurora EVM block execution library"
+categories.workspace = true
+keywords.workspace = true
+repository.workspace = true
+license.workspace = true
+readme.workspace = true
+
+[dependencies]
+aurora-evm = { workspace = true, path = "../evm" }
+primitive-types = { workspace = true, features = ["rlp"] }
+rlp = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+
+[features]
+default = ["std"]
+std = ["aurora-evm/std", "aurora-evm/with-serde", "serde/std", "rlp/std", "primitive-types/std"]

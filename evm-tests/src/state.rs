@@ -264,7 +264,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
             // Separate Apply and dump logic to avoid dumping transactions
             if test_config.verbose_output.dump_transactions.is_some() {
-                // As Apply iterator do not contains cloned values, we need to clone them to be able to dump them in the test results. And as Apply contains references, we need to convert them into owned values.
+                // As Apply iterator do not contain cloned values, we need to clone them to be able to dump them in the test results. And as Apply contains references, we need to convert them into owned values.
                 let apply_values: Vec<_> = values
                     .into_iter()
                     .map(|v| match v {
