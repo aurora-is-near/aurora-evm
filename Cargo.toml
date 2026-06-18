@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "evm",
-    "evm-tests"
+    "evm-tests",
+    "evm-block-execution"
 ]
 
 [workspace.package]
