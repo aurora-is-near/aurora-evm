@@ -1,4 +1,4 @@
-name: Lint
+name: Build & Lint
 
 on:
   push:
@@ -13,31 +13,36 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Rustfmt
+      - name: cargo fmt check
         run: cargo fmt --all -- --check
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D clippy::all -D clippy::nursery
-      - name: Clippy no_std
-        run: cargo clippy --no-default-features -- -D clippy::all -D clippy::nursery
-      - name: Clippy with features
-        run: cargo clippy --features tracing,create-fixed,with-serde -- -D clippy::all -D clippy::nursery
+      - name: Clippy aurora-evm no-std
+        run: cargo clippy -p aurora-evm --no-default-features -- -D clippy::all -D clippy::nursery
+      - name: Clippy aurora-evm with features
+        run: cargo clippy -p aurora-evm --features tracing,create-fixed,with-serde -- -D clippy::all -D clippy::nursery
       - name: Clippy with features for aurora-evm-jsontests
         run: cargo clippy -p aurora-evm-jsontests --features dump-state -- -D clippy::all -D clippy::nursery
+      - name: Clippy aurora-evm-block-execution
+        run: cargo clippy -p aurora-evm-block-execution -- -D clippy::all -D clippy::nursery
 
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Build aurora-evm
+        run: cargo build -p aurora-evm
 
-      - name: Build NoStd
-        run: cargo build --no-default-features
+      - name: Build aurora-evm no-std
+        run: cargo build -p aurora-evm --no-default-features
 
-      - name: Build for feature (tracing & serde)
-        run: cargo build --features tracing,with-serde
+      - name: Build aurora-evm with features (tracing + create-fixed + with-serde)
+        run: cargo build -p aurora-evm --features tracing,create-fixed,with-serde
+
+      - name: Build aurora-evm-block-execution
+        run: cargo build -p aurora-evm-block-execution

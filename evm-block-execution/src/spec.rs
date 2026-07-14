@@ -1,8 +1,8 @@
 use aurora_evm::Config;
+use core::fmt;
+use core::str::FromStr;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer};
-use std::fmt;
-use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Spec {

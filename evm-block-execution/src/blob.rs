@@ -6,12 +6,16 @@ pub const GAS_PER_BLOB: u64 = 1 << 17;
 /// Max number of blobs per block: EIP-7691
 pub const MAX_BLOBS_PER_BLOCK_ELECTRA: usize = 9;
 pub const MAX_BLOBS_PER_BLOCK_CANCUN: usize = 6;
-/// Target consumable blob gas for data blobs per block: EIP-7691
-pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 786_432;
+/// Target consumable blob gas per block (Cancun, EIP-4844): 3 blobs.
+pub const TARGET_BLOB_GAS_PER_BLOCK_CANCUN: u64 = 393_216;
+/// Target consumable blob gas per block (Prague, EIP-7691): 6 blobs.
+pub const TARGET_BLOB_GAS_PER_BLOCK_PRAGUE: u64 = 786_432;
 /// Minimum gas price for data blobs.
 pub const MIN_BLOB_GASPRICE: u64 = 1;
-/// Controls the maximum rate of change for blob gas price.
-pub const BLOB_GASPRICE_UPDATE_FRACTION: u64 = 3_338_477;
+/// Blob gas-price update fraction (Cancun, EIP-4844).
+pub const BLOB_GASPRICE_UPDATE_FRACTION_CANCUN: u64 = 3_338_477;
+/// Blob gas-price update fraction (Prague, EIP-7691).
+pub const BLOB_GASPRICE_UPDATE_FRACTION_PRAGUE: u64 = 5_007_716;
 /// First version of the blob.
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 

@@ -6,8 +6,8 @@ use crate::transaction::{eip7825, Transaction, TxType};
 
 use aurora_evm::gasometer::Gasometer;
 use aurora_evm::Config;
+use core::fmt;
 use primitive_types::{H256, U256};
-use std::fmt;
 
 /// Init and floor gas from transaction
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -141,7 +141,9 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
                 InvalidTransaction::OutOfFunds,
             ))
             .and_then(|funds| {
-                self.calc_data_fee()
+                // Upfront balance check must reserve the MAX blob fee (max_fee_per_blob_gas),
+                // not the current effective blob price — matches the proven evm-tests validation.
+                self.calc_max_data_fee()
                     .map(|data_fee| {
                         funds
                             .checked_add(data_fee)

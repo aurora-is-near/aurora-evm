@@ -18,12 +18,17 @@ license = "MIT"
 readme = "README.md"
 
 [workspace.dependencies]
+aurora-engine-precompiles = "2.1"
 aurora-evm = { path = "evm" }
 auto_impl = "1.0"
-primitive-types = { version = "0.13", default-features = false }
-rlp = { version = "0.6", default-features = false, features = ["derive"] }
-sha3 = { version = "0.10", default-features = false }
-serde = { version = "1.0", default-features = false }
+hex = "0.4"
+hex-literal = "1.1"
+libsecp256k1 = "0.7"
+primitive-types = "0.13"
+rlp = "0.6"
+sha2 = "0.10.0"
+sha3 = "0.10.0"
+serde = "1.0"
 
 [patch.crates-io]
 # Constrain to v0.14.6 to ensure compatibility with sha3 0.10 and prevent unexpected upgrades

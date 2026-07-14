@@ -20,6 +20,24 @@ jobs:
       - name: Run tests
         run: cargo test --all --verbose
 
+  block-execution:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Test aurora-evm-block-execution
+        run: cargo test -p aurora-evm-block-execution --verbose
+
+      - name: Build aurora-evm-block-execution (not-std / no-default-features)
+        run: cargo build -p aurora-evm-block-execution --no-default-features
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Build aurora-evm-block-execution for wasm32 (no_std)
+        run: cargo build -p aurora-evm-block-execution --no-default-features --target wasm32-unknown-unknown
+
   unit-tests-32-bit:
     runs-on: ubuntu-latest
     steps:

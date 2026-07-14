@@ -76,7 +76,7 @@ impl<'p, P: PrecompileSet> Evm<'p, P> {
     /// ## Errors
     /// Return EVM validation and run errors
     pub fn run(&mut self) -> Result<(), InvalidEvmContext> {
-        let transactions = std::mem::take(&mut self.transactions);
+        let transactions = core::mem::take(&mut self.transactions);
 
         for tx in &transactions {
             let caller =
@@ -105,7 +105,7 @@ impl<'p, P: PrecompileSet> Evm<'p, P> {
     ///
     /// TODO: manage EVM Exit reason and return it as part of the result
     pub fn execute(&mut self, vicinity: &MemoryVicinity, tx: &Transaction) -> Result<(), String> {
-        let state = std::mem::take(&mut self.state);
+        let state = core::mem::take(&mut self.state);
 
         let mut backend = MemoryBackend::new(vicinity, state);
         let ctx = self.get_current_context(tx);
@@ -147,7 +147,7 @@ impl<'p, P: PrecompileSet> Evm<'p, P> {
         let (values, logs) = executor.into_state().deconstruct();
         backend.apply(values, logs, true);
 
-        self.state = std::mem::take(backend.state_mut());
+        self.state = core::mem::take(backend.state_mut());
         Ok(())
     }
 }
