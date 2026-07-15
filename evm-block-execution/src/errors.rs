@@ -144,10 +144,7 @@ impl fmt::Display for InvalidTransaction {
                 write!(f, "authorization list is not supported for this spec")
             }
             Self::EmptyAuthorizationList => {
-                write!(
-                    f,
-                    "authorization list is empty for transaction with non-empty access list"
-                )
+                write!(f, "authorization list is empty for EIP-7702 transaction")
             }
             Self::Eip7702CreateTransaction => {
                 write!(

@@ -164,12 +164,14 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         Ok(())
     }
 
-    /// Calculates the total fee for the caller, including gas fee, value transfer, and
-    /// data fee (if applicable).
+    /// Upfront gas fee reserved from the caller before execution:
+    /// `effective_gas_price * gas_limit` plus the EIP-4844 blob data fee (when applicable).
+    ///
+    /// The `value` transfer is performed by the executor during the call itself, so it is
+    /// deliberately **not** part of this reservation (matches the proven `evm-tests` model).
     #[must_use]
     pub fn calc_total_charge_fee(&self) -> U256 {
-        let total_fee =
-            self.get_effective_gas_price() * U256::from(self.tx.gas_limit) + self.tx.value;
+        let total_fee = self.get_effective_gas_price() * U256::from(self.tx.gas_limit);
         self.calc_data_fee()
             .map_or(total_fee, |data_fee| total_fee + data_fee)
     }

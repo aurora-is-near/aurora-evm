@@ -8,12 +8,17 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: cargo fmt check
         run: cargo fmt --all -- --check
@@ -34,6 +39,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Build aurora-evm
         run: cargo build -p aurora-evm
