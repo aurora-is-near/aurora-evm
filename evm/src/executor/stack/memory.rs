@@ -248,8 +248,7 @@ impl<'config> MemoryStackSubstate<'config> {
         self.known_account(address).and_then(|acc| acc.code.clone())
     }
 
-    /// Get known empty status of the account from the current accounts state.
-    /// If it's `None` just take a look.
+    /// Get a known storage value from the current substate or its parents.
     #[must_use]
     pub fn known_storage(&self, address: H160, key: H256) -> Option<H256> {
         if let Some(value) = self.storages.get(&(address, key)) {

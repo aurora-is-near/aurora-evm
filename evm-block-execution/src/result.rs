@@ -1,6 +1,7 @@
 //! Aggregated outcome of executing a block.
 
 use crate::bloom::Bloom;
+use crate::constants::EMPTY_ROOT_HASH;
 use crate::receipt::Receipt;
 use crate::requests::Requests;
 use aurora_evm::backend::MemoryAccount;
@@ -14,7 +15,7 @@ use std::collections::BTreeMap;
 /// `withdrawals_root`, `requests_hash`). The final post-execution state map is returned so the
 /// caller can compute `state_root` (full-state path) or feed it to an external witness trie (see
 /// `PLAN.md`, part C). `state_root` is therefore deliberately **not** a field here.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlockExecutionResult {
     /// Per-transaction receipts, in block order.
     pub receipts: Vec<Receipt>,
@@ -36,6 +37,24 @@ pub struct BlockExecutionResult {
     pub state: BTreeMap<H160, MemoryAccount>,
 }
 
+impl Default for BlockExecutionResult {
+    fn default() -> Self {
+        Self {
+            receipts: Vec::new(),
+            requests: Requests::default(),
+            gas_used: 0,
+            blob_gas_used: 0,
+            logs_bloom: Bloom::zero(),
+            // An empty receipts trie hashes to the canonical empty-trie root, not zero, so an
+            // empty-block result carries a valid `receiptsRoot` header commitment by default.
+            receipts_root: EMPTY_ROOT_HASH,
+            withdrawals_root: None,
+            requests_hash: None,
+            state: BTreeMap::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::BlockExecutionResult;
@@ -52,6 +71,7 @@ mod tests {
         assert_eq!(result.gas_used, 0);
         assert_eq!(result.blob_gas_used, 0);
         assert_eq!(result.logs_bloom, Bloom::zero());
+        assert_eq!(result.receipts_root, EMPTY_ROOT_HASH);
         assert!(result.withdrawals_root.is_none());
         assert!(result.requests_hash.is_none());
         assert!(result.state.is_empty());
