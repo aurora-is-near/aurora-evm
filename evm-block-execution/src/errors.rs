@@ -10,6 +10,8 @@ pub enum InvalidHeader {
     PrevrandaoNotSet,
     /// `excess_blob_gas` is not set for Cancun and above.
     ExcessBlobGasNotSet,
+    /// `excess_blob_gas` set on a pre-Cancun block (not supported).
+    ExcessBlobGasNotSupported,
     /// `blob_versioned_hashes` not supported for pre-Cancun spec.
     BlobVersionedHashesNotSupported,
     /// `max_fee_per_blob_gas` not supported for pre-Cancun spec.
@@ -23,6 +25,9 @@ impl fmt::Display for InvalidHeader {
         match self {
             Self::PrevrandaoNotSet => write!(f, "`prevrandao` not set"),
             Self::ExcessBlobGasNotSet => write!(f, "`excess_blob_gas` not set"),
+            Self::ExcessBlobGasNotSupported => {
+                write!(f, "`excess_blob_gas` not supported for this spec")
+            }
             Self::BlobVersionedHashesNotSupported => {
                 write!(f, "`blob_versioned_hashes` not supported for this spec")
             }

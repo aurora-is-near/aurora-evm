@@ -341,4 +341,72 @@ mod tests {
         assert!(gas_paid > coinbase_final, "base fee must be burned");
         assert!(caller_final + to_final + coinbase_final < initial);
     }
+
+    /// A minimal *legacy* value transfer (carries `gas_price`, no EIP-1559 fee fields).
+    fn legacy_transfer_tx(caller: H160, to: H160, value: U256, gas_price: u64) -> Transaction {
+        Transaction {
+            tx_type: TxType::Legacy,
+            tx_kind: TxKind::Call(to),
+            caller,
+            gas_limit: 100_000,
+            value,
+            data: vec![],
+            nonce: U256::zero(),
+            chain_id: None,
+            gas_price: Some(U256::from(gas_price)),
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            access_list: AccessList(vec![]),
+            blob_versioned_hashes: vec![],
+            max_fee_per_blob_gas: 0,
+            authorization_list: vec![],
+        }
+    }
+
+    #[test]
+    fn execute_charges_legacy_tx_on_london() {
+        // Regression for fork-vs-type gas-price selection: on London+ a legacy tx carries
+        // `gas_price`, not `max_fee_per_gas`. The old fork-only path returned `max_fee_per_gas`
+        // (`None` → 0) for it, so the transaction was charged no gas at all.
+        let caller = addr(0xca);
+        let to = addr(0x2e);
+        let coinbase = addr(0xcb);
+        let value = U256::from(1_000u64);
+        let caller_balance = 10_000_000u64;
+
+        let mut state: BTreeMap<H160, MemoryAccount> = BTreeMap::new();
+        state.insert(caller, account_with_balance(caller_balance));
+        // base_fee = 0 → the coinbase receives the whole gas fee, so a non-zero balance there
+        // proves gas was actually charged.
+        let block = london_block(0, coinbase);
+        let tx = legacy_transfer_tx(caller, to, value, 10);
+        let precompiles = Precompiles::new(&Spec::London);
+        let mut evm = Evm::new(
+            Some(1),
+            block,
+            vec![tx.clone()],
+            Spec::London,
+            &precompiles,
+            state,
+        );
+
+        let vicinity = {
+            let ctx = evm.get_current_context(&tx);
+            evm.get_vicinity(&ctx)
+        };
+        evm.execute(&vicinity, &tx).unwrap();
+        let state = evm.state.clone();
+
+        let caller_final = balance_of(&state, caller);
+        let coinbase_final = balance_of(&state, coinbase);
+        let initial = U256::from(caller_balance);
+
+        assert_eq!(balance_of(&state, to), value);
+        // With the fork-only bug the legacy tx paid a zero `gas_price`, so the coinbase got nothing.
+        assert!(
+            coinbase_final > U256::zero(),
+            "legacy tx must be charged gas on London"
+        );
+        assert_eq!(caller_final + value + coinbase_final, initial); // base_fee = 0 → conserved
+    }
 }

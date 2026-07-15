@@ -197,7 +197,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         if self.spec < Spec::Cancun {
             if self.block.blob_excess_gas_and_price.is_some() {
                 return Err(InvalidEvmContext::InvalidHeader(
-                    InvalidHeader::MaxFeePerBlobGasNotSupported,
+                    InvalidHeader::ExcessBlobGasNotSupported,
                 ));
             }
             if !self.block.blob_hashes.is_empty() {
@@ -514,7 +514,14 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     #[must_use]
     pub fn get_gas_price(&self) -> U256 {
         if self.spec >= Spec::London {
-            self.tx.max_fee_per_gas.unwrap_or_default()
+            // Legacy / EIP-2930 transactions still carry `gas_price` on London+, while EIP-1559+
+            // carry `max_fee_per_gas`. Prefer whichever the transaction actually set (matches the
+            // proven `evm-tests` model); selecting purely by fork would charge a post-London
+            // legacy transaction a zero gas price.
+            self.tx
+                .gas_price
+                .or(self.tx.max_fee_per_gas)
+                .unwrap_or_default()
         } else {
             self.tx.gas_price.unwrap_or_default()
         }
