@@ -132,7 +132,7 @@ pub fn trie_account(account: &MemoryAccount) -> TrieAccount {
 
 /// EIP-161 "empty" account: zero nonce, zero balance and no code. Such accounts are never part
 /// of the post-Spurious-Dragon state trie.
-fn is_empty_account(account: &MemoryAccount) -> bool {
+const fn is_empty_account(account: &MemoryAccount) -> bool {
     account.nonce.is_zero() && account.balance.is_zero() && account.code.is_empty()
 }
 

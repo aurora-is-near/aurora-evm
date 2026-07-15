@@ -54,7 +54,7 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> Te
         if !(test.post_state.is_none() && test.gas_left.is_none()) {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: not empty state and left gas for empty output: {reason:?}] ",);
+                print!("[Failed: not empty state and left gas for empty output: {reason:?}] ");
             }
         }
     } else {

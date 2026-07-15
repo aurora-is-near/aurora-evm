@@ -86,11 +86,7 @@ pub fn finish_create(
                 .push(U256::from_big_endian(&create_address[..]))?;
             Ok(())
         }
-        ExitReason::Revert(_) => {
-            runtime.machine.stack_mut().push(U256_ZERO)?;
-            Ok(())
-        }
-        ExitReason::Error(_) => {
+        ExitReason::Revert(_) | ExitReason::Error(_) => {
             runtime.machine.stack_mut().push(U256_ZERO)?;
             Ok(())
         }

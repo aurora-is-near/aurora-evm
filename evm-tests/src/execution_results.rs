@@ -180,7 +180,7 @@ impl TestExecutionResult {
 
     pub fn print_bench(&self) {
         let mut items = self.bench.clone();
-        items.sort_unstable_by(|a, b| b.elapsed.cmp(&a.elapsed));
+        items.sort_unstable_by_key(|b| std::cmp::Reverse(b.elapsed));
 
         if items.is_empty() {
             return;
@@ -213,7 +213,7 @@ impl TestExecutionResult {
             let e_pad = format!("{e:w_elapsed$}");
             let s_pad = format!("{s:w_spec$}");
             let n_pad = format!("{n:w_name$}");
-            println!("{bold_on}{e_pad}{reset}  {gray_on}{s_pad}{reset}  {n_pad}",);
+            println!("{bold_on}{e_pad}{reset}  {gray_on}{s_pad}{reset}  {n_pad}");
         }
     }
 }
