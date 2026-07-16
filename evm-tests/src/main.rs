@@ -5,7 +5,7 @@ use crate::execution_results::TestExecutionResult;
 use crate::types::Spec;
 use crate::types::StateTestCase;
 use crate::types::VmTestCase;
-use clap::{arg, command, value_parser, ArgAction, Command};
+use clap::{ArgAction, Command, arg, command, value_parser};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -195,10 +195,10 @@ fn run_vm_test_for_dir<P: AsRef<Path>>(
 ) {
     for entry in fs::read_dir(dir_name).unwrap() {
         let entry = entry.unwrap();
-        if let Some(s) = entry.file_name().to_str() {
-            if s.starts_with('.') {
-                continue;
-            }
+        if let Some(s) = entry.file_name().to_str()
+            && s.starts_with('.')
+        {
+            continue;
         }
         let path = entry.path();
         if path.is_dir() {
@@ -266,10 +266,10 @@ fn run_test_for_dir<P: AsRef<Path>>(
     }
     for entry in fs::read_dir(dir_name).unwrap() {
         let entry = entry.unwrap();
-        if let Some(s) = entry.file_name().to_str() {
-            if s.starts_with('.') {
-                continue;
-            }
+        if let Some(s) = entry.file_name().to_str()
+            && s.starts_with('.')
+        {
+            continue;
         }
         let path = entry.path();
         if path.is_dir() {
@@ -306,10 +306,10 @@ fn run_test_for_file<P: AsRef<Path>>(
         .expect("Parse test cases failed");
 
     for (name, test) in test_suite {
-        if let Some(t) = test_name {
-            if !name.contains(t) {
-                continue;
-            }
+        if let Some(t) = test_name
+            && !name.contains(t)
+        {
+            continue;
         }
 
         let test_config = TestConfig {
@@ -413,18 +413,18 @@ fn should_skip(path: &Path) -> bool {
         }
 
         // 1) Match by stem + optional parent suffix match
-        if let (Some(ps), Some(cs)) = (path_stem, case_path.file_stem()) {
-            if ps == cs {
-                if case_len == 1 {
-                    return true; // "just a filename (stem)" matches anywhere
-                }
-                // Compare parent components suffix (excluding the filename)
-                if path_len >= case_len
-                    && case_components[..case_len - 1]
-                        == path_components[path_len - case_len..path_len - 1]
-                {
-                    return true;
-                }
+        if let (Some(ps), Some(cs)) = (path_stem, case_path.file_stem())
+            && ps == cs
+        {
+            if case_len == 1 {
+                return true; // "just a filename (stem)" matches anywhere
+            }
+            // Compare parent components suffix (excluding the filename)
+            if path_len >= case_len
+                && case_components[..case_len - 1]
+                    == path_components[path_len - case_len..path_len - 1]
+            {
+                return true;
             }
         }
 

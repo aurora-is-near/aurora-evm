@@ -63,7 +63,7 @@ impl Requests {
 #[cfg(test)]
 mod tests {
     use super::Requests;
-    use crate::constants::{request_type, EMPTY_REQUESTS_HASH};
+    use crate::constants::{EMPTY_REQUESTS_HASH, request_type};
     use crate::crypto::sha256;
 
     #[test]
@@ -76,7 +76,7 @@ mod tests {
     fn type_only_request_is_ignored() {
         let mut reqs = Requests::new();
         reqs.push_request_with_type(request_type::WITHDRAWAL, []); // only the type byte
-                                                                   // The entry is stored, but contributes nothing to the hash.
+        // The entry is stored, but contributes nothing to the hash.
         assert!(!reqs.is_empty());
         assert_eq!(reqs.requests_hash(), EMPTY_REQUESTS_HASH);
     }

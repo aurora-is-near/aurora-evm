@@ -3,8 +3,8 @@ use self::transaction::Transaction;
 use crate::types::blob::BlobExcessGasAndPrice;
 use crate::types::json_utils::{
     deserialize_bytes_from_str, deserialize_bytes_from_str_opt, deserialize_h160_from_str,
-    deserialize_h256_from_u256_str, deserialize_h256_from_u256_str_opt, deserialize_u256_from_str,
-    deserialize_u64_from_str_opt,
+    deserialize_h256_from_u256_str, deserialize_h256_from_u256_str_opt,
+    deserialize_u64_from_str_opt, deserialize_u256_from_str,
 };
 use aurora_evm::backend::MemoryVicinity;
 use primitive_types::{H160, H256, U256};
@@ -79,10 +79,10 @@ impl StateTestCase {
         };
 
         // EIP-1559: priority fee must be lower than gas_price
-        if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas {
-            if max_priority_fee_per_gas > gas_price {
-                return Err(InvalidTxReason::PriorityFeeTooLarge);
-            }
+        if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas
+            && max_priority_fee_per_gas > gas_price
+        {
+            return Err(InvalidTxReason::PriorityFeeTooLarge);
         }
 
         let effective_gas_price = self.transaction.max_priority_fee_per_gas.map_or(

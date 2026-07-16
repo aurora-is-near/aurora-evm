@@ -2,10 +2,10 @@ use crate::blob;
 use crate::block::BlockEnv;
 use crate::errors::{InvalidHeader, InvalidTransaction};
 use crate::spec::Spec;
-use crate::transaction::{eip7825, Transaction, TxType};
+use crate::transaction::{Transaction, TxType, eip7825};
 
-use aurora_evm::gasometer::Gasometer;
 use aurora_evm::Config;
+use aurora_evm::gasometer::Gasometer;
 use core::fmt;
 use primitive_types::{H256, U256};
 
@@ -236,12 +236,12 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             }
         }
 
-        if let Some(block_gas_limit) = self.block.block_gas_limit {
-            if self.tx.gas_limit > block_gas_limit {
-                return Err(InvalidEvmContext::InvalidTransaction(
-                    InvalidTransaction::CallerGasLimitMoreThanBlock,
-                ));
-            }
+        if let Some(block_gas_limit) = self.block.block_gas_limit
+            && self.tx.gas_limit > block_gas_limit
+        {
+            return Err(InvalidEvmContext::InvalidTransaction(
+                InvalidTransaction::CallerGasLimitMoreThanBlock,
+            ));
         }
 
         match self.tx.tx_type {

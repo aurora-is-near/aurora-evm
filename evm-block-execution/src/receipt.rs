@@ -1,6 +1,6 @@
 //! Transaction receipt and its EIP-2718 typed RLP encoding.
 
-use crate::bloom::{logs_bloom, Bloom};
+use crate::bloom::{Bloom, logs_bloom};
 use crate::transaction::TxType;
 use aurora_evm::backend::Log;
 
@@ -104,7 +104,7 @@ mod tests {
         let receipt = Receipt::new(TxType::Eip1559, false, 50_000, vec![]);
         let encoded = receipt.encoded();
         assert_eq!(encoded[0], 0x02); // EIP-2718 type envelope
-                                      // status `false` is encoded as the empty string (0x80), decoding back to 0.
+        // status `false` is encoded as the empty string (0x80), decoding back to 0.
         let body = rlp::Rlp::new(&encoded[1..]);
         assert_eq!(body.item_count().unwrap(), 4);
         assert_eq!(body.val_at::<u8>(0).unwrap(), 0);

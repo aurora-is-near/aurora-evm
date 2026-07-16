@@ -7,7 +7,7 @@
 use aurora_engine_precompiles::{
     Context, EthGas, EvmPrecompileResult, ExitError, Precompile, PrecompileOutput,
 };
-use c_kzg::{ethereum_kzg_settings, Bytes32, Bytes48, KzgProof};
+use c_kzg::{Bytes32, Bytes48, KzgProof, ethereum_kzg_settings};
 use hex_literal::hex;
 use primitive_types::H160;
 use sha2::{Digest as _, Sha256};

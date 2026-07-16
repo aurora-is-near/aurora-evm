@@ -1,9 +1,9 @@
 use crate::config::VerboseOutput;
 use crate::execution_results::TestExecutionResult;
 use crate::types::VmTestCase;
+use aurora_evm::Config;
 use aurora_evm::backend::{ApplyBackend, MemoryBackend};
 use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
-use aurora_evm::Config;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::rc::Rc;

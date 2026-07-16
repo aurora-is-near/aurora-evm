@@ -10,6 +10,7 @@ use crate::precompiles::kzg::Kzg;
 use crate::spec::Spec;
 use aurora_engine_precompiles::modexp::AuroraModExp;
 use aurora_engine_precompiles::{
+    Berlin, Byzantium, EthGas, Istanbul, Osaka, Precompile,
     alt_bn256::{Bn256Add, Bn256Mul, Bn256Pair},
     blake2::Blake2F,
     bls12_381::{
@@ -20,7 +21,6 @@ use aurora_engine_precompiles::{
     modexp::ModExp,
     secp256k1::ECRecover,
     secp256r1::Secp256r1,
-    Berlin, Byzantium, EthGas, Istanbul, Osaka, Precompile,
 };
 use aurora_evm::executor::stack::{
     PrecompileFailure, PrecompileHandle, PrecompileOutput, PrecompileSet,

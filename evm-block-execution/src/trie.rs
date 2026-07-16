@@ -155,7 +155,7 @@ pub fn state_root(accounts: &BTreeMap<H160, MemoryAccount>) -> H256 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ordered_trie_root, state_root, storage_root, trie_account, KeccakHasher, TrieAccount,
+        KeccakHasher, TrieAccount, ordered_trie_root, state_root, storage_root, trie_account,
     };
     use crate::constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY};
     use crate::crypto::keccak256;

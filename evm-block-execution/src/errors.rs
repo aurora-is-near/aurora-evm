@@ -363,8 +363,10 @@ mod tests {
             gas_limit: 50,
         };
         assert!(err.to_string().contains("exceeds gas limit"));
-        assert!(BlockExecutionError::SenderHasCode
-            .to_string()
-            .contains("EIP-3607"));
+        assert!(
+            BlockExecutionError::SenderHasCode
+                .to_string()
+                .contains("EIP-3607")
+        );
     }
 }

@@ -467,16 +467,16 @@ impl<'config> Gasometer<'config> {
                 authorization_list_len,
             } => {
                 log_gas!(
-					self,
-					"Record Call {} [gas_transaction_call: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}, authorization_list_len: {}]",
-					cost,
-					self.config.gas_transaction_call,
-					zero_data_len,
-					non_zero_data_len,
-					access_list_address_len,
-					access_list_storage_len,
-					authorization_list_len
-				);
+                    self,
+                    "Record Call {} [gas_transaction_call: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}, authorization_list_len: {}]",
+                    cost,
+                    self.config.gas_transaction_call,
+                    zero_data_len,
+                    non_zero_data_len,
+                    access_list_address_len,
+                    access_list_storage_len,
+                    authorization_list_len
+                );
             }
             TransactionCost::Create {
                 zero_data_len,
@@ -486,16 +486,16 @@ impl<'config> Gasometer<'config> {
                 initcode_cost,
             } => {
                 log_gas!(
-					self,
-					"Record Create {} [gas_transaction_create: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}, initcode_cost: {}]",
-					cost,
-					self.config.gas_transaction_create,
-					zero_data_len,
-					non_zero_data_len,
-					access_list_address_len,
-					access_list_storage_len,
-					initcode_cost
-				);
+                    self,
+                    "Record Create {} [gas_transaction_create: {}, zero_data_len: {}, non_zero_data_len: {}, access_list_address_len: {}, access_list_storage_len: {}, initcode_cost: {}]",
+                    cost,
+                    self.config.gas_transaction_create,
+                    zero_data_len,
+                    non_zero_data_len,
+                    access_list_address_len,
+                    access_list_storage_len,
+                    initcode_cost
+                );
             }
         }
         if self.gas() < gas_cost {
@@ -1448,10 +1448,6 @@ impl MemoryCost {
         let self_end = self.offset.saturating_add(self.len);
         let other_end = other.offset.saturating_add(other.len);
 
-        if self_end >= other_end {
-            self
-        } else {
-            other
-        }
+        if self_end >= other_end { self } else { other }
     }
 }

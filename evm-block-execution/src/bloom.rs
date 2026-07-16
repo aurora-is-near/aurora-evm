@@ -61,7 +61,7 @@ pub fn logs_bloom(logs: &[Log]) -> Bloom {
 
 #[cfg(test)]
 mod tests {
-    use super::{logs_bloom, Bloom};
+    use super::{Bloom, logs_bloom};
     use aurora_evm::backend::Log;
     use primitive_types::{H160, H256};
 
