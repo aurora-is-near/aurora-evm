@@ -17,6 +17,16 @@ repository = "https://github.com/aurora-is-near/aurora-evm"
 license = "MIT"
 readme = "README.md"
 
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+as_conversions = "deny"
+module_name_repetitions = "allow"
+
 [workspace.dependencies]
 aurora-engine-precompiles = "2.1"
 aurora-evm = { path = "evm" }

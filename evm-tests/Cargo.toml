@@ -9,12 +9,8 @@ keywords.workspace = true
 edition.workspace = true
 publish = false
 
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-pedantic = { level = "deny", priority = -1 }
-nursery = { level = "deny", priority = -1 }
-# Debug-formatting paths in test-failure messages is intentional and harmless.
-unnecessary_debug_formatting = "allow"
+[lints]
+workspace = true
 
 [dependencies]
 aurora-engine-precompiles.workspace = true

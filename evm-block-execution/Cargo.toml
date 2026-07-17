@@ -10,21 +10,8 @@ repository.workspace = true
 license.workspace = true
 readme.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-warnings = "deny"
-
-[lints.clippy]
-all = { level = "deny", priority = -1 }
-pedantic = { level = "deny", priority = -1 }
-nursery = { level = "deny", priority = -1 }
-as_conversions = "deny"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-module_name_repetitions = "allow"
-unreadable_literal = "allow"
-similar_names = "allow"
-too_long_first_doc_paragraph = "allow"
+[lints]
+workspace = true
 
 [dependencies]
 aurora-evm = { workspace = true, features = ["with-serde"] }

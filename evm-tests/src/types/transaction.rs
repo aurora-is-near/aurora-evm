@@ -85,21 +85,17 @@ impl Transaction {
         self.value[state.indexes.value]
     }
 
-    /// Get `access_list` from with state data
+    /// Get `access_list` for the current state data index (empty if absent or out of range).
     #[must_use]
     pub fn get_access_list(&self, state: &PostState) -> Vec<(H160, Vec<H256>)> {
-        if state.indexes.data < self.access_lists.len() {
-            self.access_lists
-                .get(state.indexes.data)
-                .unwrap()
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|a| (a.address, a.storage_keys))
-                .collect()
-        } else {
-            Vec::new()
-        }
+        self.access_lists
+            .get(state.indexes.data)
+            .cloned()
+            .flatten()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| (a.address, a.storage_keys))
+            .collect()
     }
 
     /// Get caller from transaction's secret key.
@@ -145,6 +141,9 @@ impl Transaction {
     ///
     /// # Errors
     /// Returns `InvalidTxReason` if validation fails.
+    ///
+    /// ## Panics
+    /// Panics if a blob (EIP-4844) transaction is validated without a `blob_gas_price`.
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub fn validate(
         &self,
@@ -378,6 +377,9 @@ impl TxType {
     /// Whether this is a legacy, access list, dynamic fee, etc. transaction
     /// Taken from geth's core/types/transaction.go/UnmarshalBinary, but we only detect the transaction
     /// type rather than unmarshal the entire payload.
+    ///
+    /// ## Panics
+    /// Panics if `tx_bytes` is empty, or if its first byte is an unknown enveloped transaction type.
     #[must_use]
     pub const fn from_tx_bytes(tx_bytes: &[u8]) -> Self {
         match tx_bytes[0] {

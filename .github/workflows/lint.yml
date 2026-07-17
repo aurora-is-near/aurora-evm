@@ -24,13 +24,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D clippy::all -D clippy::nursery
-      - name: Clippy aurora-evm no-std
-        run: cargo clippy -p aurora-evm --no-default-features -- -D clippy::all -D clippy::nursery
-      - name: Clippy aurora-evm with features
-        run: cargo clippy -p aurora-evm --features tracing,create-fixed,with-serde -- -D clippy::all -D clippy::nursery
+        run: cargo clippy --workspace --all-targets
+      - name: Clippy no_std
+        run: cargo clippy --no-default-features
+      - name: Clippy with features
+        run: cargo clippy --features tracing,create-fixed,with-serde
       - name: Clippy with features for aurora-evm-jsontests
-        run: cargo clippy -p aurora-evm-jsontests --features dump-state -- -D clippy::all -D clippy::nursery
+        run: cargo clippy -p aurora-evm-jsontests --features dump-state
 
   build:
     runs-on: ubuntu-latest

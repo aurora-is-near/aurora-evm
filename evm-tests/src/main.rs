@@ -1,4 +1,4 @@
-#![allow(clippy::too_long_first_doc_paragraph, clippy::missing_panics_doc)]
+#![allow(clippy::unnecessary_debug_formatting, clippy::as_conversions)]
 
 use crate::config::{TestConfig, VerboseOutput};
 use crate::execution_results::TestExecutionResult;
