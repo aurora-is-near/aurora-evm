@@ -46,19 +46,19 @@ pub struct VmTestCase {
 }
 
 impl VmTestCase {
-    /// Get ouptup
+    /// Get the expected output.
     ///
     /// ## Panics
-    /// When parsing data with unexpected output
+    /// Panics if the test case has no `output` value.
     #[must_use]
     pub fn get_output(&self) -> Vec<u8> {
         self.output.clone().unwrap()
     }
 
-    /// Get gas left
+    /// Get the expected remaining gas.
     ///
     /// ## Panics
-    /// When parsing data with unexpected gas
+    /// Panics if the test case has no `gas_left` value.
     #[must_use]
     pub fn get_gas_left(&self) -> u64 {
         self.gas_left.unwrap().as_u64()

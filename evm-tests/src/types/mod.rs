@@ -64,7 +64,8 @@ impl StateTestCase {
     /// Invalid transaction error status.
     ///
     /// ## Panics
-    /// When parsing data with unexpected value
+    /// Panics if a pre-London transaction has no `gas_price`, or if the transaction's secret key is
+    /// missing or fails to parse (see `get_caller_from_secret_key`).
     pub fn get_memory_vicinity(
         &self,
         spec: &Spec,
