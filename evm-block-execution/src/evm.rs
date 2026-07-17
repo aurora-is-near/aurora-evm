@@ -149,8 +149,8 @@ impl<'p, P: PrecompileSet> Evm<'p, P> {
             }
         }
 
-        // Settle gas after execution (mirrors the `evm-tests` model):
-        // 1. Pay the coinbase; post-London (EIP-1559) the base fee is burned, so it receives
+        // Settle gas after execution:
+        // 1. Pay the coinbase; from London onward (EIP-1559) the base fee is burned, so it receives
         //    only the priority tip (`used_gas * (effective_gas_price - base_fee)`).
         // 2. Refund the caller the unused part of the reservation
         //    (`total_fee - actual_fee [- blob data fee]`).
@@ -262,6 +262,8 @@ mod tests {
         value: U256,
         caller_balance: u64,
     ) -> (H160, H160, H160, BTreeMap<H160, MemoryAccount>) {
+        const CHAIN_ID: u64 = 1;
+
         let caller = addr(0xca);
         let to = addr(0x2e);
         let coinbase = addr(0xcb);
@@ -273,7 +275,7 @@ mod tests {
         let tx = transfer_tx(caller, to, value, max_fee, max_priority);
         let precompiles = Precompiles::new(&Spec::London);
         let mut evm = Evm::new(
-            Some(1),
+            Some(CHAIN_ID),
             block,
             vec![tx.clone()],
             Spec::London,
@@ -282,10 +284,7 @@ mod tests {
         );
 
         // `get_vicinity` is private, so build it here (mirrors what `run` does per transaction).
-        let vicinity = {
-            let ctx = evm.get_current_context(&tx);
-            evm.get_vicinity(&ctx)
-        };
+        let vicinity = evm.get_vicinity(&evm.get_current_context(&tx));
         evm.execute(&vicinity, &tx).unwrap();
 
         (caller, to, coinbase, evm.state.clone())
@@ -296,50 +295,69 @@ mod tests {
         // With `base_fee = 0` nothing is burned, so the balances are exactly conserved and the
         // coinbase receives the whole gas fee — this lets us assert the settlement without
         // depending on the exact `used_gas`.
-        let value = U256::from(1_000u64);
-        let caller_balance = 10_000_000u64;
-        let max_fee = 10u64; // effective_gas_price = 10 (no base fee, no priority cap)
-        let reservation = U256::from(max_fee) * U256::from(100_000u64);
+        let transfer_amount = U256::from(1_000);
+        let caller_balance = 10_000_000;
+        // effective_gas_price = 12 (no base fee, no priority cap)
+        let max_fee = 12;
 
-        let (caller, to, coinbase, state) = run_transfer(0, max_fee, None, value, caller_balance);
+        let (caller, to, coinbase, state) =
+            run_transfer(0, max_fee, None, transfer_amount, caller_balance);
 
-        let caller_final = balance_of(&state, caller);
-        let to_final = balance_of(&state, to);
-        let coinbase_final = balance_of(&state, coinbase);
-        let initial = U256::from(caller_balance);
+        let caller_final_balance = balance_of(&state, caller);
+        let to_final_balance = balance_of(&state, to);
+        let coinbase_final_balance = balance_of(&state, coinbase);
+        let caller_initial_balance = U256::from(caller_balance);
 
-        // Value is transferred exactly once (the old reservation path double-counted it).
-        assert_eq!(to_final, value);
-        // base_fee = 0 → no burn → total balance is conserved.
-        assert_eq!(caller_final + to_final + coinbase_final, initial);
+        assert_eq!(to_final_balance, transfer_amount);
+        // base_fee = 0, no burn - total balance is conserved.
+        assert_eq!(
+            caller_final_balance + to_final_balance + coinbase_final_balance,
+            caller_initial_balance
+        );
         // The coinbase is actually paid its gas fee.
-        assert!(coinbase_final > U256::zero());
-        // The unused gas is refunded: the caller keeps far more than the full upfront reservation
-        // would have left behind (exactly what the reserve-only path got wrong).
-        assert!(caller_final > initial - value - reservation);
+        let gas_fee = U256::from(21000 * max_fee);
+        assert_eq!(coinbase_final_balance, gas_fee);
+        assert_eq!(
+            caller_final_balance,
+            caller_initial_balance - transfer_amount - gas_fee
+        );
     }
 
     #[test]
-    fn execute_burns_base_fee_post_london() {
-        // effective = min(max_fee = 10, priority = 2 + base = 3) = 5; the coinbase receives only
+    fn execute_burns_base_fee_london() {
+        // effective = min(max_fee = 12, priority = 2 + base = 3) = 5; the coinbase receives only
         // the priority tip `used_gas * (5 - 3)`, while `used_gas * 3` is burned.
-        let value = U256::from(1_000u64);
-        let initial = U256::from(10_000_000u64);
+        let transfer_amount = U256::from(1_000);
+        let caller_balance = 10_000_000;
+        let max_fee = 12;
+        let base_fee = 3;
+        let max_priority = 2;
 
-        let (caller, to, coinbase, state) = run_transfer(3, 10, Some(2), value, 10_000_000);
+        let (caller, to, coinbase, state) = run_transfer(
+            base_fee,
+            max_fee,
+            Some(max_priority),
+            transfer_amount,
+            caller_balance,
+        );
 
-        let caller_final = balance_of(&state, caller);
-        let to_final = balance_of(&state, to);
-        let coinbase_final = balance_of(&state, coinbase);
+        let caller_final_balance = balance_of(&state, caller);
+        let to_final_balance = balance_of(&state, to);
+        let coinbase_final_balance = balance_of(&state, coinbase);
+        let caller_initial_balance = U256::from(caller_balance);
 
-        assert_eq!(to_final, value);
+        assert_eq!(to_final_balance, transfer_amount);
         // The priority tip is paid to the coinbase.
-        assert!(coinbase_final > U256::zero());
-        // The caller pays more gas than the coinbase receives — the difference is the burned base
-        // fee, so the total supply strictly decreases.
-        let gas_paid = initial - caller_final - value;
-        assert!(gas_paid > coinbase_final, "base fee must be burned");
-        assert!(caller_final + to_final + coinbase_final < initial);
+        assert_eq!(coinbase_final_balance, U256::from(21000 * max_priority));
+        // The caller pays the full effective gas fee `used_gas * effective_gas_price`, where
+        // `effective_gas_price = min(max_fee, base_fee + max_priority)`. The coinbase keeps only
+        // the priority tip (asserted above); the base-fee part (`used_gas * base_fee`) is burned.
+        let effective_gas_price = base_fee + max_priority;
+        let caller_gas_cost = U256::from(21000 * effective_gas_price);
+        assert_eq!(
+            caller_final_balance,
+            caller_initial_balance - transfer_amount - caller_gas_cost
+        );
     }
 
     /// A minimal *legacy* value transfer (carries `gas_price`, no EIP-1559 fee fields).
@@ -371,15 +389,16 @@ mod tests {
         let caller = addr(0xca);
         let to = addr(0x2e);
         let coinbase = addr(0xcb);
-        let value = U256::from(1_000u64);
-        let caller_balance = 10_000_000u64;
+        let transfer_amount = U256::from(1_000);
+        let caller_balance = 10_000_000;
+        let gas_price = 10;
 
         let mut state: BTreeMap<H160, MemoryAccount> = BTreeMap::new();
         state.insert(caller, account_with_balance(caller_balance));
-        // base_fee = 0 → the coinbase receives the whole gas fee, so a non-zero balance there
+        // base_fee = 0 - the coinbase receives the whole gas fee, so a non-zero balance there
         // proves gas was actually charged.
         let block = london_block(0, coinbase);
-        let tx = legacy_transfer_tx(caller, to, value, 10);
+        let tx = legacy_transfer_tx(caller, to, transfer_amount, gas_price);
         let precompiles = Precompiles::new(&Spec::London);
         let mut evm = Evm::new(
             Some(1),
@@ -397,16 +416,20 @@ mod tests {
         evm.execute(&vicinity, &tx).unwrap();
         let state = evm.state.clone();
 
-        let caller_final = balance_of(&state, caller);
-        let coinbase_final = balance_of(&state, coinbase);
-        let initial = U256::from(caller_balance);
+        let caller_final_balance = balance_of(&state, caller);
+        let coinbase_final_balance = balance_of(&state, coinbase);
+        let initial_caller_balance = U256::from(caller_balance);
 
-        assert_eq!(balance_of(&state, to), value);
-        // With the fork-only bug the legacy tx paid a zero `gas_price`, so the coinbase got nothing.
-        assert!(
-            coinbase_final > U256::zero(),
-            "legacy tx must be charged gas on London"
+        assert_eq!(balance_of(&state, to), transfer_amount);
+        // A plain transfer costs the 21 000 intrinsic gas at the legacy `gas_price`; with
+        // base_fee = 0 nothing is burned, so the coinbase collects the whole fee and the caller
+        // pays exactly `transfer_amount + gas_cost`. (Under the old fork-only bug a London legacy
+        // tx resolved to `max_fee_per_gas` = 0, so it would pay no gas and the coinbase would be 0.)
+        let gas_cost = U256::from(21_000 * gas_price);
+        assert_eq!(coinbase_final_balance, gas_cost);
+        assert_eq!(
+            caller_final_balance,
+            initial_caller_balance - transfer_amount - gas_cost
         );
-        assert_eq!(caller_final + value + coinbase_final, initial); // base_fee = 0 → conserved
     }
 }
