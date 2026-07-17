@@ -25,6 +25,7 @@ pub use spec::Spec;
 pub use vm::VmTestCase;
 
 /// Represents a test case for the Ethereum state transitions.
+///
 /// It includes the environment setup, pre-state, transaction details,
 /// expected post-state results for different forks, configuration, and metadata.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
@@ -59,8 +60,12 @@ pub struct StateTestCase {
 impl StateTestCase {
     /// Get the memory vicinity for the transaction, which includesState test data.
     ///
-    /// # Errors
+    /// ## Errors
     /// Invalid transaction error status.
+    ///
+    /// ## Panics
+    /// Panics if a pre-London transaction has no `gas_price`, or if the transaction's secret key is
+    /// missing or fails to parse (see `get_caller_from_secret_key`).
     pub fn get_memory_vicinity(
         &self,
         spec: &Spec,

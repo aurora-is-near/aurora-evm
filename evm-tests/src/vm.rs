@@ -8,6 +8,10 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::rc::Rc;
 
+/// Run test with verbose args.
+///
+/// ## Panics
+/// Panics if flushing stdout fails.
 #[must_use]
 pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> TestExecutionResult {
     let mut result = TestExecutionResult::new();
@@ -48,13 +52,13 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> Te
         if reason.is_succeed() {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: succeed for empty output: {reason:?}] ");
+                print!("[Failed: succeed for empty output: {reason:?}]");
             }
         }
         if !(test.post_state.is_none() && test.gas_left.is_none()) {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: not empty state and left gas for empty output: {reason:?}] ",);
+                print!("[Failed: not empty state and left gas for empty output: {reason:?}]");
             }
         }
     } else {
@@ -76,13 +80,13 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> Te
         if !test.validate_state(backend.state()) {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: invalid state] ");
+                print!("[Failed: invalid state]");
             }
         }
         if gas != expected_post_gas {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: unexpected gas: {gas:?}] ");
+                print!("[Failed: unexpected gas: {gas:?}]");
             }
         }
     }

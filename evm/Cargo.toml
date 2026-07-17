@@ -10,6 +10,9 @@ repository.workspace = true
 license.workspace = true
 readme.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 auto_impl.workspace = true
 primitive-types = { workspace = true, features = ["rlp"] }

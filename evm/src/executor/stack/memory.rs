@@ -18,7 +18,7 @@ pub struct MemoryStackAccount {
 #[derive(Clone, Debug)]
 pub struct MemoryStackSubstate<'config> {
     metadata: StackSubstateMetadata<'config>,
-    parent: Option<Box<MemoryStackSubstate<'config>>>,
+    parent: Option<Box<Self>>,
     logs: Vec<Log>,
     accounts: BTreeMap<H160, MemoryStackAccount>,
     storages: BTreeMap<(H160, H256), H256>,
@@ -593,7 +593,6 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
         self.substate.exit_discard()
     }
 
-    #[must_use]
     fn is_empty(&self, address: H160) -> bool {
         if let Some(account) = self.substate.known_account(address) {
             if !account.basic.balance.is_zero() || !account.basic.nonce.is_zero() {
