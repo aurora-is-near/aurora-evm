@@ -8,6 +8,10 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::rc::Rc;
 
+/// Run test with verbose args.
+///
+/// ## Panics
+/// Flush panics if something wrong
 #[must_use]
 pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> TestExecutionResult {
     let mut result = TestExecutionResult::new();
@@ -54,7 +58,7 @@ pub fn test(verbose_output: &VerboseOutput, name: &str, test: &VmTestCase) -> Te
         if !(test.post_state.is_none() && test.gas_left.is_none()) {
             failed = true;
             if verbose_output.verbose_failed {
-                print!("[Failed: not empty state and left gas for empty output: {reason:?}] ",);
+                print!("[Failed: not empty state and left gas for empty output: {reason:?}] ");
             }
         }
     } else {

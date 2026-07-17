@@ -102,7 +102,7 @@ pub trait Backend {
     /// [EIP-7516]: BLOBBASEFEE instruction
     fn blob_gas_price(&self) -> Option<u128>;
     /// Get `blob_hash` from `blob_versioned_hashes` by index
-    /// [EIP-4844]: BLOBHASH - https://eips.ethereum.org/EIPS/eip-4844#opcode-to-get-versioned-hashes
+    /// [EIP-4844]: BLOBHASH - <https://eips.ethereum.org/EIPS/eip-4844#opcode-to-get-versioned-hashes>
     fn get_blob_hash(&self, index: usize) -> Option<U256>;
 }
 

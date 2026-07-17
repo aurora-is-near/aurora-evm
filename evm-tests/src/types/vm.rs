@@ -46,11 +46,19 @@ pub struct VmTestCase {
 }
 
 impl VmTestCase {
+    /// Get ouptup
+    ///
+    /// ## Panics
+    /// When parsing data with unexpected output
     #[must_use]
     pub fn get_output(&self) -> Vec<u8> {
         self.output.clone().unwrap()
     }
 
+    /// Get gas left
+    ///
+    /// ## Panics
+    /// When parsing data with unexpected gas
     #[must_use]
     pub fn get_gas_left(&self) -> u64 {
         self.gas_left.unwrap().as_u64()
@@ -61,6 +69,10 @@ impl VmTestCase {
         self.transaction.gas.as_u64()
     }
 
+    /// Validate state
+    ///
+    /// ## Panics
+    /// When parsing data with unexpected value
     #[must_use]
     pub fn validate_state(&self, state: &BTreeMap<H160, MemoryAccount>) -> bool {
         &self

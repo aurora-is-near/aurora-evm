@@ -85,7 +85,7 @@ impl Runtime {
     pub fn run<H: Handler + InterpreterHandler>(
         &mut self,
         handler: &mut H,
-    ) -> Capture<ExitReason, Resolve<H>> {
+    ) -> Capture<ExitReason, Resolve<'_, H>> {
         loop {
             let result = self.machine.step(handler, &self.context.address);
             match result {

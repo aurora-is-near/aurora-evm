@@ -86,6 +86,9 @@ impl Transaction {
     }
 
     /// Get `access_list` from with state data
+    ///
+    /// ## Panics
+    /// When parsing data with unexpected value
     #[must_use]
     pub fn get_access_list(&self, state: &PostState) -> Vec<(H160, Vec<H256>)> {
         if state.indexes.data < self.access_lists.len() {
@@ -145,6 +148,9 @@ impl Transaction {
     ///
     /// # Errors
     /// Returns `InvalidTxReason` if validation fails.
+    ///
+    /// ## Panics
+    /// When parsing data with unexpected value
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub fn validate(
         &self,
@@ -378,6 +384,9 @@ impl TxType {
     /// Whether this is a legacy, access list, dynamic fee, etc. transaction
     /// Taken from geth's core/types/transaction.go/UnmarshalBinary, but we only detect the transaction
     /// type rather than unmarshal the entire payload.
+    ///
+    /// ## Panics
+    /// When parsing data with unexpected tx data.
     #[must_use]
     pub const fn from_tx_bytes(tx_bytes: &[u8]) -> Self {
         match tx_bytes[0] {
