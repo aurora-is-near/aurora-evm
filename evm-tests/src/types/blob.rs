@@ -168,6 +168,9 @@ pub fn calc_max_data_fee(config: &Config, tx: &Transaction) -> Option<U256> {
 /// Calculates the [EIP-4844] `data_fee` of the transaction.
 ///
 /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
+///
+/// ## Panics
+/// When parsing data with unexpected value
 #[inline]
 #[must_use]
 pub fn calc_data_fee(

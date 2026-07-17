@@ -18,7 +18,7 @@ pub struct MemoryStackAccount {
 #[derive(Clone, Debug)]
 pub struct MemoryStackSubstate<'config> {
     metadata: StackSubstateMetadata<'config>,
-    parent: Option<Box<MemoryStackSubstate<'config>>>,
+    parent: Option<Box<Self>>,
     logs: Vec<Log>,
     accounts: BTreeMap<H160, MemoryStackAccount>,
     storages: BTreeMap<(H160, H256), H256>,
