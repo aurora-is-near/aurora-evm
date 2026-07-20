@@ -15,7 +15,7 @@ pub const MIN_BLOB_GAS_PRICE: u64 = 1;
 /// Blob gas-price update fraction (Cancun, EIP-4844).
 pub const BLOB_GAS_PRICE_UPDATE_FRACTION_CANCUN: u64 = 3_338_477;
 /// Blob gas-price update fraction (Prague, EIP-7691).
-pub const BLOB_GASPRICE_UPDATE_FRACTION_PRAGUE: u64 = 5_007_716;
+pub const BLOB_GAS_PRICE_UPDATE_FRACTION_PRAGUE: u64 = 5_007_716;
 /// First version of the blob.
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 

@@ -35,8 +35,8 @@ the pieces needed to execute a *whole block* and validate it against its header.
 
 - A full Ethereum node, networking, the mempool, payload building or the Consensus Layer.
 - Header-only / consensus checks that do not follow from execution (base-fee formula, gas-limit
-  bounds, timestamp ordering, difficulty/PoS, parent-relative checks) — their effect is anyway
-  pinned by the `state_root` comparison.
+  bounds, timestamp ordering, difficulty/PoS, parent-relative checks) — callers must validate
+  these independently; they are not implied by a matching `state_root`.
 - Block reorg machinery (`BundleState` / `TransitionState` / reverts).
 - Pre-merge block/uncle rewards, ommers and the DAO fork.
 
