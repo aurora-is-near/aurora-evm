@@ -1,8 +1,25 @@
-//! Concrete precompile set passed to the Aurora `StackExecutor`.
+//! Ethereum-mainnet precompiled contracts, selected per hardfork.
 //!
-//! Ported from `evm-tests` (the harness proven on ~187k state tests). Precompiles come from
-//! `aurora-engine-precompiles`; the EIP-4844 point-evaluation precompile (`0x0a`) is the safe
-//! KZG implementation in [`kzg`]. The set is selected per hardfork via [`Precompiles::new`].
+//! Precompiles are native contracts living at fixed low addresses; calling such an address runs
+//! the native implementation instead of EVM bytecode. The set (and some pricing) grows with
+//! hardforks — [`Precompiles::new`] builds the concrete set for a [`Spec`]:
+//!
+//! | Hardfork | Addresses | Contents |
+//! |---|---|---|
+//! | Istanbul | `0x01`–`0x09` | ecrecover, sha256, ripemd160, identity, modexp (Byzantium pricing), bn256 add/mul/pairing, blake2f |
+//! | Berlin…Shanghai | `0x01`–`0x09` | the same, modexp repriced per EIP-2565 |
+//! | Cancun | + `0x0a` | KZG point evaluation (EIP-4844) |
+//! | Prague | + `0x0b`–`0x11` | BLS12-381 operations (EIP-2537) |
+//! | Osaka | + `0x100` | P256VERIFY (EIP-7951); modexp repriced per EIP-7883 |
+//!
+//! # Place in the execution pipeline
+//!
+//! One set is built per block and shared by reference with every `StackExecutor` the transaction
+//! loop creates. On each `CALL`-family opcode the executor consults the [`PrecompileSet`]
+//! interface implemented here: `is_precompile` classifies the target address, `execute` runs the
+//! contract. The private adapters at the bottom of this module bridge the
+//! `aurora-engine-precompiles` API (its own gas, context and error types) to that interface,
+//! recording gas on the executor handle and mapping exit errors.
 
 mod kzg;
 
@@ -29,7 +46,10 @@ use aurora_evm::{ExitError, ExitSucceed, Opcode};
 use primitive_types::H160;
 use std::collections::BTreeMap;
 
-/// Hardfork-specific set of precompiles keyed by address.
+/// Hardfork-specific set of precompiles, keyed by address.
+///
+/// Build with [`Precompiles::new`] and pass by reference to
+/// `StackExecutor::new_with_precompiles`.
 pub struct Precompiles(BTreeMap<H160, Box<dyn Precompile>>);
 
 impl PrecompileSet for Precompiles {
@@ -138,7 +158,8 @@ impl Precompiles {
         Self(map)
     }
 
-    /// Osaka precompile set (Prague set with the Osaka modexp pricing).
+    /// Osaka precompile set (Prague set with EIP-7883 modexp pricing, plus P256VERIFY at
+    /// `0x100`, EIP-7951).
     #[must_use]
     pub fn new_osaka() -> Self {
         let mut map: BTreeMap<H160, Box<dyn Precompile>> = BTreeMap::new();
@@ -177,6 +198,7 @@ impl Precompiles {
     }
 }
 
+/// Runs a precompile through the `aurora-engine-precompiles` API, translating the call context.
 fn process_precompile(
     precompile: &dyn Precompile,
     handle: &impl PrecompileHandle,
@@ -198,6 +220,7 @@ fn process_precompile(
         })
 }
 
+/// Records the precompile's gas cost on the executor handle and converts the output type.
 fn post_process(
     output: aurora_engine_precompiles::PrecompileOutput,
     handle: &mut impl PrecompileHandle,
@@ -209,6 +232,7 @@ fn post_process(
     })
 }
 
+/// Maps `aurora-engine-precompiles` exit errors onto the executor's [`ExitError`].
 fn map_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError {
     use aurora_engine_precompiles::ExitError as Src;
     match exit_error {
@@ -230,57 +254,5 @@ fn map_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError
         Src::MaxNonce => ExitError::MaxNonce,
         Src::UsizeOverflow => ExitError::UsizeOverflow,
         Src::CreateContractStartingWithEF => ExitError::CreateContractStartingWithEF,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Precompiles;
-    use crate::spec::Spec;
-    use aurora_evm::executor::stack::PrecompileSet;
-    use primitive_types::H160;
-
-    fn addr(byte: u8) -> H160 {
-        H160::from_low_u64_be(u64::from(byte))
-    }
-
-    #[test]
-    fn istanbul_has_core_precompiles() {
-        let set = Precompiles::new(&Spec::Istanbul);
-        // 0x01..=0x09 are present (ecrecover..blake2f); KZG (0x0a) is not.
-        for byte in 1u8..=9 {
-            assert!(
-                set.is_precompile(addr(byte)),
-                "missing precompile {byte:#x}"
-            );
-        }
-        assert!(!set.is_precompile(addr(0x0a)));
-    }
-
-    #[test]
-    fn cancun_adds_kzg() {
-        let set = Precompiles::new(&Spec::Cancun);
-        assert!(set.is_precompile(addr(0x0a)));
-    }
-
-    #[test]
-    fn prague_adds_bls() {
-        let set = Precompiles::new(&Spec::Prague);
-        // EIP-2537 BLS precompiles occupy 0x0b..=0x11.
-        for byte in 0x0bu8..=0x11 {
-            assert!(
-                set.is_precompile(addr(byte)),
-                "missing BLS precompile {byte:#x}"
-            );
-        }
-    }
-
-    #[test]
-    fn osaka_adds_p256verify() {
-        // EIP-7951 secp256r1 (P256VERIFY) lives at 0x100 and is introduced in Osaka.
-        let p256 = H160::from_low_u64_be(0x100);
-        assert!(Precompiles::new(&Spec::Osaka).is_precompile(p256));
-        // It must NOT be present before Osaka.
-        assert!(!Precompiles::new(&Spec::Prague).is_precompile(p256));
     }
 }

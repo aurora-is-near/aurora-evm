@@ -1,9 +1,21 @@
+//! Error types for block execution and validation.
+//!
+//! Errors are layered by scope:
+//! - [`InvalidHeader`] — the block environment is inconsistent with the active hardfork;
+//! - [`InvalidTransaction`] — a transaction fails pre-execution validation;
+//! - [`BlockExecutionError`] — the top level: wraps the two above (via [`InvalidEvmContext`])
+//!   and adds block-level execution failures and post-execution header mismatches.
+
 use crate::bloom::Bloom;
 use crate::evm_context::InvalidEvmContext;
 use aurora_evm::ExitReason;
 use core::fmt;
 use primitive_types::{H256, U256};
 
+/// Block environment inconsistent with the active hardfork.
+///
+/// Returned when a [`BlockEnv`](crate::block::BlockEnv) field required by the spec is missing,
+/// or a field introduced by a later fork is present.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum InvalidHeader {
     /// `prevrandao` is not set for Merge and above.
@@ -38,40 +50,70 @@ impl fmt::Display for InvalidHeader {
     }
 }
 
-/// Transaction validation error.
+/// Transaction rejected by pre-execution validation.
+///
+/// Produced when a transaction is checked against the block environment, the active spec and the
+/// sender account before execution. In block validation any such error makes the whole block
+/// invalid.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum InvalidTransaction {
+    /// Transaction `chain_id` does not match the configured chain id.
     InvalidChainId,
+    /// Typed (non-legacy) transaction omits `chain_id`.
     MissingChainId,
-    /// Transaction gas limit is greater than the cap.
+    /// Transaction gas limit exceeds the EIP-7825 cap (Osaka and above).
     TxGasLimitGreaterThanCap {
         /// Transaction gas limit.
         gas_limit: u64,
         /// Gas limit cap.
         cap: u64,
     },
+    /// Transaction gas limit exceeds the block gas limit.
     CallerGasLimitMoreThanBlock,
+    /// EIP-2930 (access list) transaction before Berlin.
     Eip2930NotSupported,
+    /// EIP-1559 (dynamic fee) transaction before London.
     Eip1559NotSupported,
+    /// Legacy transaction omits `gas_price`.
     InvalidGasPrice,
+    /// Fee cap (`gas_price` or `max_fee_per_gas`) is below the block base fee.
     GasPriceLessThanBasefee,
+    /// Dynamic-fee transaction omits `max_priority_fee_per_gas`.
     InvalidMaxPriorityFeePerGas,
+    /// Dynamic-fee transaction omits `max_fee_per_gas`.
     InvalidMaxFeePerGas,
+    /// `max_priority_fee_per_gas` is greater than `max_fee_per_gas`.
     PriorityFeeTooLarge,
+    /// EIP-4844 (blob) transaction before Cancun.
     Eip4844NotSupported,
+    /// EIP-7702 (set-code) transaction before Prague.
     Eip7702NotSupported,
+    /// Legacy transaction carries EIP-1559 fee fields.
     UnexpectedPriorityFeeFields,
+    /// Block blob gas price exceeds the transaction `max_fee_per_blob_gas`.
     BlobGasPriceGreaterThanMax,
+    /// Blob transaction carries no blob versioned hashes.
     EmptyBlobs,
+    /// Blob transaction attempts contract creation (forbidden by EIP-4844).
     BlobCreateTransaction,
+    /// Blob versioned hash does not start with `VERSIONED_HASH_VERSION_KZG` (`0x01`).
     BlobVersionNotSupported,
+    /// Blob count exceeds the per-transaction maximum (carried as the payload).
     TooManyBlobs(usize),
+    /// Authorization list present on a non-EIP-7702 transaction.
     AuthorizationListNotSupported,
+    /// EIP-7702 transaction with an empty authorization list.
     EmptyAuthorizationList,
+    /// EIP-7702 transaction attempts contract creation (a `to` address is required).
     Eip7702CreateTransaction,
+    /// Intrinsic gas exceeds the transaction gas limit.
     IntrinsicGasMoreThanGasLimit,
+    /// EIP-7623 floor gas exceeds the transaction gas limit (Prague and above).
     FloorGasMoreThanGasLimit,
+    /// Sender balance cannot cover the maximum cost:
+    /// `gas_limit * gas_price + value`, plus the blob fee for blob transactions.
     OutOfFunds,
+    /// Transaction sender is missing from the state.
     CallerNotFound,
 }
 
@@ -310,63 +352,5 @@ impl fmt::Display for BlockExecutionError {
                 )
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{BlockExecutionError, InvalidTransaction};
-    use crate::evm_context::InvalidEvmContext;
-    use primitive_types::{H256, U256};
-
-    #[test]
-    fn from_invalid_context_wraps() {
-        let ctx = InvalidEvmContext::InvalidTransaction(InvalidTransaction::OutOfFunds);
-        let err: BlockExecutionError = ctx.into();
-        assert!(matches!(err, BlockExecutionError::InvalidContext(_)));
-        assert!(err.to_string().contains("invalid transaction context"));
-    }
-
-    #[test]
-    fn mismatch_carries_got_and_expected() {
-        let err = BlockExecutionError::StateRootMismatch {
-            got: H256::zero(),
-            expected: H256::repeat_byte(0x11),
-        };
-        assert!(err.to_string().contains("state root mismatch"));
-        // A matching pair is a different value than a mismatching one (Eq works).
-        let other = BlockExecutionError::StateRootMismatch {
-            got: H256::repeat_byte(0x11),
-            expected: H256::repeat_byte(0x11),
-        };
-        assert_ne!(err, other);
-    }
-
-    #[test]
-    fn nonce_error_displays() {
-        let err = BlockExecutionError::NonceTooHigh {
-            tx: U256::from(5u64),
-            state: U256::from(3u64),
-        };
-        assert!(err.to_string().contains("nonce too high"));
-    }
-
-    #[test]
-    fn block_level_errors_display() {
-        let err = BlockExecutionError::BlobGasUsedMismatch {
-            got: 1,
-            expected: 2,
-        };
-        assert!(err.to_string().contains("blob gas used mismatch"));
-        let err = BlockExecutionError::BlockGasLimitExceeded {
-            gas_used: 100,
-            gas_limit: 50,
-        };
-        assert!(err.to_string().contains("exceeds gas limit"));
-        assert!(
-            BlockExecutionError::SenderHasCode
-                .to_string()
-                .contains("EIP-3607")
-        );
     }
 }

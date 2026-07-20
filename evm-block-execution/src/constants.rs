@@ -17,13 +17,3 @@ pub const EMPTY_REQUESTS_HASH: H256 = H256(hex!(
 pub const EMPTY_ROOT_HASH: H256 = H256(hex!(
     "56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"
 ));
-
-/// EIP-7685 request type identifiers.
-pub mod request_type {
-    /// EIP-6110 deposit requests.
-    pub const DEPOSIT: u8 = 0x00;
-    /// EIP-7002 withdrawal requests.
-    pub const WITHDRAWAL: u8 = 0x01;
-    /// EIP-7251 consolidation requests.
-    pub const CONSOLIDATION: u8 = 0x02;
-}

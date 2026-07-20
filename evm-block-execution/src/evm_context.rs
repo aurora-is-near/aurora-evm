@@ -132,7 +132,10 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     ///
     /// ## Errors
     /// If the caller does not have enough funds, returns an `OutOfFunds`
-    pub fn validate_required_funds(&self, caller_balance: U256) -> Result<(), InvalidEvmContext> {
+    pub fn validate_required_funds(
+        &self,
+        caller_balance: U256,
+    ) -> Result<&Self, InvalidEvmContext> {
         let required_funds = self
             .get_gas_limit()
             .checked_mul(self.get_gas_price())
@@ -142,7 +145,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ))
             .and_then(|funds| {
                 // Upfront balance check must reserve the MAX blob fee (max_fee_per_blob_gas),
-                // not the current effective blob price — matches the proven evm-tests validation.
+                // not the current effective blob price.
                 self.calc_max_data_fee()
                     .map(|data_fee| {
                         funds
@@ -161,14 +164,14 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        Ok(())
+        Ok(self)
     }
 
     /// Upfront gas fee reserved from the caller before execution:
     /// `effective_gas_price * gas_limit` plus the EIP-4844 blob data fee (when applicable).
     ///
     /// The `value` transfer is performed by the executor during the call itself, so it is
-    /// deliberately **not** part of this reservation (matches the proven `evm-tests` model).
+    /// deliberately **not** part of this reservatio.
     #[must_use]
     pub fn calc_total_charge_fee(&self) -> U256 {
         let total_fee = self.get_effective_gas_price() * U256::from(self.tx.gas_limit);
@@ -180,7 +183,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     ///
     /// ## Errors
     /// If the context is invalid, returns an `InvalidEvmContext` error.
-    pub fn validate_tx(&self) -> Result<(), InvalidEvmContext> {
+    pub fn validate_tx(&self) -> Result<&Self, InvalidEvmContext> {
         if self.spec >= Spec::Merge && self.block.block_randomness.is_none() {
             return Err(InvalidEvmContext::InvalidHeader(
                 InvalidHeader::PrevrandaoNotSet,
@@ -271,9 +274,9 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         }
 
         // Validation intrinsic and floor gas
-        let _ = self.validate_initial_tx_gas()?;
+        let _ = self.validate_and_get_initial_tx_gas()?;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Validate legacy transaction gas price against basefee.
@@ -420,7 +423,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         let max_blob_len = if self.spec == Spec::Cancun {
             blob::MAX_BLOBS_PER_BLOCK_CANCUN
         } else {
-            blob::MAX_BLOBS_PER_BLOCK_ELECTRA
+            blob::MAX_BLOBS_PER_BLOCK_PRAGUE
         };
         if self.tx.blob_versioned_hashes.len() > max_blob_len {
             return Err(InvalidEvmContext::InvalidTransaction(
@@ -480,7 +483,9 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     ///
     /// ## Errors
     /// Return validation error
-    pub fn validate_initial_tx_gas(&self) -> Result<IntrinsicAndFloorGas, InvalidEvmContext> {
+    pub fn validate_and_get_initial_tx_gas(
+        &self,
+    ) -> Result<IntrinsicAndFloorGas, InvalidEvmContext> {
         let access_list = self.tx.access_list.flattened();
         let authorization_list_len = self.tx.authorization_list.len();
         let (intrinsic_gas, floor_gas) = Gasometer::calculate_intrinsic_gas_and_gas_floor(
@@ -515,8 +520,8 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     pub fn get_gas_price(&self) -> U256 {
         if self.spec >= Spec::London {
             // Legacy / EIP-2930 transactions still carry `gas_price` on London+, while EIP-1559+
-            // carry `max_fee_per_gas`. Prefer whichever the transaction actually set (matches the
-            // proven `evm-tests` model); selecting purely by fork would charge a post-London
+            // carry `max_fee_per_gas`. Prefer whichever the transaction actually set;
+            // selecting purely by fork would charge a post-London
             // legacy transaction a zero gas price.
             self.tx
                 .gas_price

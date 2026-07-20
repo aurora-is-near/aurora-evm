@@ -1,4 +1,21 @@
 //! Ethereum logs bloom filter (2048-bit / 256-byte), the "bloom-9" construction.
+//!
+//! A probabilistic membership index over log *addresses* and *topics*: a match may be a false
+//! positive, but a non-match guarantees the logs are absent — letting clients skip blocks and
+//! receipts without replaying them.
+//!
+//! The construction (the Yellow Paper `M` function): each input sets **three** bits of the
+//! 2048-bit field. The input is hashed with `keccak256`, and byte pairs `(0,1)`, `(2,3)`,
+//! `(4,5)` of the hash each yield an 11-bit position; bit indices count from the **high end**
+//! of the byte array (`byte = 255 - bit / 8`). Per log, the emitting address and every topic
+//! are accrued ([`logs_bloom`]). Filters compose by bitwise OR ([`Bloom::accrue_bloom`]), so a
+//! union never loses set bits.
+//!
+//! # Place in the execution pipeline
+//!
+//! Each receipt carries the bloom of its own logs as part of the consensus receipt encoding
+//! (see [`Receipt`](crate::receipt::Receipt)). The block-level `logs_bloom` is the OR of all
+//! receipt blooms and is compared against the header field during post-execution validation.
 
 use crate::crypto::keccak256;
 use aurora_evm::backend::Log;

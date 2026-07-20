@@ -1,7 +1,41 @@
-//! EIP-7685 general-purpose requests container.
+//! [EIP-7685] execution-layer requests and their block-header commitment.
+//!
+//! From Prague onward a block carries *requests* — messages produced by execution and consumed
+//! by the consensus layer. Each request is a byte string `request_type || request_data`; the
+//! currently defined types (see [`request_type`]):
+//!
+//! - `0x00` — validator deposits, parsed from deposit-contract logs (EIP-6110);
+//! - `0x01` — validator withdrawal requests, returned by the EIP-7002 system contract;
+//! - `0x02` — validator consolidation requests, returned by the EIP-7251 system contract.
+//!
+//! The block header commits to them with a flat hash rather than a trie:
+//! `requests_hash = sha256(sha256(req_0) ++ sha256(req_1) ++ ...)`, where non-empty requests are
+//! ordered by type and each `req_i` includes its type byte. With no requests the value is
+//! `sha256("")` ([`EMPTY_REQUESTS_HASH`](crate::constants::EMPTY_REQUESTS_HASH)); pre-Prague
+//! headers have no such field.
+//!
+//! # Place in the execution pipeline
+//!
+//! Requests are gathered in the **post-execution** stage, after the transaction loop: deposits
+//! from the receipt logs, then the outputs of the two request-draining system calls. They are
+//! stored in [`BlockExecutionResult`](crate::result::BlockExecutionResult), and the computed
+//! [`Requests::requests_hash`] is compared against the header value during post-execution header
+//! validation.
+//!
+//! [EIP-7685]: https://eips.ethereum.org/EIPS/eip-7685
 
 use crate::crypto::sha256;
 use primitive_types::H256;
+
+/// EIP-7685 request type identifiers.
+pub mod request_type {
+    /// EIP-6110 deposit requests.
+    pub const DEPOSIT: u8 = 0x00;
+    /// EIP-7002 withdrawal requests.
+    pub const WITHDRAWAL: u8 = 0x01;
+    /// EIP-7251 consolidation requests.
+    pub const CONSOLIDATION: u8 = 0x02;
+}
 
 /// Container of EIP-7685 requests. Each stored entry is `request_type || request_data`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -62,8 +96,8 @@ impl Requests {
 
 #[cfg(test)]
 mod tests {
-    use super::Requests;
-    use crate::constants::{EMPTY_REQUESTS_HASH, request_type};
+    use super::{Requests, request_type};
+    use crate::constants::EMPTY_REQUESTS_HASH;
     use crate::crypto::sha256;
 
     #[test]
@@ -75,7 +109,8 @@ mod tests {
     #[test]
     fn type_only_request_is_ignored() {
         let mut reqs = Requests::new();
-        reqs.push_request_with_type(request_type::WITHDRAWAL, []); // only the type byte
+        // only the type byte
+        reqs.push_request_with_type(request_type::WITHDRAWAL, []);
         // The entry is stored, but contributes nothing to the hash.
         assert!(!reqs.is_empty());
         assert_eq!(reqs.requests_hash(), EMPTY_REQUESTS_HASH);

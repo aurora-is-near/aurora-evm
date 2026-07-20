@@ -1,11 +1,7 @@
 //! Merkle-Patricia trie roots and account trie encoding.
 //!
 //! Roots are computed as pure functions via the `triehash` crate (the standard Ethereum
-//! keccak/RLP Merkle-Patricia trie), i.e. one pass without building a persistent trie. `triehash`
-//! is used instead of the `ethereum` crate because the latter hard-depends on `k256` (→ getrandom),
-//! which breaks the `no_std` / wasm / zk target.
-//! `ordered_trie_root` keys items by `rlp(index)` (receipts/transactions/withdrawals);
-//! `sec_trie_root` hashes keys with keccak (state / storage).
+//! keccak/RLP Merkle-Patricia trie), i.e. one pass without building a persistent trie.
 
 use crate::crypto::keccak256;
 use aurora_evm::backend::MemoryAccount;
@@ -141,7 +137,7 @@ const fn is_empty_account(account: &MemoryAccount) -> bool {
 /// EIP-161 "empty" accounts are excluded here defensively, so the result is canonical even if the
 /// caller did not prune them (`MemoryBackend::apply` with `delete_empty = true` already prunes
 /// them during execution). In the witness/zeth path the root is instead computed by an external
-/// sparse trie (see `PLAN.md`, part C).
+/// sparse trie.
 #[must_use]
 pub fn state_root(accounts: &BTreeMap<H160, MemoryAccount>) -> H256 {
     sec_trie_root(

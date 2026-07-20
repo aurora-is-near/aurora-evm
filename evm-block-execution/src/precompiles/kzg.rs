@@ -1,8 +1,4 @@
 //! EIP-4844 point-evaluation precompile (`0x0A`).
-//!
-//! Safe port of the `evm-tests` KZG precompile: it uses `c_kzg`'s embedded Ethereum mainnet
-//! trusted setup and safe `from_bytes` constructors, so it needs no `unsafe` and no embedded
-//! asset files (the crate keeps `#![forbid(unsafe_code)]`).
 
 use aurora_engine_precompiles::{
     Context, EthGas, EvmPrecompileResult, ExitError, Precompile, PrecompileOutput,

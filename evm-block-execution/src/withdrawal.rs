@@ -1,4 +1,24 @@
-//! EIP-4895 validator withdrawal.
+//! [EIP-4895] validator withdrawals.
+//!
+//! From Shanghai onward a block body carries *withdrawals* — balance credits pushed by the
+//! consensus layer (validator exits and balance skimming). They are not transactions: a
+//! withdrawal is credited unconditionally, consumes no gas, runs no EVM code, cannot fail and
+//! produces no receipt or logs.
+//!
+//! Each [`Withdrawal`] is `{index, validator_index, address, amount}` with `amount` denominated
+//! in **Gwei**; the state credit uses [`Withdrawal::amount_wei`]. The block header commits to
+//! the list with `withdrawals_root` — an
+//! [`ordered_trie_root`](crate::trie::ordered_trie_root) over the RLP encoding (a four-item
+//! list) of each withdrawal in body order.
+//!
+//! # Place in the execution pipeline
+//!
+//! Withdrawals arrive as block input in [`BlockEnv`](crate::block::BlockEnv) and are applied in
+//! the **post-execution** stage, after the transaction loop: each `amount_wei` is credited to
+//! `address`, and the computed `withdrawals_root` is compared against the header value (`Some`
+//! from Shanghai onward) during post-execution validation.
+//!
+//! [EIP-4895]: https://eips.ethereum.org/EIPS/eip-4895
 
 use primitive_types::{H160, U256};
 

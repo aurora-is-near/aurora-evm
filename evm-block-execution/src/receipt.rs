@@ -1,4 +1,23 @@
-//! Transaction receipt and its EIP-2718 typed RLP encoding.
+//! Transaction receipts and their [EIP-2718] typed encoding.
+//!
+//! A receipt is the protocol-visible summary of one executed transaction: the post-Byzantium
+//! success status (EIP-658), the **cumulative** gas used in the block up to and including this
+//! transaction (receipts carry no per-transaction gas), the emitted logs and their bloom filter
+//! ([`logs_bloom`]). This crate targets post-merge forks, so the status form is always used.
+//!
+//! The consensus encoding is `rlp([status, cumulative_gas_used, bloom, logs])`, wrapped in the
+//! EIP-2718 envelope by [`Receipt::encoded`]: a legacy receipt is the bare RLP list, a typed
+//! receipt is prefixed with its [`TxType`] byte.
+//!
+//! # Place in the execution pipeline
+//!
+//! The transaction loop builds one [`Receipt`] per transaction — status from the exit reason,
+//! gas accumulated across the loop, logs from the executor — and collects them in
+//! [`BlockExecutionResult`](crate::result::BlockExecutionResult). Two header commitments derive
+//! from receipts: `receipts_root`, an [`ordered_trie_root`](crate::trie::ordered_trie_root) over
+//! the encoded receipts, and the block `logs_bloom`, the union (OR) of all receipt blooms.
+//!
+//! [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 
 use crate::bloom::{Bloom, logs_bloom};
 use crate::transaction::TxType;

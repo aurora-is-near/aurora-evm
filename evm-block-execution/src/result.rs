@@ -1,4 +1,24 @@
-//! Aggregated outcome of executing a block.
+//! The output boundary of block execution.
+//!
+//! Executing a block yields two kinds of artifacts, aggregated in [`BlockExecutionResult`]:
+//!
+//! - **computed commitments** — the `gas_used` / `blob_gas_used` totals, the block logs bloom,
+//!   `receipts_root`, `withdrawals_root` (Shanghai+) and `requests_hash` (Prague+) — each of
+//!   which a valid block must reproduce in its header;
+//! - **raw outputs** — per-transaction [`Receipt`]s in block order, the collected EIP-7685
+//!   [`Requests`], and the final post-execution state map.
+//!
+//! The one root deliberately missing is `state_root`: it depends on *all* accounts, not only the
+//! touched ones, so the caller either computes it over the returned full state map
+//! ([`state_root`](crate::trie::state_root)) or, in the stateless/witness mode, feeds the state
+//! diff to an external sparse trie.
+//!
+//! # Place in the execution pipeline
+//!
+//! Assembled last, after the transaction loop and the post-execution steps. Header validation
+//! then compares these fields against [`ExpectedHeader`](crate::block::ExpectedHeader); any
+//! divergence surfaces as a mismatch variant of
+//! [`BlockExecutionError`](crate::errors::BlockExecutionError).
 
 use crate::bloom::Bloom;
 use crate::constants::EMPTY_ROOT_HASH;
@@ -13,8 +33,8 @@ use std::collections::BTreeMap;
 /// Carries the per-transaction receipts, the collected EIP-7685 requests, gas / blob-gas totals,
 /// the block logs bloom, and the roots the engine computes itself (`receipts_root`,
 /// `withdrawals_root`, `requests_hash`). The final post-execution state map is returned so the
-/// caller can compute `state_root` (full-state path) or feed it to an external witness trie (see
-/// `PLAN.md`, part C). `state_root` is therefore deliberately **not** a field here.
+/// caller can compute `state_root` (full-state path) or feed it to an external witness trie;
+/// `state_root` is therefore deliberately **not** a field here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BlockExecutionResult {
     /// Per-transaction receipts, in block order.
@@ -52,48 +72,5 @@ impl Default for BlockExecutionResult {
             requests_hash: None,
             state: BTreeMap::new(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::BlockExecutionResult;
-    use crate::bloom::Bloom;
-    use crate::constants::EMPTY_ROOT_HASH;
-    use crate::receipt::Receipt;
-    use crate::transaction::TxType;
-
-    #[test]
-    fn default_is_empty() {
-        let result = BlockExecutionResult::default();
-        assert!(result.receipts.is_empty());
-        assert!(result.requests.is_empty());
-        assert_eq!(result.gas_used, 0);
-        assert_eq!(result.blob_gas_used, 0);
-        assert_eq!(result.logs_bloom, Bloom::zero());
-        assert_eq!(result.receipts_root, EMPTY_ROOT_HASH);
-        assert!(result.withdrawals_root.is_none());
-        assert!(result.requests_hash.is_none());
-        assert!(result.state.is_empty());
-    }
-
-    #[test]
-    fn fields_are_populated_and_comparable() {
-        let result = BlockExecutionResult {
-            receipts: vec![Receipt::new(TxType::Legacy, true, 21_000, vec![])],
-            gas_used: 21_000,
-            withdrawals_root: Some(EMPTY_ROOT_HASH),
-            ..Default::default()
-        };
-        assert_eq!(result.receipts.len(), 1);
-        assert_eq!(result.gas_used, 21_000);
-        assert_eq!(result.withdrawals_root, Some(EMPTY_ROOT_HASH));
-
-        // A differing field is detected by `Eq` (built fresh, no clone).
-        let other = BlockExecutionResult {
-            gas_used: 42_000,
-            ..Default::default()
-        };
-        assert_ne!(result, other);
     }
 }

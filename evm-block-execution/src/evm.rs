@@ -86,8 +86,7 @@ impl<'p, P: PrecompileSet> Evm<'p, P> {
                         InvalidTransaction::CallerNotFound,
                     ))?;
             let ctx = self.get_current_context(tx);
-            ctx.validate_tx()?;
-            ctx.validate_required_funds(caller.balance)?;
+            ctx.validate_tx()?.validate_required_funds(caller.balance)?;
 
             let vicinity = self.get_vicinity(&ctx);
             // TODO: extend results and error handling
