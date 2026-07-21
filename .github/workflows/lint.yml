@@ -1,4 +1,4 @@
-name: Lint
+name: Build & Lint
 
 on:
   push:
@@ -8,14 +8,19 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
-      - name: Rustfmt
+      - name: cargo fmt check
         run: cargo fmt --all -- --check
 
       - name: Clippy
@@ -31,13 +36,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
-      - name: Build
-        run: cargo build --verbose
+      - name: Build aurora-evm
+        run: cargo build -p aurora-evm
 
-      - name: Build NoStd
-        run: cargo build --no-default-features
+      - name: Build aurora-evm no-std
+        run: cargo build -p aurora-evm --no-default-features
 
-      - name: Build for feature (tracing & serde)
-        run: cargo build --features tracing,with-serde
+      - name: Build aurora-evm with features (tracing + create-fixed + with-serde)
+        run: cargo build -p aurora-evm --features tracing,create-fixed,with-serde
+
+      - name: Build aurora-evm-block-execution
+        run: cargo build -p aurora-evm-block-execution

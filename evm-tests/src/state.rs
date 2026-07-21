@@ -7,7 +7,7 @@ use crate::execution_results::{FailedTestDetails, RawInput, TestBench, TestExecu
 use crate::precompiles::Precompiles;
 use crate::state_dump::{StateTestsDump, StateTestsDumper};
 use crate::types::account_state::MemoryAccountsState;
-use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
+use crate::types::blob::{BlobExcessGasAndPrice, calc_data_fee, calc_max_data_fee};
 use crate::types::transaction::TxType;
 use crate::types::{Spec, StateTestCase};
 use aurora_evm::backend::{Apply, ApplyBackend, MemoryBackend};
@@ -41,10 +41,10 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
     let mut tests_result = TestExecutionResult::new();
     for (spec, states) in &test.post_states {
         // Run tests for the specific EVM hard fork (Spec)
-        if let Some(s) = test_config.spec.as_ref() {
-            if s != spec {
-                continue;
-            }
+        if let Some(s) = test_config.spec.as_ref()
+            && s != spec
+        {
+            continue;
         }
 
         // Geet gasometer config for the current spec
@@ -143,7 +143,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         spec,
                     ) =>
                 {
-                    continue
+                    continue;
                 }
                 Err(err) => panic!("transaction validation error: {err:?}"),
             };

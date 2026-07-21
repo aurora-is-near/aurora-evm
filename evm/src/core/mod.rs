@@ -27,7 +27,7 @@ pub use valids::Valids;
 
 use crate::utils::U256_ZERO;
 use core::ops::Range;
-use eval::{eval, Control};
+use eval::{Control, eval};
 use prelude::*;
 use primitive_types::{H160, U256};
 use utils::USIZE_MAX;

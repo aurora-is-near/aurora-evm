@@ -1,5 +1,5 @@
 use crate::backend::Backend;
-use crate::core::utils::{U256_ZERO, U64_MAX};
+use crate::core::utils::{U64_MAX, U256_ZERO};
 use crate::core::{ExitFatal, InterpreterHandler, Machine};
 use crate::executor::stack::precompile::{
     PrecompileFailure, PrecompileHandle, PrecompileOutput, PrecompileSet,
@@ -16,7 +16,7 @@ use crate::{
 use core::{cmp::min, convert::Infallible};
 use primitive_types::{H160, H256, U256};
 use sha3::{Digest, Keccak256};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 macro_rules! emit_exit {
     ($reason:expr) => {{
@@ -620,11 +620,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             address,
         });
 
-        if let Some(limit) = self.config.max_initcode_size {
-            if init_code.len() > limit {
-                self.state.metadata_mut().gasometer.fail();
-                return emit_exit!(ExitError::CreateContractLimit.into(), Vec::new());
-            }
+        if let Some(limit) = self.config.max_initcode_size
+            && init_code.len() > limit
+        {
+            self.state.metadata_mut().gasometer.fail();
+            return emit_exit!(ExitError::CreateContractLimit.into(), Vec::new());
         }
 
         if let Err(e) = self.record_create_transaction_cost(&init_code, &access_list) {
@@ -707,11 +707,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         gas_limit: u64,
         access_list: Vec<(H160, Vec<H256>)>, // See EIP-2930
     ) -> (ExitReason, Vec<u8>) {
-        if let Some(limit) = self.config.max_initcode_size {
-            if init_code.len() > limit {
-                self.state.metadata_mut().gasometer.fail();
-                return emit_exit!(ExitError::CreateContractLimit.into(), Vec::new());
-            }
+        if let Some(limit) = self.config.max_initcode_size
+            && init_code.len() > limit
+        {
+            self.state.metadata_mut().gasometer.fail();
+            return emit_exit!(ExitError::CreateContractLimit.into(), Vec::new());
         }
 
         let code_hash =
@@ -1228,10 +1228,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 
         let mut gas_limit = try_or_fail!(self.calc_gas_limit_and_record(target_gas, take_l64));
 
-        if let Some(transfer) = transfer.as_ref() {
-            if take_stipend && transfer.value != U256_ZERO {
-                gas_limit = gas_limit.saturating_add(self.config.call_stipend);
-            }
+        if let Some(transfer) = transfer.as_ref()
+            && take_stipend
+            && transfer.value != U256_ZERO
+        {
+            gas_limit = gas_limit.saturating_add(self.config.call_stipend);
         }
 
         // EIP-7702 - get delegated designation address code
@@ -1245,11 +1246,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         self.enter_substate(gas_limit, is_static);
         self.state.touch(context.address);
 
-        if let Some(depth) = self.state.metadata().depth {
-            if depth > self.config.call_stack_limit {
-                let _ = self.exit_substate(&StackExitKind::Reverted);
-                return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()));
-            }
+        if let Some(depth) = self.state.metadata().depth
+            && depth > self.config.call_stack_limit
+        {
+            let _ = self.exit_substate(&StackExitKind::Reverted);
+            return Capture::Exit((ExitError::CallTooDeep.into(), Vec::new()));
         }
 
         // Transfer funds if needed
@@ -1343,12 +1344,12 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                     return (e.into(), None, Vec::new());
                 }
 
-                if let Some(limit) = self.config.create_contract_limit {
-                    if out.len() > limit {
-                        self.state.metadata_mut().gasometer.fail();
-                        let _ = self.exit_substate(&StackExitKind::Failed);
-                        return (ExitError::CreateContractLimit.into(), None, Vec::new());
-                    }
+                if let Some(limit) = self.config.create_contract_limit
+                    && out.len() > limit
+                {
+                    self.state.metadata_mut().gasometer.fail();
+                    let _ = self.exit_substate(&StackExitKind::Failed);
+                    return (ExitError::CreateContractLimit.into(), None, Vec::new());
                 }
 
                 match self

@@ -1,7 +1,30 @@
+//! Ethereum-mainnet precompiled contracts, selected per hardfork.
+//!
+//! Precompiles are native contracts living at fixed low addresses; calling such an address runs
+//! the native implementation instead of EVM bytecode. The set (and some pricing) grows with
+//! hardforks — [`Precompiles::new`] builds the concrete set for a [`Spec`]:
+//!
+//! | Hardfork | Addresses | Contents |
+//! |---|---|---|
+//! | Istanbul | `0x01`–`0x09` | ecrecover, sha256, ripemd160, identity, modexp (Byzantium pricing), bn256 add/mul/pairing, blake2f |
+//! | Berlin…Shanghai | `0x01`–`0x09` | the same, modexp repriced per EIP-2565 |
+//! | Cancun | + `0x0a` | KZG point evaluation (EIP-4844) |
+//! | Prague | + `0x0b`–`0x11` | BLS12-381 operations (EIP-2537) |
+//! | Osaka | + `0x100` | P256VERIFY (EIP-7951); modexp repriced per EIP-7883 |
+//!
+//! # Place in the execution pipeline
+//!
+//! One set is built per block and shared by reference with every `StackExecutor` the transaction
+//! loop creates. On each `CALL`-family opcode the executor consults the [`PrecompileSet`]
+//! interface implemented here: `is_precompile` classifies the target address, `execute` runs the
+//! contract. The private adapters at the bottom of this module bridge the
+//! `aurora-engine-precompiles` API (its own gas, context and error types) to that interface,
+//! recording gas on the executor handle and mapping exit errors.
+
 mod kzg;
 
 use crate::precompiles::kzg::Kzg;
-use crate::types::Spec;
+use crate::spec::Spec;
 use aurora_engine_precompiles::modexp::AuroraModExp;
 use aurora_engine_precompiles::{
     Berlin, Byzantium, EthGas, Istanbul, Osaka, Precompile,
@@ -14,6 +37,7 @@ use aurora_engine_precompiles::{
     identity::Identity,
     modexp::ModExp,
     secp256k1::ECRecover,
+    secp256r1::Secp256r1,
 };
 use aurora_evm::executor::stack::{
     PrecompileFailure, PrecompileHandle, PrecompileOutput, PrecompileSet,
@@ -22,6 +46,10 @@ use aurora_evm::{ExitError, ExitSucceed, Opcode};
 use primitive_types::H160;
 use std::collections::BTreeMap;
 
+/// Hardfork-specific set of precompiles, keyed by address.
+///
+/// Build with [`Precompiles::new`] and pass by reference to
+/// `StackExecutor::new_with_precompiles`.
 pub struct Precompiles(BTreeMap<H160, Box<dyn Precompile>>);
 
 impl PrecompileSet for Precompiles {
@@ -29,8 +57,8 @@ impl PrecompileSet for Precompiles {
         &self,
         handle: &mut impl PrecompileHandle,
     ) -> Option<Result<PrecompileOutput, PrecompileFailure>> {
-        let p = self.0.get(&handle.code_address())?;
-        let result = process_precompile(p.as_ref(), handle);
+        let precompile = self.0.get(&handle.code_address())?;
+        let result = process_precompile(precompile.as_ref(), handle);
         Some(result.and_then(|output| post_process(output, handle)))
     }
 
@@ -40,16 +68,11 @@ impl PrecompileSet for Precompiles {
 }
 
 impl Precompiles {
+    /// Builds the precompile set for the given hardfork.
+    #[must_use]
     pub fn new(spec: &Spec) -> Self {
-        match *spec {
-            Spec::Frontier
-            | Spec::Homestead
-            | Spec::Tangerine
-            | Spec::SpuriousDragon
-            | Spec::Byzantium
-            | Spec::Constantinople
-            | Spec::Petersburg
-            | Spec::Istanbul => Self::new_istanbul(),
+        match spec {
+            Spec::Istanbul => Self::new_istanbul(),
             Spec::Berlin | Spec::London | Spec::Merge | Spec::Shanghai => Self::new_berlin(),
             Spec::Cancun => Self::new_cancun(),
             Spec::Prague => Self::new_prague(),
@@ -57,12 +80,11 @@ impl Precompiles {
         }
     }
 
+    /// Istanbul precompile set (ecrecover, sha256, ripemd160, identity, modexp, bn256, blake2f).
+    #[must_use]
     pub fn new_istanbul() -> Self {
-        let mut map = BTreeMap::new();
-        map.insert(
-            ECRecover::ADDRESS.raw(),
-            Box::new(ECRecover) as Box<dyn Precompile>,
-        );
+        let mut map: BTreeMap<H160, Box<dyn Precompile>> = BTreeMap::new();
+        map.insert(ECRecover::ADDRESS.raw(), Box::new(ECRecover));
         map.insert(SHA256::ADDRESS.raw(), Box::new(SHA256));
         map.insert(RIPEMD160::ADDRESS.raw(), Box::new(RIPEMD160));
         map.insert(Identity::ADDRESS.raw(), Box::new(Identity));
@@ -86,12 +108,11 @@ impl Precompiles {
         Self(map)
     }
 
+    /// Berlin..Shanghai precompile set (Istanbul set with the Berlin modexp pricing).
+    #[must_use]
     pub fn new_berlin() -> Self {
-        let mut map = BTreeMap::new();
-        map.insert(
-            ECRecover::ADDRESS.raw(),
-            Box::new(ECRecover) as Box<dyn Precompile>,
-        );
+        let mut map: BTreeMap<H160, Box<dyn Precompile>> = BTreeMap::new();
+        map.insert(ECRecover::ADDRESS.raw(), Box::new(ECRecover));
         map.insert(SHA256::ADDRESS.raw(), Box::new(SHA256));
         map.insert(RIPEMD160::ADDRESS.raw(), Box::new(RIPEMD160));
         map.insert(Identity::ADDRESS.raw(), Box::new(Identity));
@@ -115,12 +136,16 @@ impl Precompiles {
         Self(map)
     }
 
+    /// Cancun precompile set (Berlin set plus the EIP-4844 KZG point evaluation).
+    #[must_use]
     pub fn new_cancun() -> Self {
         let mut map = Self::new_berlin().0;
         map.insert(Kzg::ADDRESS, Box::new(Kzg));
         Self(map)
     }
 
+    /// Prague precompile set (Cancun set plus the EIP-2537 BLS12-381 precompiles).
+    #[must_use]
     pub fn new_prague() -> Self {
         let mut map = Self::new_cancun().0;
         map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
@@ -133,12 +158,12 @@ impl Precompiles {
         Self(map)
     }
 
+    /// Osaka precompile set (Prague set with EIP-7883 modexp pricing, plus P256VERIFY at
+    /// `0x100`, EIP-7951).
+    #[must_use]
     pub fn new_osaka() -> Self {
-        let mut map = BTreeMap::new();
-        map.insert(
-            ECRecover::ADDRESS.raw(),
-            Box::new(ECRecover) as Box<dyn Precompile>,
-        );
+        let mut map: BTreeMap<H160, Box<dyn Precompile>> = BTreeMap::new();
+        map.insert(ECRecover::ADDRESS.raw(), Box::new(ECRecover));
         map.insert(SHA256::ADDRESS.raw(), Box::new(SHA256));
         map.insert(RIPEMD160::ADDRESS.raw(), Box::new(RIPEMD160));
         map.insert(Identity::ADDRESS.raw(), Box::new(Identity));
@@ -159,7 +184,6 @@ impl Precompiles {
             Box::new(Bn256Pair::<Istanbul>::new()),
         );
         map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
-
         map.insert(Kzg::ADDRESS, Box::new(Kzg));
         map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
         map.insert(BlsG1Msm::ADDRESS.raw(), Box::new(BlsG1Msm));
@@ -168,29 +192,15 @@ impl Precompiles {
         map.insert(BlsPairingCheck::ADDRESS.raw(), Box::new(BlsPairingCheck));
         map.insert(BlsMapFpToG1::ADDRESS.raw(), Box::new(BlsMapFpToG1));
         map.insert(BlsMapFp2ToG2::ADDRESS.raw(), Box::new(BlsMapFp2ToG2));
+        // EIP-7951: secp256r1 (P256VERIFY) at address 0x100, introduced in Osaka/Fusaka.
+        map.insert(Secp256r1::ADDRESS.raw(), Box::new(Secp256r1));
         Self(map)
     }
 }
 
-/// Precompile input and output data struct
-#[cfg(feature = "dump-state")]
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct PrecompileStandaloneData {
-    pub input: String,
-    pub output: String,
-}
-
-/// Standalone data for the precompile tests.
-/// It contains input data for precompile and expected
-/// output after the precompile execution.
-#[cfg(feature = "dump-state")]
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct PrecompileStandalone {
-    pub precompile_data: Vec<PrecompileStandaloneData>,
-}
-
+/// Runs a precompile through the `aurora-engine-precompiles` API, translating the call context.
 fn process_precompile(
-    p: &dyn Precompile,
+    precompile: &dyn Precompile,
     handle: &impl PrecompileHandle,
 ) -> Result<aurora_engine_precompiles::PrecompileOutput, PrecompileFailure> {
     let input = handle.input();
@@ -203,27 +213,14 @@ fn process_precompile(
     };
     let is_static = handle.is_static();
 
-    let output = p
+    precompile
         .run(input, gas_limit.map(EthGas::new), &context, is_static)
         .map_err(|err| PrecompileFailure::Error {
-            exit_status: get_exit_error(err),
-        });
-    #[cfg(feature = "dump-state")]
-    if let Ok(_out) = &output {
-        /* EXAMPLE:
-            dump_precompile_state(
-                "bn256_pairing_all.json",
-                input,
-                &out.output,
-                evm_context.address,
-                Bn256Pair::<Istanbul>::ADDRESS.raw(),
-            );
-        */
-    }
-
-    output
+            exit_status: map_exit_error(err),
+        })
 }
 
+/// Records the precompile's gas cost on the executor handle and converts the output type.
 fn post_process(
     output: aurora_engine_precompiles::PrecompileOutput,
     handle: &mut impl PrecompileHandle,
@@ -235,81 +232,27 @@ fn post_process(
     })
 }
 
-fn get_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError {
+/// Maps `aurora-engine-precompiles` exit errors onto the executor's [`ExitError`].
+fn map_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError {
+    use aurora_engine_precompiles::ExitError as Src;
     match exit_error {
-        aurora_engine_precompiles::ExitError::StackUnderflow => ExitError::StackUnderflow,
-        aurora_engine_precompiles::ExitError::StackOverflow => ExitError::StackOverflow,
-        aurora_engine_precompiles::ExitError::InvalidJump => ExitError::InvalidJump,
-        aurora_engine_precompiles::ExitError::InvalidRange => ExitError::InvalidRange,
-        aurora_engine_precompiles::ExitError::DesignatedInvalid => ExitError::DesignatedInvalid,
-        aurora_engine_precompiles::ExitError::CallTooDeep => ExitError::CallTooDeep,
-        aurora_engine_precompiles::ExitError::CreateCollision => ExitError::CreateCollision,
-        aurora_engine_precompiles::ExitError::CreateContractLimit => ExitError::CreateContractLimit,
-        aurora_engine_precompiles::ExitError::InvalidCode(op) => {
-            ExitError::InvalidCode(Opcode(op.0))
-        }
-        aurora_engine_precompiles::ExitError::OutOfOffset => ExitError::OutOfOffset,
-        aurora_engine_precompiles::ExitError::OutOfGas => ExitError::OutOfGas,
-        aurora_engine_precompiles::ExitError::OutOfFund => ExitError::OutOfFund,
-        aurora_engine_precompiles::ExitError::PCUnderflow => ExitError::PCUnderflow,
-        aurora_engine_precompiles::ExitError::CreateEmpty => ExitError::CreateEmpty,
-        aurora_engine_precompiles::ExitError::Other(msg) => ExitError::Other(msg),
-        aurora_engine_precompiles::ExitError::MaxNonce => ExitError::MaxNonce,
-        aurora_engine_precompiles::ExitError::UsizeOverflow => ExitError::UsizeOverflow,
-        aurora_engine_precompiles::ExitError::CreateContractStartingWithEF => {
-            ExitError::CreateContractStartingWithEF
-        }
-    }
-}
-
-/// Dumps precompile input and output data to a JSON file for test case generation.
-///
-/// It can be used for debugging and creating new test cases for precompiles.
-#[cfg(feature = "dump-state")]
-#[allow(dead_code)]
-fn dump_precompile_state(
-    file_name: &str,
-    input: &[u8],
-    output: &[u8],
-    evm_context_address: H160,
-    precompile_address: H160,
-) {
-    use std::fs;
-
-    if input.is_empty() || evm_context_address != precompile_address {
-        return;
-    }
-
-    let mut data = fs::read_to_string(file_name)
-        .ok()
-        .and_then(|content| {
-            if content.trim().is_empty() {
-                None
-            } else {
-                serde_json::from_str::<PrecompileStandalone>(&content).ok()
-            }
-        })
-        .unwrap_or_else(|| PrecompileStandalone {
-            precompile_data: Vec::new(),
-        });
-
-    let hex_input = hex::encode(input);
-    let hex_output = hex::encode(output);
-
-    if !data
-        .precompile_data
-        .iter()
-        .any(|entry| entry.input == hex_input)
-    {
-        data.precompile_data.push(PrecompileStandaloneData {
-            input: hex_input,
-            output: hex_output,
-        });
-
-        if let Ok(serialized) = serde_json::to_string(&data) {
-            fs::write(file_name, serialized).expect("Unable to write the file");
-        } else {
-            panic!("Unable to parse the file");
-        }
+        Src::StackUnderflow => ExitError::StackUnderflow,
+        Src::StackOverflow => ExitError::StackOverflow,
+        Src::InvalidJump => ExitError::InvalidJump,
+        Src::InvalidRange => ExitError::InvalidRange,
+        Src::DesignatedInvalid => ExitError::DesignatedInvalid,
+        Src::CallTooDeep => ExitError::CallTooDeep,
+        Src::CreateCollision => ExitError::CreateCollision,
+        Src::CreateContractLimit => ExitError::CreateContractLimit,
+        Src::InvalidCode(op) => ExitError::InvalidCode(Opcode(op.0)),
+        Src::OutOfOffset => ExitError::OutOfOffset,
+        Src::OutOfGas => ExitError::OutOfGas,
+        Src::OutOfFund => ExitError::OutOfFund,
+        Src::PCUnderflow => ExitError::PCUnderflow,
+        Src::CreateEmpty => ExitError::CreateEmpty,
+        Src::Other(msg) => ExitError::Other(msg),
+        Src::MaxNonce => ExitError::MaxNonce,
+        Src::UsizeOverflow => ExitError::UsizeOverflow,
+        Src::CreateContractStartingWithEF => ExitError::CreateContractStartingWithEF,
     }
 }

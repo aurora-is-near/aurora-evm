@@ -1,10 +1,10 @@
 use crate::types::blob::BlobExcessGasAndPrice;
 use crate::types::json_utils::{
     deserialize_bytes_from_str_opt, deserialize_h160_from_str, deserialize_h160_from_str_opt,
-    deserialize_h256_from_u256_str_opt, deserialize_u256_from_str, deserialize_u256_from_str_opt,
-    deserialize_u8_from_str_opt, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
+    deserialize_h256_from_u256_str_opt, deserialize_u8_from_str_opt, deserialize_u256_from_str,
+    deserialize_u256_from_str_opt, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
 };
-use crate::types::{eip_4844, eip_7702, InvalidTxReason, PostState, Spec};
+use crate::types::{InvalidTxReason, PostState, Spec, eip_4844, eip_7702};
 use aurora_evm::backend::MemoryVicinity;
 use aurora_evm::executor::stack::Authorization;
 use aurora_evm::gasometer::Gasometer;

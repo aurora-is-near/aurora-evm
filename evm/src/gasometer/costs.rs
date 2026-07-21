@@ -1,7 +1,7 @@
-use crate::core::utils::{U256_ONE, U256_VALUE_32, U256_ZERO, U64_MAX};
-use crate::core::ExitError;
-use crate::gasometer::consts;
 use crate::Config;
+use crate::core::ExitError;
+use crate::core::utils::{U64_MAX, U256_ONE, U256_VALUE_32, U256_ZERO};
+use crate::gasometer::consts;
 use primitive_types::{H256, U256};
 
 pub fn call_extra_check(gas: U256, after_gas: u64, config: &Config) -> Result<(), ExitError> {
@@ -304,13 +304,13 @@ pub const fn address_access_cost(
         } else {
             config.gas_storage_read_warm
         };
-        if config.has_authorization_list {
-            if let Some(target_is_cold) = delegated_designator_is_cold {
-                if target_is_cold {
-                    gas += config.gas_account_access_cold;
-                } else {
-                    gas += config.gas_storage_read_warm;
-                }
+        if config.has_authorization_list
+            && let Some(target_is_cold) = delegated_designator_is_cold
+        {
+            if target_is_cold {
+                gas += config.gas_account_access_cold;
+            } else {
+                gas += config.gas_storage_read_warm;
             }
         }
         gas

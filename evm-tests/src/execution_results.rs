@@ -180,7 +180,7 @@ impl TestExecutionResult {
 
     pub fn print_bench(&self) {
         let mut items = self.bench.clone();
-        items.sort_unstable_by_key(|b| core::cmp::Reverse(b.elapsed));
+        items.sort_unstable_by_key(|b| std::cmp::Reverse(b.elapsed));
 
         if items.is_empty() {
             return;
