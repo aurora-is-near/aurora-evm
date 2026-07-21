@@ -8,51 +8,54 @@ on:
 env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v17.0
-  # EEST tests@v20.0.2: a single build for all forks up to Osaka
-  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.2/fixtures.tar.gz
+  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_stable.tar.gz
 
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [ 64-bit, 32-bit ]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v7
-
-      - name: Use Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/checkout@v6
         with:
-          key: ${{ matrix.arch }}
-
-      - name: Install 32-bit toolchain support
-        if: matrix.arch == '32-bit'
-        run: |
-          rustup target add i686-unknown-linux-gnu
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib
-          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
+          persist-credentials: false
 
       - name: Run tests
         run: cargo test --all --verbose
 
-  ethereum-tests:
+      - name: Test aurora-evm-block-execution
+        run: cargo test -p aurora-evm-block-execution
+
+  unit-tests-32-bit:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [ 64-bit, 32-bit ]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v7
-
-      - name: Use Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: actions/checkout@v6
         with:
-          key: ${{ matrix.arch }}
+          persist-credentials: false
+
+      - name: Run tests 32 bit
+        uses: vxcontrol/run-on-arch-action@0.9.0
+        id: tests
+        with:
+          arch: i386
+          distro: bullseye
+          githubToken: ${{ github.token }}
+          run: |
+            apt-get update && apt-get install -y curl clang llvm
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            export PATH="$PATH:$HOME/.cargo/bin"
+            cargo test --all --verbose
+
+  ethereum-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Checkout ethereum/tests
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           repository: ethereum/tests
           path: ethtests
@@ -60,19 +63,11 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Install 32-bit toolchain support
-        if: matrix.arch == '32-bit'
-        run: |
-          rustup target add i686-unknown-linux-gnu
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib curl wget
-          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
-
       - name: Download Ethereum spec tests fixtures
         run: |
           curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
           mkdir ethereum-spec-tests
-          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests fixtures/state_tests
+          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
       - name: Run Ethereum state tests
         run: |
@@ -96,3 +91,55 @@ jobs:
             ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
             ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
             ethtests/LegacyTests/Constantinople/VMTests/vmTests
+
+  ethereum-tests-32-bit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout ethereum/tests
+        uses: actions/checkout@v6
+        with:
+          repository: ethereum/tests
+          path: ethtests
+          ref: ${{ env.ETHTESTS_VERSION }}
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Run Ethereum state tests 32 bit
+        uses: vxcontrol/run-on-arch-action@0.9.0
+        id: tests
+        with:
+          arch: i386
+          distro: bullseye
+          githubToken: ${{ github.token }}
+          run: |
+            apt-get update && apt-get install -y curl wget clang llvm
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            export PATH="$PATH:$HOME/.cargo/bin"
+
+            curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
+            mkdir ethereum-spec-tests
+            tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
+
+            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
+              ethtests/GeneralStateTests/ \
+              ethtests/LegacyTests/Cancun/GeneralStateTests/ \
+              ethereum-spec-tests/fixtures/state_tests/
+
+            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
+              ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
+              ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
+              ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
+              ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
+              ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
+              ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
+              ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
+              ethtests/LegacyTests/Constantinople/VMTests/vmTests

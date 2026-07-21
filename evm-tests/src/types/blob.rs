@@ -1,7 +1,7 @@
 //! EIP-4844 constants and helpers for blob gas pricing.
 
-use crate::types::transaction::Transaction;
 use crate::types::StateEnv;
+use crate::types::transaction::Transaction;
 use aurora_evm::Config;
 use primitive_types::U256;
 use serde::Deserialize;

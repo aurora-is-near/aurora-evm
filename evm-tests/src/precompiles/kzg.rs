@@ -7,7 +7,7 @@ use primitive_types::H160;
 use std::borrow::Cow::Borrowed;
 
 mod kzg {
-    use c_kzg::{Bytes32, Bytes48, KzgProof, KzgSettings, BYTES_PER_G1_POINT, BYTES_PER_G2_POINT};
+    use c_kzg::{BYTES_PER_G1_POINT, BYTES_PER_G2_POINT, Bytes32, Bytes48, KzgProof, KzgSettings};
     use core::convert::TryInto;
     use core::hash::{Hash, Hasher};
     use derive_more::{AsMut, AsRef, Deref, DerefMut};
@@ -282,10 +282,10 @@ impl Precompile for Kzg {
         _is_static: bool,
     ) -> EvmPrecompileResult {
         let cost = Self::required_gas(input)?;
-        if let Some(target_gas) = target_gas {
-            if cost > target_gas {
-                return Err(ExitError::OutOfGas);
-            }
+        if let Some(target_gas) = target_gas
+            && cost > target_gas
+        {
+            return Err(ExitError::OutOfGas);
         }
 
         let output = Self::execute(input)?;

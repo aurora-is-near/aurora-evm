@@ -4,14 +4,18 @@ use serde::{Deserialize, Serialize};
 /// Gas consumption of a single data blob (== blob byte size).
 pub const GAS_PER_BLOB: u64 = 1 << 17;
 /// Max number of blobs per block: EIP-7691
-pub const MAX_BLOBS_PER_BLOCK_ELECTRA: usize = 9;
+pub const MAX_BLOBS_PER_BLOCK_PRAGUE: usize = 9;
 pub const MAX_BLOBS_PER_BLOCK_CANCUN: usize = 6;
-/// Target consumable blob gas for data blobs per block: EIP-7691
-pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 786_432;
+/// Target consumable blob gas per block (Cancun, EIP-4844): 3 blobs.
+pub const TARGET_BLOB_GAS_PER_BLOCK_CANCUN: u64 = 393_216;
+/// Target consumable blob gas per block (Prague, EIP-7691): 6 blobs.
+pub const TARGET_BLOB_GAS_PER_BLOCK_PRAGUE: u64 = 786_432;
 /// Minimum gas price for data blobs.
-pub const MIN_BLOB_GASPRICE: u64 = 1;
-/// Controls the maximum rate of change for blob gas price.
-pub const BLOB_GASPRICE_UPDATE_FRACTION: u64 = 3_338_477;
+pub const MIN_BLOB_GAS_PRICE: u64 = 1;
+/// Blob gas-price update fraction (Cancun, EIP-4844).
+pub const BLOB_GAS_PRICE_UPDATE_FRACTION_CANCUN: u64 = 3_338_477;
+/// Blob gas-price update fraction (Prague, EIP-7691).
+pub const BLOB_GAS_PRICE_UPDATE_FRACTION_PRAGUE: u64 = 5_007_716;
 /// First version of the blob.
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 
@@ -24,9 +28,7 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 pub struct BlobExcessGasAndPrice {
     /// The excess blob gas of the block
     pub excess_blob_gas: u64,
-    /// The calculated blob gas price based on the `excess_blob_gas`
-    ///
-    /// See [`calc_blob_gas_price`]
+    /// The blob gas price derived from `excess_blob_gas`.
     pub blob_gas_price: u128,
 }
 
@@ -34,12 +36,12 @@ impl Default for BlobExcessGasAndPrice {
     fn default() -> Self {
         Self {
             excess_blob_gas: 0,
-            blob_gas_price: u128::from(MIN_BLOB_GASPRICE),
+            blob_gas_price: u128::from(MIN_BLOB_GAS_PRICE),
         }
     }
 }
 
-/// See [EIP-4844], [`calc_max_data_fee`]
+/// Total blob gas consumed by a transaction: `GAS_PER_BLOB * blob_count` ([EIP-4844]).
 ///
 /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 #[inline]

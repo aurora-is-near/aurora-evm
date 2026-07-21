@@ -1,10 +1,10 @@
 use crate::types::blob::BlobExcessGasAndPrice;
 use crate::types::json_utils::{
     deserialize_bytes_from_str_opt, deserialize_h160_from_str, deserialize_h160_from_str_opt,
-    deserialize_h256_from_u256_str_opt, deserialize_u256_from_str, deserialize_u256_from_str_opt,
-    deserialize_u8_from_str_opt, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
+    deserialize_h256_from_u256_str_opt, deserialize_u8_from_str_opt, deserialize_u256_from_str,
+    deserialize_u256_from_str_opt, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
 };
-use crate::types::{eip_4844, eip_7702, InvalidTxReason, PostState, Spec};
+use crate::types::{InvalidTxReason, PostState, Spec, eip_4844, eip_7702};
 use aurora_evm::backend::MemoryVicinity;
 use aurora_evm::executor::stack::Authorization;
 use aurora_evm::gasometer::Gasometer;
@@ -631,18 +631,24 @@ mod signature_tests {
             Some(U256::from(1337))
         );
         // `r` without a curve point, `s` above n/2 and a malformed `v` are invalid
-        assert!(TxSignature::parse(&legacy(37, U256::from(5), U256::one()))
-            .unwrap()
-            .recover_public_key(true)
-            .is_none());
-        assert!(TxSignature::parse(&legacy(37, r, SECP256K1N - U256::one()))
-            .unwrap()
-            .recover_public_key(true)
-            .is_none());
-        assert!(TxSignature::parse(&legacy(34, r, U256::one()))
-            .unwrap()
-            .recover_public_key(true)
-            .is_none());
+        assert!(
+            TxSignature::parse(&legacy(37, U256::from(5), U256::one()))
+                .unwrap()
+                .recover_public_key(true)
+                .is_none()
+        );
+        assert!(
+            TxSignature::parse(&legacy(37, r, SECP256K1N - U256::one()))
+                .unwrap()
+                .recover_public_key(true)
+                .is_none()
+        );
+        assert!(
+            TxSignature::parse(&legacy(34, r, U256::one()))
+                .unwrap()
+                .recover_public_key(true)
+                .is_none()
+        );
     }
 
     #[test]
@@ -750,10 +756,12 @@ mod signature_tests {
             // The opposite parity gives -R, so the resulting public key is finite.
             let opposite =
                 replace_signature(&bytes, base_v + (U256::one() - parity), r, U256::one());
-            assert!(TxSignature::parse(&opposite)
-                .unwrap()
-                .recover_public_key(legacy)
-                .is_some());
+            assert!(
+                TxSignature::parse(&opposite)
+                    .unwrap()
+                    .recover_public_key(legacy)
+                    .is_some()
+            );
         }
     }
 

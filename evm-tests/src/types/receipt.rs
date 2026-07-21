@@ -1,6 +1,6 @@
 use super::json_utils::{
-    deserialize_bytes_from_str, deserialize_h160_from_str, deserialize_u64_from_str,
-    deserialize_vec_h256_from_str, IgnoredField,
+    IgnoredField, deserialize_bytes_from_str, deserialize_h160_from_str, deserialize_u64_from_str,
+    deserialize_vec_h256_from_str,
 };
 use primitive_types::{H160, H256};
 use serde::Deserialize;
