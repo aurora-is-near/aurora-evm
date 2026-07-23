@@ -680,6 +680,24 @@ mod tests {
     }
 
     #[test]
+    fn eip7918_below_target_clamps_before_reserve_check() {
+        // The below-target guard precedes the reserve-price branch in the
+        // normative EIP-7918 pseudocode: when `parent_excess + parent_used < target_blob_gas`
+        // the result is `0` unconditionally, *before* the reserve condition is evaluated.
+        //
+        // This vector is chosen so the reserve condition would be TRUE (base fee 1_000_000 makes
+        // the execution cost dominate the ~minimum blob base fee), yet total blob gas is a single
+        // blob (131072) against the Osaka target of 786432 — so the clamp must still win. A
+        // "reserve-before-clamp" reordering would instead return `0 + 131072*3/9 = 43690`, so this
+        // test locks the spec order.
+        let params = BlobParams::osaka();
+        assert_eq!(
+            calc_excess_blob_gas(0, GAS_PER_BLOB, 1_000_000, &params, true),
+            Some(0),
+        );
+    }
+
+    #[test]
     fn calc_excess_blob_gas_rejects_zero_max() {
         let params = BlobParams {
             target_blobs_per_block: 0,

@@ -62,7 +62,7 @@ pub struct TransactionExecutionResult {
     pub state: BTreeMap<H160, MemoryAccount>,
 }
 
-/// Кesult of executing one transaction, before it becomes a [`Receipt`]. Internal to the
+/// Result of executing one transaction, before it becomes a [`Receipt`]. Internal to the
 /// crate (never part of the public API).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TxExecutionOutcome {
