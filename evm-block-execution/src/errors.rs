@@ -90,6 +90,10 @@ pub enum InvalidTransaction {
     Eip7702NotSupported,
     /// Legacy transaction carries EIP-1559 fee fields.
     UnexpectedPriorityFeeFields,
+    /// A typed (EIP-1559/4844/7702) transaction carries a legacy `gas_price` field.
+    UnexpectedGasPriceField,
+    /// A non-EIP-4844 transaction carries blob versioned hashes.
+    UnexpectedBlobHashes,
     /// Block blob gas price exceeds the transaction `max_fee_per_blob_gas`.
     BlobGasPriceGreaterThanMax,
     /// Blob transaction carries no blob versioned hashes.
@@ -98,8 +102,6 @@ pub enum InvalidTransaction {
     BlobCreateTransaction,
     /// Blob versioned hash does not start with `VERSIONED_HASH_VERSION_KZG` (`0x01`).
     BlobVersionNotSupported,
-    /// Blob count exceeds the per-transaction maximum (carried as the payload).
-    TooManyBlobs(usize),
     /// Authorization list present on a non-EIP-7702 transaction.
     AuthorizationListNotSupported,
     /// EIP-7702 transaction with an empty authorization list.
@@ -113,8 +115,6 @@ pub enum InvalidTransaction {
     /// Sender balance cannot cover the maximum cost:
     /// `gas_limit * gas_price + value`, plus the blob fee for blob transactions.
     OutOfFunds,
-    /// Transaction sender is missing from the state.
-    CallerNotFound,
 }
 
 impl core::error::Error for InvalidTransaction {}
@@ -163,6 +163,12 @@ impl fmt::Display for InvalidTransaction {
             Self::UnexpectedPriorityFeeFields => {
                 write!(f, "unexpected priority fee fields for legacy transaction")
             }
+            Self::UnexpectedGasPriceField => {
+                write!(f, "unexpected `gas_price` field for a typed transaction")
+            }
+            Self::UnexpectedBlobHashes => {
+                write!(f, "blob versioned hashes on a non-EIP-4844 transaction")
+            }
             Self::BlobGasPriceGreaterThanMax => {
                 write!(
                     f,
@@ -180,12 +186,6 @@ impl fmt::Display for InvalidTransaction {
             }
             Self::BlobVersionNotSupported => {
                 write!(f, "blob version not supported for EIP-4844 transaction")
-            }
-            Self::TooManyBlobs(msx) => {
-                write!(
-                    f,
-                    "too many blobs in EIP-4844 transaction, maximum allowed is {msx}",
-                )
             }
             Self::AuthorizationListNotSupported => {
                 write!(f, "authorization list is not supported for this spec")
@@ -206,7 +206,6 @@ impl fmt::Display for InvalidTransaction {
                 write!(f, "floor gas is greater than the Gas limit")
             }
             Self::OutOfFunds => write!(f, "transaction sender does not have enough funds"),
-            Self::CallerNotFound => write!(f, "transaction sender not found in state"),
         }
     }
 }
@@ -236,13 +235,43 @@ pub enum BlockExecutionError {
     },
     /// Sender has non-empty code that is not an EIP-7702 delegation (EIP-3607).
     SenderHasCode,
-    /// Cumulative gas used exceeds the block gas limit.
-    BlockGasLimitExceeded {
-        /// Cumulative gas used so far.
-        gas_used: u64,
-        /// Block gas limit.
-        gas_limit: u64,
+    /// EIP-3860: a contract-creation transaction's init code exceeds `MAX_INITCODE_SIZE`
+    /// (`2 * MAX_CODE_SIZE = 49152`). Such a transaction is invalid (not merely an execution halt).
+    InitCodeTooLarge,
+    /// A Cancun-or-later block has no resolved blob parameters. A well-formed Cancun+ block must
+    /// carry blob parameters (resolved from the chain's `BlobSchedule` by timestamp), just as it
+    /// must carry `excess_blob_gas`; without them the blob limits cannot be enforced. Checked both
+    /// at `Evm::new` (for the block) and when a blob transaction is validated.
+    MissingBlobParams,
+    /// A blob transaction carries more blobs than the active `max_blobs_per_transaction`
+    /// (EIP-7594: 6 from Osaka).
+    TooManyBlobsInTransaction {
+        /// Blob count in the transaction.
+        count: u64,
+        /// Active per-transaction maximum.
+        max: u64,
     },
+    /// The block's cumulative blob count exceeds the active `max_blobs_per_block`.
+    BlockBlobLimitExceeded {
+        /// Cumulative blob count including this transaction.
+        count: u64,
+        /// Active per-block maximum.
+        max: u64,
+    },
+    /// A transaction's gas limit does not fit in the block's remaining gas.
+    BlockGasLimitExceeded {
+        /// Transaction gas limit.
+        tx_gas_limit: u64,
+        /// Gas still available in the block.
+        available_gas: u64,
+    },
+    /// A checked arithmetic operation overflowed (gas/blob/fee accounting).
+    ArithmeticOverflow,
+    /// The block timestamp does not fit in a `u64`.
+    InvalidBlockTimestamp,
+    /// A state read hit data absent from the execution witness (stateless mode). Distinct from a
+    /// protocol-empty account, which is a valid `nonce=0, balance=0, code=[]` read.
+    MissingWitnessData,
     /// A required pre/post-execution system call failed.
     SystemCallFailed,
     /// EVM execution ended in an unexpected (fatal) state.
@@ -317,10 +346,31 @@ impl fmt::Display for BlockExecutionError {
                 write!(f, "nonce too low: transaction {tx}, state {state}")
             }
             Self::SenderHasCode => write!(f, "sender has non-delegation code (EIP-3607)"),
+            Self::InitCodeTooLarge => {
+                write!(f, "init code exceeds the maximum size (EIP-3860)")
+            }
+            Self::MissingBlobParams => write!(
+                f,
+                "block requires blob parameters (Cancun onward) but none were resolved"
+            ),
+            Self::TooManyBlobsInTransaction { count, max } => write!(
+                f,
+                "transaction has {count} blobs, exceeding the per-transaction maximum {max}"
+            ),
+            Self::BlockBlobLimitExceeded { count, max } => write!(
+                f,
+                "block blob count {count} exceeds the per-block maximum {max}"
+            ),
             Self::BlockGasLimitExceeded {
-                gas_used,
-                gas_limit,
-            } => write!(f, "block gas used {gas_used} exceeds gas limit {gas_limit}"),
+                tx_gas_limit,
+                available_gas,
+            } => write!(
+                f,
+                "transaction gas limit {tx_gas_limit} exceeds the block's remaining gas {available_gas}"
+            ),
+            Self::ArithmeticOverflow => write!(f, "arithmetic overflow in block accounting"),
+            Self::InvalidBlockTimestamp => write!(f, "block timestamp does not fit in u64"),
+            Self::MissingWitnessData => write!(f, "state read hit data absent from the witness"),
             Self::SystemCallFailed => write!(f, "system call failed"),
             Self::ExecutionFailed(reason) => write!(f, "execution failed: {reason:?}"),
             Self::GasUsedMismatch { got, expected } => {

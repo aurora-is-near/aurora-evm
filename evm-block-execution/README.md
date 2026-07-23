@@ -46,7 +46,8 @@ the pieces needed to execute a *whole block* and validate it against its header.
   or hooks. This is the deliberate simplification of the layered design.
 - **`primitive-types` (`H160`/`H256`/`U256`) and `rlp`** for values and codecs.
 - **Deterministic `BTreeMap` state** that is mutated in place and moved without cloning.
-- **Integer-only math** (no floating point), suitable for deterministic and wasm targets.
+- **Integer-only, checked/saturating math** (no floating point) for fully deterministic
+  execution — the invariant a zkEVM depends on.
 - **No `unsafe`** (`#![forbid(unsafe_code)]`) and strict Clippy (`pedantic` + `nursery`).
 
 ## `state_root`: two paths

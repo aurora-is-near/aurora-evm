@@ -1,4 +1,4 @@
-use crate::blob::BlobExcessGasAndPrice;
+use crate::blob::{BlobExcessGasAndPrice, BlobParams};
 use crate::bloom::Bloom;
 use crate::withdrawal::Withdrawal;
 use primitive_types::{H160, H256, U256};
@@ -21,8 +21,10 @@ pub struct BlockEnv {
     pub block_timestamp: U256,
     /// Environmental block difficulty.
     pub block_difficulty: U256,
-    /// Environmental block gas limit.
-    pub block_gas_limit: Option<u64>,
+    /// Environmental block gas limit. Mandatory: a block always carries `gasLimit`, and the
+    /// transaction loop enforces `SUM tx.gas_limit <= block_gas_limit` against it. Making it a plain
+    /// `u64` (not `Option`) rules out a fail-open where an absent limit silently disables the check.
+    pub block_gas_limit: u64,
     /// Environmental base fee per gas.
     pub block_base_fee_per_gas: U256,
     /// Environmental randomness.
@@ -34,6 +36,9 @@ pub struct BlockEnv {
     pub blob_excess_gas_and_price: Option<BlobExcessGasAndPrice>,
     /// EIP-4844
     pub blob_hashes: Vec<U256>,
+    /// Active blob-gas parameters for this block, resolved from the chain's `BlobSchedule` by
+    /// timestamp (EIP-7840 / EIP-7892). `None` before Cancun. Set by `Evm::new`.
+    pub blob_params: Option<BlobParams>,
     /// Hash of the parent block.
     ///
     /// Consumed by the EIP-2935 pre-execution system call (writes the parent hash into the
@@ -95,11 +100,12 @@ mod tests {
             block_coinbase: H160::repeat_byte(0xcc),
             block_timestamp: U256::from(1_000u64),
             block_difficulty: U256::zero(),
-            block_gas_limit: Some(30_000_000),
+            block_gas_limit: 30_000_000,
             block_base_fee_per_gas: U256::from(7u64),
             block_randomness: Some(H256::repeat_byte(0x02)),
             blob_excess_gas_and_price: None,
             blob_hashes: vec![],
+            blob_params: None,
             parent_hash: H256::repeat_byte(0x03),
             parent_beacon_block_root: Some(H256::repeat_byte(0x04)),
             withdrawals: vec![Withdrawal {
