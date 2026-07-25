@@ -1,8 +1,9 @@
 use crate::types::blob::BlobExcessGasAndPrice;
 use crate::types::json_utils::{
     deserialize_bytes_from_str_opt, deserialize_h160_from_str, deserialize_h160_from_str_opt,
-    deserialize_h256_from_u256_str_opt, deserialize_u8_from_str_opt, deserialize_u256_from_str,
-    deserialize_u256_from_str_opt, deserialize_vec_of_hex, deserialize_vec_u256_from_str,
+    deserialize_h256_from_u256_str_opt, deserialize_u8_from_str_opt, deserialize_u128_from_str_opt,
+    deserialize_u256_from_str, deserialize_u256_from_str_opt, deserialize_vec_of_hex,
+    deserialize_vec_u256_from_str,
 };
 use crate::types::{InvalidTxReason, PostState, Spec, eip_4844, eip_7702};
 use aurora_evm::backend::MemoryVicinity;
@@ -59,8 +60,8 @@ pub struct Transaction {
     #[serde(default, deserialize_with = "deserialize_vec_u256_from_str")]
     pub blob_versioned_hashes: Vec<U256>,
     /// EIP-4844
-    #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
-    pub max_fee_per_blob_gas: Option<U256>,
+    #[serde(default, deserialize_with = "deserialize_u128_from_str_opt")]
+    pub max_fee_per_blob_gas: Option<u128>,
     /// EIP-7702
     #[serde(default)]
     pub authorization_list: Option<AuthorizationList>,
@@ -194,11 +195,10 @@ impl Transaction {
         if *spec >= Spec::Cancun {
             if let Some(max) = self.max_fee_per_blob_gas {
                 // ensure that the user was willing to at least pay the current blob gasprice
-                if U256::from(
-                    blob_gas_price
-                        .expect("expect blob_gas_price")
-                        .blob_gas_price,
-                ) > max
+                if blob_gas_price
+                    .expect("expect blob_gas_price")
+                    .blob_gas_price
+                    > max
                 {
                     return Err(InvalidTxReason::BlobGasPriceGreaterThanMax);
                 }

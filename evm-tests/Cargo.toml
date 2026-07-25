@@ -17,7 +17,7 @@ aurora-engine-precompiles.workspace = true
 aurora-evm = { workspace = true, features = ["with-serde"] }
 bytecount = "0.6"
 clap = { version = "4.5", features = ["cargo"] }
-c-kzg = "1.0"
+c-kzg = "2.1"
 derive_more = { version = "2", features = ["full"] }
 ethereum = "0.18"
 hex.workspace = true

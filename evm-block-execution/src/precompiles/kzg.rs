@@ -3,7 +3,7 @@
 use aurora_engine_precompiles::{
     Context, EthGas, EvmPrecompileResult, ExitError, Precompile, PrecompileOutput,
 };
-use c_kzg::{Bytes32, Bytes48, KzgProof, ethereum_kzg_settings};
+use c_kzg::{Bytes32, Bytes48, ethereum_kzg_settings};
 use hex_literal::hex;
 use primitive_types::H160;
 use sha2::{Digest as _, Sha256};
@@ -51,9 +51,11 @@ impl Kzg {
         let proof = Bytes48::from_bytes(&input[144..192])
             .map_err(|_err| ExitError::Other(Borrowed("BlobInvalidProof")))?;
 
-        let verified =
-            KzgProof::verify_kzg_proof(&commitment, &z, &y, &proof, ethereum_kzg_settings())
-                .unwrap_or(false);
+        // In c-kzg 2.x, `verify_kzg_proof` is a method on the settings (was an associated function
+        // taking the settings). `precompute = 0` keeps trusted-setup loading cheap.
+        let verified = ethereum_kzg_settings(0)
+            .verify_kzg_proof(&commitment, &z, &y, &proof)
+            .unwrap_or(false);
         if !verified {
             return Err(ExitError::Other(Borrowed("BlobVerifyKzgProofFailed")));
         }

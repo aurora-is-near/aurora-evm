@@ -75,7 +75,13 @@ impl StateTestCase {
         let tx = &self.transaction;
         // Validation for EIP-1559 that was introduced in London hard fork
         let gas_price = if *spec >= Spec::London {
-            tx.gas_price.or(tx.max_fee_per_gas).unwrap_or_default()
+            match tx.tx_type {
+                Some(0 | 1) => tx.gas_price,
+                Some(2..=4) => tx.max_fee_per_gas,
+                Some(_) => panic!("Unknown tx type {:?}", tx.tx_type),
+                None => tx.gas_price.or(tx.max_fee_per_gas),
+            }
+            .unwrap_or_default()
         } else {
             if tx.max_fee_per_gas.is_some() {
                 return Err(InvalidTxReason::GasPriceEip1559);
