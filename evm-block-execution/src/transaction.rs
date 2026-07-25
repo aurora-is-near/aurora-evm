@@ -1,7 +1,6 @@
 use aurora_evm::executor::stack::Authorization;
 use primitive_types::{H160, U256};
 
-use crate::evm_context::EvmContext;
 pub use access_list::{AccessList, AccessListItem};
 pub use tx_kind::TxKind;
 pub use tx_type::TxType;
@@ -79,15 +78,4 @@ pub struct Transaction {
     ///
     /// [EIP-Set EOA account code for one transaction](https://eips.ethereum.org/EIPS/eip-7702)
     pub authorization_list: Vec<Authorization>,
-}
-
-impl Transaction {
-    #[must_use]
-    pub fn validate(&self, _ctx: &EvmContext) -> bool {
-        todo!()
-    }
-
-    pub fn calculate_initial_tx_gas_for_tx(&self) {
-        todo!()
-    }
 }

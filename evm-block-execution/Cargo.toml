@@ -8,7 +8,7 @@ categories.workspace = true
 keywords.workspace = true
 repository.workspace = true
 license.workspace = true
-readme.workspace = true
+readme = "README.md"
 
 [lints]
 workspace = true
@@ -16,7 +16,7 @@ workspace = true
 [dependencies]
 aurora-evm = { workspace = true, features = ["with-serde"] }
 aurora-engine-precompiles.workspace = true
-c-kzg = "1.0"
+c-kzg = "2.1"
 hash-db = "0.15"
 hex-literal.workspace = true
 primitive-types = { workspace = true, features = ["rlp", "serde", "std"] }

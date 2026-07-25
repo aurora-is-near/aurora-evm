@@ -7,7 +7,7 @@ use crate::transaction::{Transaction, TxType, eip7825};
 use aurora_evm::Config;
 use aurora_evm::gasometer::Gasometer;
 use core::fmt;
-use primitive_types::{H256, U256};
+use primitive_types::{H160, H256, U256};
 
 /// Init and floor gas from transaction
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -90,7 +90,10 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         self.spec >= Spec::Prague && self.tx.tx_type == TxType::Eip7702
     }
 
-    /// Calculates the [EIP-4844] `data_fee` of the transaction.
+    /// Calculates the **maximum** [EIP-4844] blob `data_fee`, at the transaction's
+    /// `max_fee_per_blob_gas`. This is the amount reserved up front against the sender's balance;
+    /// the amount actually charged and burned is [`Self::calc_data_fee`], computed at the block's
+    /// current blob gas price (which is always `<=` the max). `None` for non-blob transactions.
     ///
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[inline]
@@ -103,7 +106,9 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         })
     }
 
-    /// Calculates the [EIP-4844] `data_fee` of the transaction.
+    /// Calculates the **actual** [EIP-4844] blob `data_fee`, at the block's current blob gas price.
+    /// This is the amount charged and burned — contrast [`Self::calc_max_data_fee`], which reserves
+    /// up front at the transaction's `max_fee_per_blob_gas`. `None` for non-blob transactions.
     ///
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[inline]
@@ -167,23 +172,20 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         Ok(self)
     }
 
-    /// Upfront gas fee reserved from the caller before execution:
-    /// `effective_gas_price * gas_limit` plus the EIP-4844 blob data fee (when applicable).
+    /// Fully validates the transaction against the EVM context: header / EIP field consistency,
+    /// the per-type checks, and — using the caller-flattened `access_list` — the intrinsic and
+    /// floor gas (EIP-7623). An `Ok` result means the transaction passed every context-level
+    /// check, so callers can treat it as a complete transaction validation.
     ///
-    /// The `value` transfer is performed by the executor during the call itself, so it is
-    /// deliberately **not** part of this reservation.
-    #[must_use]
-    pub fn calc_total_charge_fee(&self) -> U256 {
-        let total_fee = self.get_effective_gas_price() * U256::from(self.tx.gas_limit);
-        self.calc_data_fee()
-            .map_or(total_fee, |data_fee| total_fee + data_fee)
-    }
-
-    /// Validates the EVM context transaction.
+    /// The access list is passed in already flattened so the block layer can reuse the same list
+    /// for execution without flattening it twice.
     ///
     /// ## Errors
     /// If the context is invalid, returns an `InvalidEvmContext` error.
-    pub fn validate_tx(&self) -> Result<&Self, InvalidEvmContext> {
+    pub fn validate_tx(
+        &self,
+        access_list: &[(H160, Vec<H256>)],
+    ) -> Result<&Self, InvalidEvmContext> {
         if self.spec >= Spec::Merge && self.block.block_randomness.is_none() {
             return Err(InvalidEvmContext::InvalidHeader(
                 InvalidHeader::PrevrandaoNotSet,
@@ -239,9 +241,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             }
         }
 
-        if let Some(block_gas_limit) = self.block.block_gas_limit
-            && self.tx.gas_limit > block_gas_limit
-        {
+        if self.tx.gas_limit > self.block.block_gas_limit {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::CallerGasLimitMoreThanBlock,
             ));
@@ -273,8 +273,18 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        // Validation intrinsic and floor gas
-        let _ = self.validate_and_get_initial_tx_gas()?;
+        // Blob versioned hashes are an EIP-4844 field: any other transaction type carrying them
+        // is invalid.
+        if !matches!(self.tx.tx_type, TxType::Eip4844) && !self.tx.blob_versioned_hashes.is_empty()
+        {
+            return Err(InvalidEvmContext::InvalidTransaction(
+                InvalidTransaction::UnexpectedBlobHashes,
+            ));
+        }
+
+        // Intrinsic / floor gas (EIP-7623), using the caller-flattened access list. This is the
+        // final context-level check, so `validate_tx` is a complete transaction validation.
+        self.validate_and_get_initial_tx_gas(access_list)?;
 
         Ok(self)
     }
@@ -310,6 +320,13 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     /// ### Errors
     /// Returns validation error if the transaction has invalid data.
     pub fn validate_priority_fee(&self) -> Result<(), InvalidEvmContext> {
+        // A typed (EIP-1559/4844/7702) transaction must not carry a legacy `gas_price` field;
+        // otherwise the fee source would be ambiguous.
+        if self.tx.gas_price.is_some() {
+            return Err(InvalidEvmContext::InvalidTransaction(
+                InvalidTransaction::UnexpectedGasPriceField,
+            ));
+        }
         let max_fee_per_gas =
             self.tx
                 .max_fee_per_gas
@@ -417,20 +434,8 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             }
         }
 
-        // Ensure the total blob gas spent is at most equal to the limit
-        // assert blob_gas_used <= MAX_BLOB_GAS_PER_BLOCK
-        // EIP-7691
-        let max_blob_len = if self.spec == Spec::Cancun {
-            blob::MAX_BLOBS_PER_BLOCK_CANCUN
-        } else {
-            blob::MAX_BLOBS_PER_BLOCK_PRAGUE
-        };
-        if self.tx.blob_versioned_hashes.len() > max_blob_len {
-            return Err(InvalidEvmContext::InvalidTransaction(
-                InvalidTransaction::TooManyBlobs(max_blob_len),
-            ));
-        }
-
+        // The per-transaction and per-block blob-count limits are enforced by the block layer
+        // against the active `BlobParams` (EIP-7594 / EIP-7840), not from a `Spec` comparison here.
         Ok(())
     }
 
@@ -485,12 +490,12 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     /// Return validation error
     pub fn validate_and_get_initial_tx_gas(
         &self,
+        access_list: &[(H160, Vec<H256>)],
     ) -> Result<IntrinsicAndFloorGas, InvalidEvmContext> {
-        let access_list = self.tx.access_list.flattened();
         let authorization_list_len = self.tx.authorization_list.len();
         let (intrinsic_gas, floor_gas) = Gasometer::calculate_intrinsic_gas_and_gas_floor(
             &self.tx.data,
-            &access_list,
+            access_list,
             authorization_list_len,
             &self.gas_config,
             self.tx.tx_kind.is_create(),
@@ -515,20 +520,19 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         })
     }
 
-    /// Get EVM gas price
+    /// Get EVM gas price.
+    ///
+    /// The fee source is chosen by **transaction type**, never by fork or by which field happens
+    /// to be populated: legacy and EIP-2930 use `gas_price`, EIP-1559/4844/7702 use
+    /// `max_fee_per_gas`. `validate_tx` rejects the incompatible field combinations, so this is
+    /// unambiguous for a validated transaction.
     #[must_use]
     pub fn get_gas_price(&self) -> U256 {
-        if self.spec >= Spec::London {
-            // Legacy / EIP-2930 transactions still carry `gas_price` on London+, while EIP-1559+
-            // carry `max_fee_per_gas`. Prefer whichever the transaction actually set;
-            // selecting purely by fork would charge a post-London
-            // legacy transaction a zero gas price.
-            self.tx
-                .gas_price
-                .or(self.tx.max_fee_per_gas)
-                .unwrap_or_default()
-        } else {
-            self.tx.gas_price.unwrap_or_default()
+        match self.tx.tx_type {
+            TxType::Legacy | TxType::Eip2930 => self.tx.gas_price.unwrap_or_default(),
+            TxType::Eip1559 | TxType::Eip4844 | TxType::Eip7702 => {
+                self.tx.max_fee_per_gas.unwrap_or_default()
+            }
         }
     }
 
@@ -540,7 +544,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         self.tx
             .max_priority_fee_per_gas
             .map_or(gas_price, |max_priority_fee_per_gas| {
-                gas_price.min(max_priority_fee_per_gas + block_base_fee_per_gas)
+                gas_price.min(max_priority_fee_per_gas.saturating_add(block_base_fee_per_gas))
             })
     }
 }
