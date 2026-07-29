@@ -32,6 +32,7 @@ use aurora_evm::backend::{ApplyBackend, Log, MemoryAccount, MemoryBackend, Memor
 use aurora_evm::executor::stack::{
     Authorization, MemoryStackState, StackExecutor, StackSubstateMetadata,
 };
+
 use primitive_types::{H160, H256, U256};
 use std::collections::BTreeMap;
 
@@ -184,7 +185,6 @@ fn run_transaction_loop(
 ) -> Result<(Vec<Receipt>, u64, u64), BlockExecutionError> {
     // Built once per block; only per-transaction fields are updated in the loop (never cloning the
     // potentially large `block_hashes` window again).
-    let mut vicinity = block_vicinity(block, chain_id);
     let base_fee = block.block_base_fee_per_gas;
     let coinbase = block.block_coinbase;
 
@@ -193,7 +193,7 @@ fn run_transaction_loop(
     let mut cumulative_blob_count: u64 = 0;
 
     for tx in transactions {
-        let validated = validate_transaction_against_state(
+        let validated_tx = validate_transaction_against_state(
             tx,
             state,
             block,
@@ -202,17 +202,24 @@ fn run_transaction_loop(
             cumulative_gas_used,
             cumulative_blob_count,
         )?;
-        let tx_type = validated.tx.tx_type;
-        let blob_count = validated.blob_count;
+        let tx_type = validated_tx.tx.tx_type;
+        let blob_count = validated_tx.blob_count;
+
+        // TODO
+        let mut vicinity = block_vicinity(block, chain_id, &validated_tx);
+        vicinity.gas_price = validated_tx.gas_price;
+        vicinity.effective_gas_price = validated_tx.effective_gas_price;
+        vicinity.origin = validated_tx.tx.caller;
+        // vicinity.blob_hashes = validated.tx.blob_versioned_hashes;
 
         let outcome = execute_validated_tx(
             state,
-            &mut vicinity,
+            vicinity,
             precompiles,
             spec,
             base_fee,
             coinbase,
-            validated,
+            validated_tx,
         )?;
 
         cumulative_gas_used = cumulative_gas_used
@@ -271,14 +278,8 @@ fn validate_transaction_against_state(
         sender.is_some_and(|account| is_delegated_sender(&account.code, spec));
 
     // 2. Nonce equality.
-    if tx.nonce > sender_nonce {
-        return Err(BlockExecutionError::NonceTooHigh {
-            tx: tx.nonce,
-            state: sender_nonce,
-        });
-    }
-    if tx.nonce < sender_nonce {
-        return Err(BlockExecutionError::NonceTooLow {
+    if tx.nonce != sender_nonce {
+        return Err(BlockExecutionError::InvalidNonce {
             tx: tx.nonce,
             state: sender_nonce,
         });
@@ -360,15 +361,125 @@ fn validate_transaction_against_state(
     })
 }
 
-/// Executes a validated transaction: reserve gas fee, run the call/create, settle fees, apply the
-/// state diff and return the outcome.
-///
-/// # Errors
-/// [`BlockExecutionError::ExecutionFailed`] on a `Fatal` exit or an impossible fee-settlement
-/// underflow; [`BlockExecutionError::ArithmeticOverflow`] on fee overflow.
+/// Owned inputs one validated transaction hands to [`run_tx_in_backend`].
+struct TxExec {
+    caller: H160,
+    value: U256,
+    gas_limit: u64,
+    tx_kind: TxKind,
+    data: Vec<u8>,
+    access_list: Vec<(H160, Vec<H256>)>,
+    authorization_list: Vec<Authorization>,
+    effective_gas_price: U256,
+    reserve_fee: U256,
+    data_fee: Option<U256>,
+}
+
+/// Up-front fee reservation: gas fee at the effective price plus any blob data fee (never `value`).
+fn reserve_fee(
+    effective_gas_price: U256,
+    gas_limit: u64,
+    data_fee: Option<U256>,
+) -> Result<U256, BlockExecutionError> {
+    let gas_fee = effective_gas_price
+        .checked_mul(U256::from(gas_limit))
+        .ok_or(BlockExecutionError::ArithmeticOverflow)?;
+    data_fee.map_or(Ok(gas_fee), |fee| {
+        gas_fee
+            .checked_add(fee)
+            .ok_or(BlockExecutionError::ArithmeticOverflow)
+    })
+}
+
+/// Caller gas refund: reserved fee minus the fee actually charged minus the non-refundable blob fee.
+fn caller_refund(
+    reserve_fee: U256,
+    actual_fee: U256,
+    data_fee: Option<U256>,
+) -> Result<U256, BlockExecutionError> {
+    reserve_fee
+        .checked_sub(actual_fee)
+        .ok_or(BlockExecutionError::ArithmeticOverflow)?
+        .checked_sub(data_fee.unwrap_or_default())
+        .ok_or(BlockExecutionError::ArithmeticOverflow)
+}
+
+/// Runs one validated transaction against `backend`: reserve, run call/create, settle fees, apply the diff.
+fn run_tx_in_backend(
+    backend: &mut MemoryBackend<'_>,
+    precompiles: &Precompiles,
+    spec: &Spec,
+    base_fee: U256,
+    coinbase: H160,
+    exec: TxExec,
+) -> Result<TxExecutionOutcome, BlockExecutionError> {
+    let gas_config = spec.get_gasometer_config();
+    let metadata = StackSubstateMetadata::new(exec.gas_limit, &gas_config);
+    let executor_state = MemoryStackState::new(metadata, &*backend);
+    let mut executor =
+        StackExecutor::new_with_precompiles(executor_state, &gas_config, precompiles);
+
+    // Reserve the fee. Balance was already validated by the maximum fee, so a failure here is a
+    // broken invariant rather than a user error.
+    executor
+        .state_mut()
+        .withdraw(exec.caller, exec.reserve_fee)
+        .map_err(|err| BlockExecutionError::ExecutionFailed(err.into()))?;
+
+    let (reason, _) = match exec.tx_kind {
+        TxKind::Call(to) => executor.transact_call(
+            exec.caller,
+            to,
+            exec.value,
+            exec.data,
+            exec.gas_limit,
+            exec.access_list,
+            exec.authorization_list,
+        ),
+        TxKind::Create => executor.transact_create(
+            exec.caller,
+            exec.value,
+            exec.data,
+            exec.gas_limit,
+            exec.access_list,
+        ),
+    };
+
+    // A `Fatal` exit (or any broken internal invariant) aborts the whole block.
+    if reason.is_fatal() {
+        return Err(BlockExecutionError::ExecutionFailed(reason));
+    }
+
+    // Settle after execution: pay the coinbase the priority tip (from London the base fee is
+    // burned), refund the caller its unused gas, burn the blob fee.
+    let gas_used = executor.used_gas();
+    let actual_fee = executor.fee(exec.effective_gas_price);
+    let miner_reward = if *spec > Spec::Berlin {
+        executor.fee(exec.effective_gas_price.saturating_sub(base_fee))
+    } else {
+        actual_fee
+    };
+    executor.state_mut().deposit(coinbase, miner_reward);
+
+    let refund = caller_refund(exec.reserve_fee, actual_fee, exec.data_fee)?;
+    executor.state_mut().deposit(exec.caller, refund);
+
+    let (values, logs) = executor.into_state().deconstruct();
+    // Take the transaction's logs for the receipt; the backend's own log history is unused.
+    let logs: Vec<Log> = logs.into_iter().collect();
+    backend.apply(values, core::iter::empty::<Log>(), true);
+
+    Ok(TxExecutionOutcome {
+        reason,
+        gas_used,
+        logs,
+    })
+}
+
+/// Executes a validated transaction and returns its outcome plus the reusable `MemoryVicinity`.
 fn execute_validated_tx(
     state: &mut BTreeMap<H160, MemoryAccount>,
-    vicinity: &mut MemoryVicinity,
+    mut vicinity: MemoryVicinity,
     precompiles: &Precompiles,
     spec: &Spec,
     base_fee: U256,
@@ -378,121 +489,56 @@ fn execute_validated_tx(
     let ValidatedTransaction {
         tx,
         access_list,
-        gas_price,
         effective_gas_price,
         data_fee,
         ..
     } = validated_tx;
-    let caller = tx.caller;
-    let gas_limit = tx.gas_limit;
-    let value = tx.value;
-    let tx_kind = tx.tx_kind;
+    // Destructured rather than read through `Deref`, so the owned fields the executor consumes
+    // (`data`, the blob hashes) move out instead of being cloned.
+    let Transaction {
+        payload,
+        caller,
+        authorization_list,
+    } = tx;
 
-    // Per-transaction vicinity fields (the block-level fields were set once by the caller).
-    vicinity.gas_price = gas_price;
-    vicinity.effective_gas_price = effective_gas_price;
-    vicinity.origin = caller;
-    vicinity.blob_hashes = tx.blob_versioned_hashes;
+    vicinity.blob_hashes = payload.blob_versioned_hashes;
 
-    // Move out the remaining owned inputs the executor consumes, so `tx` need not survive the
-    // `mem::take` below.
-    let data = tx.data;
-    let authorization_list = tx.authorization_list;
-
-    // Up-front reservation: gas fee at the effective price plus the blob fee — but NOT `value`,
-    // which the executor transfers during the call itself.
-    let gas_fee = effective_gas_price
-        .checked_mul(U256::from(gas_limit))
-        .ok_or(BlockExecutionError::ArithmeticOverflow)?;
-    let reserve_fee = match data_fee {
-        Some(fee) => gas_fee
-            .checked_add(fee)
-            .ok_or(BlockExecutionError::ArithmeticOverflow)?,
-        None => gas_fee,
+    let exec = TxExec {
+        caller,
+        value: payload.value,
+        gas_limit: payload.gas_limit,
+        tx_kind: payload.tx_kind,
+        data: payload.data,
+        access_list,
+        authorization_list,
+        effective_gas_price,
+        reserve_fee: reserve_fee(effective_gas_price, payload.gas_limit, data_fee)?,
+        data_fee,
     };
 
-    let gas_config = spec.get_gasometer_config();
-    // Move the world state into a backend for execution. Everything fallible runs inside the
-    // closure; `*state` is then restored UNCONDITIONALLY. On any error the executor's substate is
-    // dropped without `apply`, so `backend.state` is still the untouched pre-transaction world and
-    // that is what gets published; on success `apply` has written the post-transaction state.
+    // Move the world state into a backend for execution; `*state` is restored UNCONDITIONALLY below.
+    // On any error the executor substate is dropped without `apply`, so `backend` still holds the
+    // untouched pre-transaction world; on success `apply` has written the post-transaction state.
     let taken_state = core::mem::take(state);
-    let mut backend = MemoryBackend::new(&*vicinity, taken_state);
-    #[allow(clippy::redundant_closure_call)]
-    let outcome = (|| -> Result<TxExecutionOutcome, BlockExecutionError> {
-        let metadata = StackSubstateMetadata::new(gas_limit, &gas_config);
-        let executor_state = MemoryStackState::new(metadata, &backend);
-        let mut executor =
-            StackExecutor::new_with_precompiles(executor_state, &gas_config, precompiles);
-
-        // Reserve the fee. Balance was already validated by the maximum fee, so a failure here is
-        // a broken invariant rather than a user error.
-        executor
-            .state_mut()
-            .withdraw(caller, reserve_fee)
-            .map_err(|err| BlockExecutionError::ExecutionFailed(err.into()))?;
-
-        let (reason, _) = match tx_kind {
-            TxKind::Call(to) => executor.transact_call(
-                caller,
-                to,
-                value,
-                data,
-                gas_limit,
-                access_list,
-                authorization_list,
-            ),
-            TxKind::Create => executor.transact_create(caller, value, data, gas_limit, access_list),
-        };
-
-        // A `Fatal` exit (or any broken internal invariant) aborts the whole block.
-        if reason.is_fatal() {
-            return Err(BlockExecutionError::ExecutionFailed(reason));
-        }
-
-        // Settle after execution: pay the coinbase the priority tip
-        // (from London the base fee is burned), refund the caller its unused gas, burn the blob
-        // fee.
-        let gas_used = executor.used_gas();
-        let actual_fee = executor.fee(effective_gas_price);
-        let miner_reward = if *spec > Spec::Berlin {
-            executor.fee(effective_gas_price.saturating_sub(base_fee))
-        } else {
-            actual_fee
-        };
-        executor.state_mut().deposit(coinbase, miner_reward);
-
-        let caller_refund = reserve_fee
-            .checked_sub(actual_fee)
-            .ok_or(BlockExecutionError::ArithmeticOverflow)?
-            .checked_sub(data_fee.unwrap_or_default())
-            .ok_or(BlockExecutionError::ArithmeticOverflow)?;
-        executor.state_mut().deposit(caller, caller_refund);
-
-        let (values, logs) = executor.into_state().deconstruct();
-        // Take the transaction's logs for the receipt; the backend's own log history is unused.
-        let logs: Vec<Log> = logs.into_iter().collect();
-        backend.apply(values, core::iter::empty::<Log>(), true);
-
-        Ok(TxExecutionOutcome {
-            reason,
-            gas_used,
-            logs,
-        })
-    })();
-    // Restore the world state on every path: pre-transaction state on error, post-transaction
-    // state on success.
+    let mut backend = MemoryBackend::new(&vicinity, taken_state);
+    let outcome = run_tx_in_backend(&mut backend, precompiles, spec, base_fee, coinbase, exec);
+    // Restore the world state on every path: pre-transaction on error, post-transaction on success.
     *state = core::mem::take(backend.state_mut());
+    // `backend`'s shared borrow of `vicinity` has ended, so it can move back out for the next tx.
     outcome
 }
 
 /// Builds the block-level [`MemoryVicinity`]; per-transaction fields (`gas_price`,
 /// `effective_gas_price`, `origin`, `blob_hashes`) are overwritten before each execution.
-fn block_vicinity(block: &BlockEnv, chain_id: Option<u64>) -> MemoryVicinity {
+fn block_vicinity(
+    block: &BlockEnv,
+    chain_id: Option<u64>,
+    validated_tx: &ValidatedTransaction,
+) -> MemoryVicinity {
     MemoryVicinity {
-        gas_price: U256::zero(),
-        effective_gas_price: U256::zero(),
-        origin: H160::zero(),
+        gas_price: validated_tx.gas_price,
+        effective_gas_price: validated_tx.effective_gas_price,
+        origin: validated_tx.tx.caller,
         block_hashes: block.block_hashes.clone(),
         block_number: block.block_number,
         block_coinbase: block.block_coinbase,
@@ -516,7 +562,7 @@ mod tests {
     use crate::block::BlockEnv;
     use crate::errors::BlockExecutionError;
     use crate::spec::Spec;
-    use crate::transaction::{AccessList, Transaction, TxKind, TxType};
+    use crate::transaction::{AccessList, Transaction, TxKind, TxPayload, TxType};
     use aurora_evm::backend::MemoryAccount;
     use primitive_types::{H160, H256, U256};
     use std::collections::BTreeMap;
@@ -557,6 +603,34 @@ mod tests {
         }
     }
 
+    /// A payload with the fields no test varies already filled in.
+    fn payload(tx_type: TxType, to: H160, nonce: u64) -> TxPayload {
+        TxPayload {
+            tx_type,
+            tx_kind: TxKind::Call(to),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: vec![],
+            nonce: U256::from(nonce),
+            chain_id: None,
+            gas_price: None,
+            max_fee_per_gas: None,
+            max_priority_fee_per_gas: None,
+            access_list: AccessList(vec![]),
+            blob_versioned_hashes: vec![],
+            max_fee_per_blob_gas: 0,
+        }
+    }
+
+    /// Wraps a payload into the execution form with the given sender.
+    fn transaction(payload: TxPayload, caller: H160) -> Transaction {
+        Transaction {
+            payload,
+            caller,
+            authorization_list: vec![],
+        }
+    }
+
     fn eip1559_transfer(
         caller: H160,
         to: H160,
@@ -565,23 +639,12 @@ mod tests {
         max_fee: u64,
         max_priority: u64,
     ) -> Transaction {
-        Transaction {
-            tx_type: TxType::Eip1559,
-            tx_kind: TxKind::Call(to),
-            caller,
-            gas_limit: 100_000,
-            value,
-            data: vec![],
-            nonce: U256::from(nonce),
-            chain_id: Some(1),
-            gas_price: None,
-            max_fee_per_gas: Some(U256::from(max_fee)),
-            max_priority_fee_per_gas: Some(U256::from(max_priority)),
-            access_list: AccessList(vec![]),
-            blob_versioned_hashes: vec![],
-            max_fee_per_blob_gas: 0,
-            authorization_list: vec![],
-        }
+        let mut payload = payload(TxType::Eip1559, to, nonce);
+        payload.value = value;
+        payload.chain_id = Some(1);
+        payload.max_fee_per_gas = Some(U256::from(max_fee));
+        payload.max_priority_fee_per_gas = Some(U256::from(max_priority));
+        transaction(payload, caller)
     }
 
     fn legacy_transfer(
@@ -591,23 +654,10 @@ mod tests {
         nonce: u64,
         gas_price: u64,
     ) -> Transaction {
-        Transaction {
-            tx_type: TxType::Legacy,
-            tx_kind: TxKind::Call(to),
-            caller,
-            gas_limit: 100_000,
-            value,
-            data: vec![],
-            nonce: U256::from(nonce),
-            chain_id: None,
-            gas_price: Some(U256::from(gas_price)),
-            max_fee_per_gas: None,
-            max_priority_fee_per_gas: None,
-            access_list: AccessList(vec![]),
-            blob_versioned_hashes: vec![],
-            max_fee_per_blob_gas: 0,
-            authorization_list: vec![],
-        }
+        let mut payload = payload(TxType::Legacy, to, nonce);
+        payload.value = value;
+        payload.gas_price = Some(U256::from(gas_price));
+        transaction(payload, caller)
     }
 
     fn balance_of(state: &BTreeMap<H160, MemoryAccount>, who: H160) -> U256 {
@@ -764,12 +814,7 @@ mod tests {
         let high = eip1559_transfer(caller, addr(0x2e), U256::zero(), 7, 10, 1);
         assert!(matches!(
             validate(high, &state, Spec::London, &blk, 0, 0),
-            Err(BlockExecutionError::NonceTooHigh { .. })
-        ));
-        let low = eip1559_transfer(caller, addr(0x2e), U256::zero(), 3, 10, 1);
-        assert!(matches!(
-            validate(low, &state, Spec::London, &blk, 0, 0),
-            Err(BlockExecutionError::NonceTooLow { .. })
+            Err(BlockExecutionError::InvalidNonce { .. })
         ));
     }
 
@@ -818,19 +863,19 @@ mod tests {
         let blk = block(0, addr(0xcb));
 
         let mut create = legacy_transfer(caller, addr(0x2e), U256::zero(), 0, 0);
-        create.tx_kind = TxKind::Create;
-        create.gas_limit = 20_000_000;
+        create.payload.tx_kind = TxKind::Create;
+        create.payload.gas_limit = 20_000_000;
 
         // 49153 bytes → invalid (EIP-3860); exactly 49152 → not an InitCodeTooLarge error.
         let mut too_large = create.clone();
-        too_large.data = vec![0x00; 49_153];
+        too_large.payload.data = vec![0x00; 49_153];
         assert!(matches!(
             validate(too_large, &state, Spec::Shanghai, &blk, 0, 0),
             Err(BlockExecutionError::InitCodeTooLarge)
         ));
 
         let mut at_limit = create;
-        at_limit.data = vec![0x00; 49_152];
+        at_limit.payload.data = vec![0x00; 49_152];
         assert!(!matches!(
             validate(at_limit, &state, Spec::Shanghai, &blk, 0, 0),
             Err(BlockExecutionError::InitCodeTooLarge)
@@ -855,23 +900,14 @@ mod tests {
         let mut hash_bytes = [0u8; 32];
         hash_bytes[0] = 0x01; // VERSIONED_HASH_VERSION_KZG
         let versioned = U256::from_big_endian(&hash_bytes);
-        Transaction {
-            tx_type: TxType::Eip4844,
-            tx_kind: TxKind::Call(addr(0x2e)),
-            caller,
-            gas_limit: 1_000_000,
-            value: U256::zero(),
-            data: vec![],
-            nonce: U256::from(nonce),
-            chain_id: Some(1),
-            gas_price: None,
-            max_fee_per_gas: Some(U256::from(100u64)),
-            max_priority_fee_per_gas: Some(U256::from(1u64)),
-            access_list: AccessList(vec![]),
-            blob_versioned_hashes: vec![versioned; blobs],
-            max_fee_per_blob_gas: 1_000_000,
-            authorization_list: vec![],
-        }
+        let mut payload = payload(TxType::Eip4844, addr(0x2e), nonce);
+        payload.gas_limit = 1_000_000;
+        payload.chain_id = Some(1);
+        payload.max_fee_per_gas = Some(U256::from(100u64));
+        payload.max_priority_fee_per_gas = Some(U256::one());
+        payload.blob_versioned_hashes = vec![versioned; blobs];
+        payload.max_fee_per_blob_gas = 1_000_000;
+        transaction(payload, caller)
     }
 
     fn osaka_blob_schedule() -> BlobSchedule {
@@ -1011,7 +1047,7 @@ mod tests {
         // JUMPDEST PUSH1 0x00 JUMP — an infinite loop that consumes all gas.
         state.insert(target, account(0, 0, vec![0x5b, 0x60, 0x00, 0x56]));
         let mut tx = eip1559_transfer(caller, target, U256::zero(), 0, 10, 10);
-        tx.gas_limit = 100_000;
+        tx.payload.gas_limit = 100_000;
         let result = run(Spec::London, 0, state, vec![tx], &empty_blob_schedule()).unwrap();
 
         assert!(!result.receipts[0].success);
@@ -1025,10 +1061,10 @@ mod tests {
         let mut state = BTreeMap::new();
         state.insert(caller, account(10_000_000_000u64, 0, vec![]));
         let mut tx = legacy_transfer(caller, addr(0x2e), U256::zero(), 0, 10);
-        tx.tx_kind = TxKind::Create;
+        tx.payload.tx_kind = TxKind::Create;
         // PUSH1 0x00 PUSH1 0x00 RETURN — deploys empty runtime code.
-        tx.data = vec![0x60, 0x00, 0x60, 0x00, 0xf3];
-        tx.gas_limit = 200_000;
+        tx.payload.data = vec![0x60, 0x00, 0x60, 0x00, 0xf3];
+        tx.payload.gas_limit = 200_000;
         let result = run(Spec::London, 0, state, vec![tx], &empty_blob_schedule()).unwrap();
 
         assert!(result.receipts[0].success);
@@ -1050,7 +1086,7 @@ mod tests {
         let result = run(Spec::London, 0, state, txs, &empty_blob_schedule());
         assert!(matches!(
             result,
-            Err(BlockExecutionError::NonceTooHigh { .. })
+            Err(BlockExecutionError::InvalidNonce { .. })
         ));
     }
 
@@ -1089,7 +1125,7 @@ mod tests {
         state.insert(caller, account(10_000_000, 0, vec![]));
         let blk = block(0, addr(0xcb));
         let mut tx = eip1559_transfer(caller, addr(0x2e), U256::zero(), 0, 10, 1);
-        tx.gas_price = Some(U256::zero());
+        tx.payload.gas_price = Some(U256::zero());
         let err = validate(tx, &state, Spec::London, &blk, 0, 0).unwrap_err();
         assert!(err.to_string().contains("gas_price"));
     }
@@ -1103,7 +1139,7 @@ mod tests {
         state.insert(caller, account(10_000_000, 0, vec![]));
         let blk = block(0, addr(0xcb));
         let mut tx = eip1559_transfer(caller, addr(0x2e), U256::zero(), 0, 10, 1);
-        tx.blob_versioned_hashes = vec![U256::one()];
+        tx.payload.blob_versioned_hashes = vec![U256::one()];
         let err = validate(tx, &state, Spec::London, &blk, 0, 0).unwrap_err();
         assert!(err.to_string().contains("blob versioned hashes"));
     }

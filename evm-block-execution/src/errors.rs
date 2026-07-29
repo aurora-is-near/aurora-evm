@@ -219,15 +219,8 @@ impl fmt::Display for InvalidTransaction {
 pub enum BlockExecutionError {
     /// Per-transaction validation failed (header / transaction checks).
     InvalidContext(InvalidEvmContext),
-    /// Transaction nonce is greater than the sender account nonce.
-    NonceTooHigh {
-        /// Nonce supplied by the transaction.
-        tx: U256,
-        /// Nonce currently in state.
-        state: U256,
-    },
-    /// Transaction nonce is lower than the sender account nonce.
-    NonceTooLow {
+    /// Transaction nonce is different from the sender account nonce.
+    InvalidNonce {
         /// Nonce supplied by the transaction.
         tx: U256,
         /// Nonce currently in state.
@@ -269,9 +262,6 @@ pub enum BlockExecutionError {
     ArithmeticOverflow,
     /// The block timestamp does not fit in a `u64`.
     InvalidBlockTimestamp,
-    /// A state read hit data absent from the execution witness (stateless mode). Distinct from a
-    /// protocol-empty account, which is a valid `nonce=0, balance=0, code=[]` read.
-    MissingWitnessData,
     /// A required pre/post-execution system call failed.
     SystemCallFailed,
     /// EVM execution ended in an unexpected (fatal) state.
@@ -339,11 +329,8 @@ impl fmt::Display for BlockExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidContext(err) => write!(f, "invalid transaction context: {err}"),
-            Self::NonceTooHigh { tx, state } => {
-                write!(f, "nonce too high: transaction {tx}, state {state}")
-            }
-            Self::NonceTooLow { tx, state } => {
-                write!(f, "nonce too low: transaction {tx}, state {state}")
+            Self::InvalidNonce { tx, state } => {
+                write!(f, "invalid nonce: transaction {tx}, state {state}")
             }
             Self::SenderHasCode => write!(f, "sender has non-delegation code (EIP-3607)"),
             Self::InitCodeTooLarge => {
@@ -370,7 +357,6 @@ impl fmt::Display for BlockExecutionError {
             ),
             Self::ArithmeticOverflow => write!(f, "arithmetic overflow in block accounting"),
             Self::InvalidBlockTimestamp => write!(f, "block timestamp does not fit in u64"),
-            Self::MissingWitnessData => write!(f, "state read hit data absent from the witness"),
             Self::SystemCallFailed => write!(f, "system call failed"),
             Self::ExecutionFailed(reason) => write!(f, "execution failed: {reason:?}"),
             Self::GasUsedMismatch { got, expected } => {

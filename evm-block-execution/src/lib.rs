@@ -7,6 +7,8 @@
 
 #![forbid(unsafe_code)]
 
+pub use stateless::stateless_validation;
+
 pub mod blob;
 pub mod block;
 pub mod bloom;
@@ -15,11 +17,13 @@ pub mod crypto;
 pub mod errors;
 pub mod evm;
 pub mod evm_context;
+pub mod execution_types;
 pub mod precompiles;
 pub mod receipt;
 pub mod requests;
 pub mod result;
 pub mod spec;
+mod stateless;
 pub mod transaction;
 pub mod trie;
 pub mod withdrawal;
