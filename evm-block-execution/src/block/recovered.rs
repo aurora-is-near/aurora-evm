@@ -86,7 +86,7 @@ impl RecoveredBlock {
     /// Pairs a block and its senders, adopting a known hash, after checking that the two lists line
     /// up.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`BlockRecoveryError`] if there is not exactly one sender per transaction.
     pub fn try_new(
         block: Block,
@@ -99,7 +99,7 @@ impl RecoveredBlock {
 
     /// Pairs a block and its senders lazily, after checking that the two lists line up.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`BlockRecoveryError`] if there is not exactly one sender per transaction.
     pub fn try_new_unhashed(block: Block, senders: Vec<H160>) -> Result<Self, BlockRecoveryError> {
         check_sender_count(&block.body.transactions, &senders)?;
@@ -108,7 +108,7 @@ impl RecoveredBlock {
 
     /// Pairs an already sealed block and its senders, after checking that the two lists line up.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`BlockRecoveryError`] if there is not exactly one sender per transaction.
     pub fn try_new_sealed(
         block: SealedBlock,

@@ -16,7 +16,7 @@ use primitive_types::{H256, U256};
 ///
 /// Returned when a [`BlockEnv`](crate::block::BlockEnv) field required by the spec is missing,
 /// or a field introduced by a later fork is present.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum InvalidHeader {
     /// `prevrandao` is not set for Merge and above.
     PrevrandaoNotSet,
@@ -55,7 +55,7 @@ impl fmt::Display for InvalidHeader {
 /// Produced when a transaction is checked against the block environment, the active spec and the
 /// sender account before execution. In block validation any such error makes the whole block
 /// invalid.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum InvalidTransaction {
     /// Transaction `chain_id` does not match the configured chain id.
     InvalidChainId,

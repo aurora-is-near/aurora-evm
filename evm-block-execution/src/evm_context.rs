@@ -56,7 +56,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             chain_id,
             block,
             tx,
-            gas_config: (*spec).get_gasometer_config(),
+            gas_config: spec.get_gasometer_config(),
             spec: spec.clone(),
             tx_gas_limit_cap,
         }
@@ -549,7 +549,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum InvalidEvmContext {
     InvalidHeader(InvalidHeader),
     InvalidTransaction(InvalidTransaction),

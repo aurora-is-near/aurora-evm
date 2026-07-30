@@ -28,8 +28,6 @@ use crate::transaction::{SignedTransaction, TxEncodeError};
 use core::fmt;
 use core::ops::Deref;
 use primitive_types::H160;
-use serde::{Deserialize, Serialize};
-use serde_with::{Bytes, serde_as};
 
 /// Length of an uncompressed SEC1 public key: the `0x04` tag followed by the two coordinates.
 const UNCOMPRESSED_PUBLIC_KEY_LEN: usize = 65;
@@ -38,9 +36,8 @@ const UNCOMPRESSED_PUBLIC_KEY_LEN: usize = 65;
 const UNCOMPRESSED_TAG: u8 = 0x04;
 
 /// An uncompressed secp256k1 public key: `0x04 || x || y`.
-#[serde_as]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UncompressedPublicKey(#[serde_as(as = "Bytes")] pub [u8; UNCOMPRESSED_PUBLIC_KEY_LEN]);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UncompressedPublicKey(pub [u8; UNCOMPRESSED_PUBLIC_KEY_LEN]);
 
 impl Deref for UncompressedPublicKey {
     type Target = [u8];
@@ -53,7 +50,7 @@ impl Deref for UncompressedPublicKey {
 impl UncompressedPublicKey {
     /// The account address this key controls: the low 20 bytes of `keccak256(x || y)`.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`SenderRecoveryError::InvalidPublicKey`] if the key does not carry the uncompressed tag.
     pub fn address(&self, index: usize) -> Result<H160, SenderRecoveryError> {
         if self.0[0] != UNCOMPRESSED_TAG {
@@ -139,7 +136,7 @@ impl core::error::Error for SenderRecoveryError {}
 ///
 /// The keys must be given in transaction order, one per transaction.
 ///
-/// # Errors
+/// ## Errors
 /// [`SenderRecoveryError`] if the key count does not match the transaction count, or if any
 /// transaction fails the EIP-2 `s` check, cannot be encoded, or does not verify against its key.
 pub fn recover_block_with_public_keys(

@@ -1,5 +1,7 @@
-use crate::blob::{BlobExcessGasAndPrice, BlobParams};
+use crate::blob::{BlobExcessGasAndPrice, BlobParams, BlobSchedule};
 use crate::bloom::Bloom;
+use crate::errors::BlockExecutionError;
+use crate::spec::Spec;
 use crate::withdrawal::Withdrawal;
 use primitive_types::{H160, H256, U256};
 
@@ -9,7 +11,7 @@ use primitive_types::{H160, H256, U256};
 /// the inputs consumed by the pre/post-execution system steps (`parent_hash`,
 /// `parent_beacon_block_root`, `withdrawals`). The *expected* header values a valid block must
 /// reproduce live separately in [`ExpectedHeader`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockEnv {
     /// Environmental block hashes (recent ancestors, for the `BLOCKHASH` opcode window).
     pub block_hashes: Vec<H256>,
@@ -53,6 +55,36 @@ pub struct BlockEnv {
     pub withdrawals: Vec<Withdrawal>,
 }
 
+impl BlockEnv {
+    /// Resolve this block's blob parameters. They are a block-level property gated purely by
+    /// hardfork — required from Cancun on, absent before it. `Spec` is authoritative for the
+    /// fork, so a pre-Cancun block ignores the schedule entirely: a stray active entry cannot
+    /// turn it into a "blob block". The schedule was already validated by `BlobSchedule::try_new`
+    /// (once, at config-construction time), so any resolved params are known well-formed here.
+    ///
+    /// ## Errors
+    /// Resolve blob params errors
+    pub fn resolve_blob_params(
+        &mut self,
+        spec: &Spec,
+        blob_schedule: &BlobSchedule,
+    ) -> Result<(), BlockExecutionError> {
+        let timestamp = u64::try_from(self.block_timestamp)
+            .map_err(|_| BlockExecutionError::InvalidBlockTimestamp)?;
+
+        self.blob_params = if spec >= &Spec::Cancun {
+            Some(
+                blob_schedule
+                    .blob_params_for_timestamp(timestamp)
+                    .ok_or(BlockExecutionError::MissingBlobParams)?,
+            )
+        } else {
+            None
+        };
+        Ok(())
+    }
+}
+
 /// Expected header values used to **validate** a block after execution.
 ///
 /// Deliberately kept separate from [`BlockEnv`] (the execution *input*): these are the *outputs*
@@ -83,34 +115,9 @@ pub struct ExpectedHeader {
 
 #[cfg(test)]
 mod tests {
-    use super::{BlockEnv, ExpectedHeader};
+    use super::ExpectedHeader;
     use crate::bloom::Bloom;
-    use crate::withdrawal::Withdrawal;
-    use primitive_types::{H160, H256, U256};
-
-    fn sample_block_env() -> BlockEnv {
-        BlockEnv {
-            block_hashes: vec![H256::repeat_byte(0x01)],
-            block_number: U256::from(42u64),
-            block_coinbase: H160::repeat_byte(0xcc),
-            block_timestamp: U256::from(1_000u64),
-            block_difficulty: U256::zero(),
-            block_gas_limit: 30_000_000,
-            block_base_fee_per_gas: U256::from(7u64),
-            block_randomness: Some(H256::repeat_byte(0x02)),
-            blob_excess_gas_and_price: None,
-            blob_hashes: vec![],
-            blob_params: None,
-            parent_hash: H256::repeat_byte(0x03),
-            parent_beacon_block_root: Some(H256::repeat_byte(0x04)),
-            withdrawals: vec![Withdrawal {
-                index: 1,
-                validator_index: 2,
-                address: H160::repeat_byte(0xab),
-                amount: 32,
-            }],
-        }
-    }
+    use primitive_types::H256;
 
     fn sample_expected_header() -> ExpectedHeader {
         ExpectedHeader {
@@ -123,35 +130,6 @@ mod tests {
             withdrawals_root: Some(H256::repeat_byte(0x44)),
             transactions_root: H256::repeat_byte(0x55),
         }
-    }
-
-    #[test]
-    fn block_env_serde_roundtrip_with_new_fields() {
-        let env = sample_block_env();
-        let json = serde_json::to_string(&env).unwrap();
-        let back: BlockEnv = serde_json::from_str(&json).unwrap();
-        assert_eq!(env, back);
-        // The new fields survive the round-trip.
-        assert_eq!(back.parent_hash, H256::repeat_byte(0x03));
-        assert_eq!(back.parent_beacon_block_root, Some(H256::repeat_byte(0x04)));
-        assert_eq!(back.withdrawals.len(), 1);
-        assert_eq!(back.withdrawals[0].amount, 32);
-    }
-
-    #[test]
-    fn block_env_pre_cancun_serde_roundtrip() {
-        // A pre-Cancun block has no beacon root / blob fee and (pre-Shanghai) no withdrawals.
-        let mut env = sample_block_env();
-        env.parent_beacon_block_root = None;
-        env.blob_excess_gas_and_price = None;
-        env.withdrawals = vec![];
-        let json = serde_json::to_string(&env).unwrap();
-        // An absent optional field serializes as JSON `null` (not skipped).
-        assert!(json.contains("\"parent_beacon_block_root\":null"));
-        let back: BlockEnv = serde_json::from_str(&json).unwrap();
-        assert_eq!(env, back);
-        assert!(back.parent_beacon_block_root.is_none());
-        assert!(back.withdrawals.is_empty());
     }
 
     #[test]

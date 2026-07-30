@@ -192,7 +192,7 @@ impl BlobSchedule {
     /// ([`BlobParams::is_valid`]). Validating here, once, is what makes an invalid
     /// [`BlobSchedule`] unrepresentable, so downstream pricing/limit code never re-checks.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`BlobConfigError::DuplicateActivationTimestamp`] on a repeated activation timestamp;
     /// [`BlobConfigError::InvalidParams`] if any entry's parameters are inconsistent.
     pub fn try_new(mut entries: Vec<BlobScheduleEntry>) -> Result<Self, BlobConfigError> {
@@ -233,7 +233,7 @@ impl BlobSchedule {
 /// Incorporated as part of the Cancun upgrade via [EIP-4844].
 ///
 /// [EIP-4844]: <https://eips.ethereum.org/EIPS/eip-4844>
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Ord, PartialOrd, PartialEq, Eq)]
 pub struct BlobExcessGasAndPrice {
     /// The excess blob gas of the block.
     pub excess_blob_gas: u64,

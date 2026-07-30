@@ -15,7 +15,7 @@ use crate::transaction::{AccessList, TxKind, TxType};
 use primitive_types::U256;
 
 /// Transaction fields shared by the consensus and execution forms.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxPayload {
     /// The transaction type.
     pub tx_type: TxType,

@@ -32,6 +32,7 @@
 //! alone.
 
 mod body;
+mod codec;
 mod env;
 mod header;
 mod recover;
@@ -40,6 +41,7 @@ mod sealed;
 
 use crate::transaction::SignedTransaction;
 pub use body::BlockBody;
+pub use codec::BlockDecodeError;
 pub use env::{BlockEnv, ExpectedHeader};
 pub use header::Header;
 use primitive_types::H256;

@@ -63,8 +63,7 @@ pub struct TransactionExecutionResult {
     pub state: BTreeMap<H160, MemoryAccount>,
 }
 
-/// Result of executing one transaction, before it becomes a [`Receipt`]. Internal to the
-/// crate (never part of the public API).
+/// Result of executing one transaction, before it becomes a [`Receipt`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TxExecutionOutcome {
     /// The EVM exit reason (`Succeed`/`Revert`/`Error`; `Fatal` aborts the block instead).
@@ -75,15 +74,13 @@ pub struct TxExecutionOutcome {
     pub logs: Vec<Log>,
 }
 
-/// A transaction that passed [`validate_transaction_against_state`], carrying the values the
+/// A transaction that passed validation flow, carrying the values the
 /// execution stage would otherwise recompute (fees, flattened access list, blob count).
 struct ValidatedTransaction {
     tx: Transaction,
     access_list: Vec<(H160, Vec<H256>)>,
     gas_price: U256,
     effective_gas_price: U256,
-    /// Blob data fee at the block's *current* blob price (burned, never refunded); `None` if not a
-    /// blob transaction.
     data_fee: Option<U256>,
     blob_count: u64,
 }
@@ -95,7 +92,7 @@ impl Evm {
     /// The blob schedule is expected to be already validated — it can only be built via
     /// [`BlobSchedule::try_new`] — so this does not re-validate it.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`BlockExecutionError::InvalidBlockTimestamp`] if the block timestamp does not fit in `u64`;
     /// [`BlockExecutionError::MissingBlobParams`] if a Cancun-or-later block's blob schedule does
     /// not resolve any parameters (blob limits must be enforceable for such a block).
@@ -107,22 +104,7 @@ impl Evm {
         state: BTreeMap<H160, MemoryAccount>,
         blob_schedule: &BlobSchedule,
     ) -> Result<Self, BlockExecutionError> {
-        let timestamp = u64::try_from(block.block_timestamp)
-            .map_err(|_| BlockExecutionError::InvalidBlockTimestamp)?;
-        // Resolve this block's blob parameters. They are a block-level property gated purely by
-        // hardfork — required from Cancun on, absent before it. `Spec` is authoritative for the
-        // fork, so a pre-Cancun block ignores the schedule entirely: a stray active entry cannot
-        // turn it into a "blob block". The schedule was already validated by `BlobSchedule::try_new`
-        // (once, at config-construction time), so any resolved params are known well-formed here.
-        block.blob_params = if spec >= Spec::Cancun {
-            Some(
-                blob_schedule
-                    .blob_params_for_timestamp(timestamp)
-                    .ok_or(BlockExecutionError::MissingBlobParams)?,
-            )
-        } else {
-            None
-        };
+        block.resolve_blob_params(&spec, blob_schedule)?;
         let precompiles = Precompiles::new(&spec);
         Ok(Self {
             block,
@@ -139,7 +121,7 @@ impl Evm {
     /// Consumes `self`: the world state lives in a local owned map for the whole loop, so a block
     /// that fails validation or execution never leaves a half-mutated engine observable.
     ///
-    /// # Errors
+    /// ## Errors
     /// The first invalid or fatally-failing transaction aborts the block with a
     /// [`BlockExecutionError`]; nothing after it runs.
     pub fn execute_transactions(self) -> Result<TransactionExecutionResult, BlockExecutionError> {
@@ -187,6 +169,8 @@ fn run_transaction_loop(
     // potentially large `block_hashes` window again).
     let base_fee = block.block_base_fee_per_gas;
     let coinbase = block.block_coinbase;
+    // To avoid block data cloning we initialize block vicinity before transactions loop.
+    let mut block_vicinity = block_vicinity(block, chain_id);
 
     let mut receipts = Vec::with_capacity(transactions.len());
     let mut cumulative_gas_used: u64 = 0;
@@ -205,16 +189,9 @@ fn run_transaction_loop(
         let tx_type = validated_tx.tx.tx_type;
         let blob_count = validated_tx.blob_count;
 
-        // TODO
-        let mut vicinity = block_vicinity(block, chain_id, &validated_tx);
-        vicinity.gas_price = validated_tx.gas_price;
-        vicinity.effective_gas_price = validated_tx.effective_gas_price;
-        vicinity.origin = validated_tx.tx.caller;
-        // vicinity.blob_hashes = validated.tx.blob_versioned_hashes;
-
         let outcome = execute_validated_tx(
             state,
-            vicinity,
+            &mut block_vicinity,
             precompiles,
             spec,
             base_fee,
@@ -250,13 +227,13 @@ fn run_transaction_loop(
 /// Whether `code` is an EIP-7702 delegation designation (`0xef0100 || address`), which lets an
 /// account with code still originate transactions from Prague onward.
 fn is_delegated_sender(code: &[u8], spec: &Spec) -> bool {
-    *spec >= Spec::Prague && Authorization::is_delegated(code)
+    spec >= &Spec::Prague && Authorization::is_delegated(code)
 }
 
 /// Validates one transaction against the current world state and block, returning the values the
 /// execution stage needs. Performs no mutation.
 ///
-/// # Errors
+/// ## Errors
 /// Returns the first failing check as a [`BlockExecutionError`]; an invalid transaction makes the
 /// whole block invalid.
 fn validate_transaction_against_state(
@@ -292,7 +269,7 @@ fn validate_transaction_against_state(
 
     // 4. EIP-3860 (Shanghai+): a contract-creation transaction's init code is size-capped. This is
     //    a transaction-validity rule, distinct from the in-EVM `CREATE` init-code halt.
-    if *spec >= Spec::Shanghai && tx.tx_kind.is_create() && tx.data.len() > MAX_INITCODE_SIZE {
+    if spec >= &Spec::Shanghai && tx.tx_kind.is_create() && tx.data.len() > MAX_INITCODE_SIZE {
         return Err(BlockExecutionError::InitCodeTooLarge);
     }
 
@@ -361,8 +338,8 @@ fn validate_transaction_against_state(
     })
 }
 
-/// Owned inputs one validated transaction hands to [`run_tx_in_backend`].
-struct TxExec {
+/// Owned inputs one validated transaction hands to [`exec_tx_with_backend`].
+struct TxExec<'a> {
     caller: H160,
     value: U256,
     gas_limit: u64,
@@ -373,6 +350,10 @@ struct TxExec {
     effective_gas_price: U256,
     reserve_fee: U256,
     data_fee: Option<U256>,
+    base_fee: U256,
+    coinbase: H160,
+    spec: &'a Spec,
+    precompiles: &'a Precompiles,
 }
 
 /// Up-front fee reservation: gas fee at the effective price plus any blob data fee (never `value`).
@@ -405,19 +386,15 @@ fn caller_refund(
 }
 
 /// Runs one validated transaction against `backend`: reserve, run call/create, settle fees, apply the diff.
-fn run_tx_in_backend(
+fn exec_tx_with_backend(
     backend: &mut MemoryBackend<'_>,
-    precompiles: &Precompiles,
-    spec: &Spec,
-    base_fee: U256,
-    coinbase: H160,
     exec: TxExec,
 ) -> Result<TxExecutionOutcome, BlockExecutionError> {
-    let gas_config = spec.get_gasometer_config();
+    let gas_config = exec.spec.get_gasometer_config();
     let metadata = StackSubstateMetadata::new(exec.gas_limit, &gas_config);
-    let executor_state = MemoryStackState::new(metadata, &*backend);
+    let executor_state = MemoryStackState::new(metadata, backend);
     let mut executor =
-        StackExecutor::new_with_precompiles(executor_state, &gas_config, precompiles);
+        StackExecutor::new_with_precompiles(executor_state, &gas_config, exec.precompiles);
 
     // Reserve the fee. Balance was already validated by the maximum fee, so a failure here is a
     // broken invariant rather than a user error.
@@ -454,12 +431,12 @@ fn run_tx_in_backend(
     // burned), refund the caller its unused gas, burn the blob fee.
     let gas_used = executor.used_gas();
     let actual_fee = executor.fee(exec.effective_gas_price);
-    let miner_reward = if *spec > Spec::Berlin {
-        executor.fee(exec.effective_gas_price.saturating_sub(base_fee))
+    let miner_reward = if exec.spec > &Spec::Berlin {
+        executor.fee(exec.effective_gas_price.saturating_sub(exec.base_fee))
     } else {
         actual_fee
     };
-    executor.state_mut().deposit(coinbase, miner_reward);
+    executor.state_mut().deposit(exec.coinbase, miner_reward);
 
     let refund = caller_refund(exec.reserve_fee, actual_fee, exec.data_fee)?;
     executor.state_mut().deposit(exec.caller, refund);
@@ -479,7 +456,7 @@ fn run_tx_in_backend(
 /// Executes a validated transaction and returns its outcome plus the reusable `MemoryVicinity`.
 fn execute_validated_tx(
     state: &mut BTreeMap<H160, MemoryAccount>,
-    mut vicinity: MemoryVicinity,
+    vicinity: &mut MemoryVicinity,
     precompiles: &Precompiles,
     spec: &Spec,
     base_fee: U256,
@@ -491,6 +468,7 @@ fn execute_validated_tx(
         access_list,
         effective_gas_price,
         data_fee,
+        gas_price,
         ..
     } = validated_tx;
     // Destructured rather than read through `Deref`, so the owned fields the executor consumes
@@ -501,7 +479,9 @@ fn execute_validated_tx(
         authorization_list,
     } = tx;
 
-    vicinity.blob_hashes = payload.blob_versioned_hashes;
+    vicinity.gas_price = gas_price;
+    vicinity.effective_gas_price = effective_gas_price;
+    vicinity.origin = caller;
 
     let exec = TxExec {
         caller,
@@ -514,14 +494,18 @@ fn execute_validated_tx(
         effective_gas_price,
         reserve_fee: reserve_fee(effective_gas_price, payload.gas_limit, data_fee)?,
         data_fee,
+        base_fee,
+        coinbase,
+        spec,
+        precompiles,
     };
 
     // Move the world state into a backend for execution; `*state` is restored UNCONDITIONALLY below.
     // On any error the executor substate is dropped without `apply`, so `backend` still holds the
     // untouched pre-transaction world; on success `apply` has written the post-transaction state.
     let taken_state = core::mem::take(state);
-    let mut backend = MemoryBackend::new(&vicinity, taken_state);
-    let outcome = run_tx_in_backend(&mut backend, precompiles, spec, base_fee, coinbase, exec);
+    let mut backend = MemoryBackend::new(vicinity, taken_state);
+    let outcome = exec_tx_with_backend(&mut backend, exec);
     // Restore the world state on every path: pre-transaction on error, post-transaction on success.
     *state = core::mem::take(backend.state_mut());
     // `backend`'s shared borrow of `vicinity` has ended, so it can move back out for the next tx.
@@ -530,15 +514,11 @@ fn execute_validated_tx(
 
 /// Builds the block-level [`MemoryVicinity`]; per-transaction fields (`gas_price`,
 /// `effective_gas_price`, `origin`, `blob_hashes`) are overwritten before each execution.
-fn block_vicinity(
-    block: &BlockEnv,
-    chain_id: Option<u64>,
-    validated_tx: &ValidatedTransaction,
-) -> MemoryVicinity {
+fn block_vicinity(block: &BlockEnv, chain_id: Option<u64>) -> MemoryVicinity {
     MemoryVicinity {
-        gas_price: validated_tx.gas_price,
-        effective_gas_price: validated_tx.effective_gas_price,
-        origin: validated_tx.tx.caller,
+        gas_price: U256::zero(),
+        effective_gas_price: U256::zero(),
+        origin: H160::zero(),
         block_hashes: block.block_hashes.clone(),
         block_number: block.block_number,
         block_coinbase: block.block_coinbase,
@@ -551,7 +531,7 @@ fn block_vicinity(
         blob_gas_price: block
             .blob_excess_gas_and_price
             .map(|blob| blob.blob_gas_price),
-        blob_hashes: Vec::new(),
+        blob_hashes: block.blob_hashes.clone(),
     }
 }
 

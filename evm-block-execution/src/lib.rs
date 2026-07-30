@@ -7,7 +7,7 @@
 
 #![forbid(unsafe_code)]
 
-pub use stateless::stateless_validation;
+pub use stateless::{StatelessValidationError, StatelessValidationOutput, stateless_validation};
 
 pub mod blob;
 pub mod block;

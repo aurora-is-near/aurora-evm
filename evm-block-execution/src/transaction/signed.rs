@@ -28,7 +28,7 @@ pub struct SignedTransaction {
 impl SignedTransaction {
     /// The hash the sender signed: `keccak256` of the transaction encoded without its signature.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`TxEncodeError`] if the payload's fields do not match its transaction type.
     pub fn signature_hash(&self) -> Result<H256, TxEncodeError> {
         let preimage = encode::encode(&self.payload, &self.authorization_list, None)?;
@@ -39,7 +39,7 @@ impl SignedTransaction {
     ///
     /// This is the form the transactions trie and the transaction hash are built from.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`TxEncodeError`] if the payload's fields do not match its transaction type.
     pub fn encode_2718(&self) -> Result<Vec<u8>, TxEncodeError> {
         encode::encode(
@@ -49,16 +49,53 @@ impl SignedTransaction {
         )
     }
 
+    /// The encoding of the transaction as an item of a **block body's** transaction list.
+    ///
+    /// This is *not* [`Self::encode_2718`]: inside a block body a legacy transaction appears as a
+    /// bare RLP list, but a typed one has its 2718 envelope wrapped in an RLP **byte string**, so
+    /// that a list of mixed types stays a well-formed RLP list. Confusing the two forms is a
+    /// consensus bug: the trie and the transaction hash use the bare envelope, block RLP uses this.
+    ///
+    /// ## Errors
+    /// [`TxEncodeError`] if the payload's fields do not match its transaction type.
+    pub fn encode_block_item(&self) -> Result<Vec<u8>, TxEncodeError> {
+        let envelope = self.encode_2718()?;
+        if self.payload.tx_type == TxType::Legacy {
+            // Already a bare RLP list — the body carries it verbatim.
+            return Ok(envelope);
+        }
+        let mut stream = rlp::RlpStream::new();
+        stream.append(&envelope);
+        Ok(stream.out().to_vec())
+    }
+
+    /// Decodes one item of a block body's transaction list — the inverse of
+    /// [`Self::encode_block_item`], accepting a bare RLP list or a string-wrapped 2718 envelope.
+    ///
+    /// ## Errors
+    /// [`TxDecodeError`] as [`Self::decode_2718`], plus [`TxDecodeError::Rlp`] if the item is
+    /// neither an RLP list nor a byte string.
+    pub fn decode_block_item(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
+        if rlp.is_list() {
+            // Legacy: the item *is* the transaction's RLP list.
+            return Self::decode_2718(rlp.as_raw());
+        }
+        // Typed: unwrap the byte string to get the 2718 envelope.
+        let envelope: Vec<u8> = rlp.as_val()?;
+        Self::decode_2718(&envelope)
+    }
+
     /// Decodes an EIP-2718 encoded transaction: a type byte followed by the field list, or a bare
     /// RLP list for a legacy transaction.
     ///
-    /// # Errors
+    /// ## Errors
     /// [`TxDecodeError`] if the input is empty, carries an unknown type byte, is not well-formed
     /// RLP for its type, or encodes a creation for a type that forbids one.
     pub fn decode_2718(bytes: &[u8]) -> Result<Self, TxDecodeError> {
         let (&first, _) = bytes.split_first().ok_or(TxDecodeError::Empty)?;
         // An RLP list header (>= 0xc0) means the legacy, un-prefixed form.
         if first >= 0xc0 {
+            check_no_trailing_bytes(bytes)?;
             return Self::decode_legacy(&rlp::Rlp::new(bytes));
         }
         let tx_type = TxType::try_from(first).map_err(|_| TxDecodeError::UnknownTxType(first))?;
@@ -66,7 +103,9 @@ impl SignedTransaction {
             // `0x00` is not a valid envelope prefix: legacy transactions carry no type byte.
             return Err(TxDecodeError::UnknownTxType(first));
         }
-        let rlp = rlp::Rlp::new(&bytes[1..]);
+        let payload = &bytes[1..];
+        check_no_trailing_bytes(payload)?;
+        let rlp = rlp::Rlp::new(payload);
         match tx_type {
             TxType::Eip2930 => Self::decode_eip2930(&rlp),
             TxType::Eip1559 => Self::decode_eip1559(&rlp),
@@ -270,6 +309,19 @@ fn decode_u128(rlp: &rlp::Rlp<'_>, index: usize) -> Result<u128, TxDecodeError> 
 }
 
 /// Why an encoded transaction cannot be decoded.
+/// Rejects input whose leading RLP item does not cover it entirely.
+///
+/// RLP is self-delimiting, so a decoder that only reads the leading item would accept padded
+/// transaction bytes and re-encode them differently — a malleable consensus encoding.
+fn check_no_trailing_bytes(bytes: &[u8]) -> Result<(), TxDecodeError> {
+    let consumed = rlp::PayloadInfo::from(bytes)?.total();
+    if consumed == bytes.len() {
+        Ok(())
+    } else {
+        Err(TxDecodeError::Rlp(rlp::DecoderError::RlpIsTooBig))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TxDecodeError {
     /// The input carried no bytes.
@@ -532,5 +584,85 @@ mod tests {
         create.payload.tx_kind = TxKind::Create;
         assert!(create.encode_2718().is_err());
         assert!(create.signature_hash().is_err());
+    }
+    #[test]
+    fn block_item_wraps_typed_transactions_and_leaves_legacy_bare() {
+        for vector in vectors() {
+            let transaction = SignedTransaction::decode_2718(vector.raw).unwrap();
+            let envelope = transaction.encode_2718().unwrap();
+            let item = transaction.encode_block_item().unwrap();
+
+            if vector.tx_type == TxType::Legacy {
+                // A legacy transaction is a bare RLP list — the body carries the envelope as is.
+                assert_eq!(item, envelope, "{}", vector.name);
+                assert!(rlp::Rlp::new(&item).is_list(), "{}", vector.name);
+            } else {
+                // A typed transaction is wrapped in an RLP byte string holding the envelope.
+                let rlp = rlp::Rlp::new(&item);
+                assert!(rlp.is_data(), "{} must be a byte string", vector.name);
+                assert_eq!(rlp.data().unwrap(), envelope.as_slice(), "{}", vector.name);
+                assert_ne!(item, envelope, "{}", vector.name);
+            }
+        }
+    }
+
+    #[test]
+    fn block_item_roundtrip() {
+        for vector in vectors() {
+            let transaction = SignedTransaction::decode_2718(vector.raw).unwrap();
+            let item = transaction.encode_block_item().unwrap();
+            let decoded = SignedTransaction::decode_block_item(&rlp::Rlp::new(&item)).unwrap();
+            assert_eq!(decoded, transaction, "{}", vector.name);
+            assert_eq!(
+                decoded.encode_block_item().unwrap(),
+                item,
+                "{} must re-encode byte-identically",
+                vector.name
+            );
+        }
+    }
+
+    #[test]
+    fn block_item_rejects_a_typed_envelope_left_unwrapped() {
+        // A raw `0x02…` envelope is not a legal RLP item, so it must not pass as one.
+        let typed = vectors()
+            .into_iter()
+            .find(|vector| vector.tx_type == TxType::Eip1559)
+            .unwrap();
+        let rlp = rlp::Rlp::new(typed.raw);
+        assert!(SignedTransaction::decode_block_item(&rlp).is_err());
+    }
+
+    #[test]
+    fn decode_2718_rejects_trailing_bytes() {
+        for vector in vectors() {
+            let mut padded = vector.raw.to_vec();
+            padded.push(0x00);
+            assert!(
+                matches!(
+                    SignedTransaction::decode_2718(&padded),
+                    Err(TxDecodeError::Rlp(rlp::DecoderError::RlpIsTooBig))
+                ),
+                "{} must not decode with a trailing byte",
+                vector.name
+            );
+        }
+    }
+
+    #[test]
+    fn block_item_rejects_a_string_with_trailing_bytes() {
+        // The padding sits *inside* the wrapping string, so the RLP item itself is well-formed —
+        // only the transaction-level length check rejects it. Left unchecked, such a transaction
+        // would decode and then re-encode to different bytes.
+        let typed = vectors()
+            .into_iter()
+            .find(|vector| vector.tx_type == TxType::Eip1559)
+            .unwrap();
+        let mut padded = typed.raw.to_vec();
+        padded.push(0x00);
+        let mut stream = rlp::RlpStream::new();
+        stream.append(&padded);
+        let wrapped = stream.out();
+        assert!(SignedTransaction::decode_block_item(&rlp::Rlp::new(&wrapped)).is_err());
     }
 }

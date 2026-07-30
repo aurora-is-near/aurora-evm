@@ -32,7 +32,7 @@ mod tx_type;
 /// The signed fields live in [`TxPayload`], which both forms share, so the consensus field set is
 /// defined in one place. They are readable directly on the transaction (`tx.gas_limit`) through
 /// [`Deref`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transaction {
     /// The fields the sender signed.
     pub payload: TxPayload,
