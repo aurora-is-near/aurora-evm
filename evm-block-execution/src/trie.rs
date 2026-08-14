@@ -45,7 +45,7 @@ impl rlp::Encodable for TrieAccount {
 
 impl rlp::Decodable for TrieAccount {
     fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
-        let short = match rlp.item_count()? {
+        let short = match crate::rlp_strict::checked_len(rlp)? {
             4 => true,
             5 => false,
             _ => return Err(rlp::DecoderError::RlpIncorrectListLen),
@@ -136,8 +136,8 @@ const fn is_empty_account(account: &MemoryAccount) -> bool {
 ///
 /// EIP-161 "empty" accounts are excluded here defensively, so the result is canonical even if the
 /// caller did not prune them (`MemoryBackend::apply` with `delete_empty = true` already prunes
-/// them during execution). In the witness/zeth path the root is instead computed by an external
-/// sparse trie.
+/// them during execution). Against a witness the root is instead computed by an external sparse trie,
+/// which sees only the revealed leaves.
 #[must_use]
 pub fn state_root(accounts: &BTreeMap<H160, MemoryAccount>) -> H256 {
     sec_trie_root(
