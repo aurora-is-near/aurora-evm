@@ -19,6 +19,6 @@ pub const EMPTY_ROOT_HASH: H256 = H256(hex!(
 ));
 
 /// `keccak256(rlp([]))` — the `ommers_hash` of a block with no ommers (every post-merge block).
-pub const EMPTY_OMMERS_HASH: H256 = H256(hex!(
+pub const EMPTY_OMMER_ROOT_HASH: H256 = H256(hex!(
     "1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
 ));

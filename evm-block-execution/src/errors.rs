@@ -28,6 +28,56 @@ pub enum InvalidHeader {
     BlobVersionedHashesNotSupported,
     /// `max_fee_per_blob_gas` not supported for pre-Cancun spec.
     MaxFeePerBlobGasNotSupported,
+    /// A trailing-optional header field is present on a fork that has no such field, or absent on
+    /// one that requires it.
+    ///
+    /// The header's RLP is a mandatory prefix plus a trailing-optional tail, so its *length* alone
+    /// says which fields are present — and no fork produces every length in that range. Cancun, for
+    /// instance, adds three fields at once, so a 18- or 19-field header belongs to no fork at all
+    /// even though it decodes.
+    ForkFieldMismatch {
+        /// Which field disagrees with the fork.
+        field: HeaderField,
+        /// Whether the header carries it.
+        present: bool,
+    },
+}
+
+/// A trailing-optional header field, named for reporting a fork disagreement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeaderField {
+    /// EIP-1559 base fee (London onward).
+    BaseFeePerGas,
+    /// EIP-4895 withdrawals root (Shanghai onward).
+    WithdrawalsRoot,
+    /// EIP-4844 blob gas used (Cancun onward).
+    BlobGasUsed,
+    /// EIP-4844 excess blob gas (Cancun onward).
+    ExcessBlobGas,
+    /// EIP-4788 parent beacon block root (Cancun onward).
+    ParentBeaconBlockRoot,
+    /// EIP-7685 requests hash (Prague onward).
+    RequestsHash,
+    /// EIP-7928 block access list hash; no fork this crate models carries it.
+    BlockAccessListHash,
+    /// EIP-7843 slot number; no fork this crate models carries it.
+    SlotNumber,
+}
+
+impl fmt::Display for HeaderField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            Self::BaseFeePerGas => "base_fee_per_gas",
+            Self::WithdrawalsRoot => "withdrawals_root",
+            Self::BlobGasUsed => "blob_gas_used",
+            Self::ExcessBlobGas => "excess_blob_gas",
+            Self::ParentBeaconBlockRoot => "parent_beacon_block_root",
+            Self::RequestsHash => "requests_hash",
+            Self::BlockAccessListHash => "block_access_list_hash",
+            Self::SlotNumber => "slot_number",
+        };
+        f.write_str(name)
+    }
 }
 
 impl core::error::Error for InvalidHeader {}
@@ -42,6 +92,13 @@ impl fmt::Display for InvalidHeader {
             }
             Self::BlobVersionedHashesNotSupported => {
                 write!(f, "`blob_versioned_hashes` not supported for this spec")
+            }
+            Self::ForkFieldMismatch { field, present } => {
+                if *present {
+                    write!(f, "`{field}` is set on a fork that has no such field")
+                } else {
+                    write!(f, "`{field}` is missing on a fork that requires it")
+                }
             }
             Self::MaxFeePerBlobGasNotSupported => {
                 write!(f, "`max_fee_per_blob_gas` not supported for this spec")
@@ -94,6 +151,8 @@ pub enum InvalidTransaction {
     UnexpectedGasPriceField,
     /// A non-EIP-4844 transaction carries blob versioned hashes.
     UnexpectedBlobHashes,
+    /// A legacy transaction carries an access list, which the type has no field for.
+    UnexpectedAccessList,
     /// Block blob gas price exceeds the transaction `max_fee_per_blob_gas`.
     BlobGasPriceGreaterThanMax,
     /// Blob transaction carries no blob versioned hashes.
@@ -169,6 +228,9 @@ impl fmt::Display for InvalidTransaction {
             Self::UnexpectedBlobHashes => {
                 write!(f, "blob versioned hashes on a non-EIP-4844 transaction")
             }
+            Self::UnexpectedAccessList => {
+                write!(f, "access list on a legacy transaction")
+            }
             Self::BlobGasPriceGreaterThanMax => {
                 write!(
                     f,
@@ -231,11 +293,6 @@ pub enum BlockExecutionError {
     /// EIP-3860: a contract-creation transaction's init code exceeds `MAX_INITCODE_SIZE`
     /// (`2 * MAX_CODE_SIZE = 49152`). Such a transaction is invalid (not merely an execution halt).
     InitCodeTooLarge,
-    /// A Cancun-or-later block has no resolved blob parameters. A well-formed Cancun+ block must
-    /// carry blob parameters (resolved from the chain's `BlobSchedule` by timestamp), just as it
-    /// must carry `excess_blob_gas`; without them the blob limits cannot be enforced. Checked both
-    /// at `Evm::new` (for the block) and when a blob transaction is validated.
-    MissingBlobParams,
     /// A blob transaction carries more blobs than the active `max_blobs_per_transaction`
     /// (EIP-7594: 6 from Osaka).
     TooManyBlobsInTransaction {
@@ -258,10 +315,22 @@ pub enum BlockExecutionError {
         /// Gas still available in the block.
         available_gas: u64,
     },
-    /// A checked arithmetic operation overflowed (gas/blob/fee accounting).
-    ArithmeticOverflow,
     /// The block timestamp does not fit in a `u64`.
     InvalidBlockTimestamp,
+    /// A transaction in the block is invalid, or its execution failed fatally.
+    ///
+    /// A wrapper carrying the position, because every other variant answers *what* went wrong and
+    /// none of them answers *where*. A block is rejected as a whole, so the offending transaction is
+    /// the only thing that makes the rejection diagnosable — and the only thing that lets a
+    /// disagreement with another client be located. The position is used rather than the transaction
+    /// hash: it is free here, whereas the hash would mean re-encoding the transaction to report a
+    /// failure. Boxed to keep the enum small.
+    Transaction {
+        /// Position of the transaction in the block.
+        index: usize,
+        /// Why the block is invalid.
+        source: Box<Self>,
+    },
     /// A required pre/post-execution system call failed.
     SystemCallFailed,
     /// EVM execution ended in an unexpected (fatal) state.
@@ -295,11 +364,14 @@ pub enum BlockExecutionError {
         expected: H256,
     },
     /// Computed requests hash does not match the header.
+    ///
+    /// `Option` on both sides: a fork that has no requests hash and one that has a different value
+    /// are different failures, and collapsing them would hide which happened.
     RequestsHashMismatch {
         /// Computed value.
-        got: H256,
+        got: Option<H256>,
         /// Header value.
-        expected: H256,
+        expected: Option<H256>,
     },
     /// Computed blob gas used does not match the header.
     BlobGasUsedMismatch {
@@ -309,12 +381,32 @@ pub enum BlockExecutionError {
         expected: u64,
     },
     /// Computed withdrawals root does not match the header.
+    ///
+    /// `Option` on both sides: an absent list and an empty one are different blocks with different
+    /// roots, so presence has to survive into the error.
     WithdrawalsRootMismatch {
         /// Computed value.
-        got: H256,
+        got: Option<H256>,
         /// Header value.
-        expected: H256,
+        expected: Option<H256>,
     },
+}
+
+impl BlockExecutionError {
+    /// Tags an error with the position of the transaction that produced it.
+    ///
+    /// Idempotent by construction: an error already carrying a position keeps the inner one, so
+    /// wrapping twice cannot bury the real cause under a second layer.
+    #[must_use]
+    pub fn at_transaction(index: usize, source: Self) -> Self {
+        if matches!(source, Self::Transaction { .. }) {
+            return source;
+        }
+        Self::Transaction {
+            index,
+            source: Box::new(source),
+        }
+    }
 }
 
 impl From<InvalidEvmContext> for BlockExecutionError {
@@ -323,7 +415,16 @@ impl From<InvalidEvmContext> for BlockExecutionError {
     }
 }
 
-impl core::error::Error for BlockExecutionError {}
+impl core::error::Error for BlockExecutionError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            // The only variant that wraps another: the position is context, the inner error is the
+            // cause, so the chain stays walkable.
+            Self::Transaction { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 impl fmt::Display for BlockExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -336,10 +437,6 @@ impl fmt::Display for BlockExecutionError {
             Self::InitCodeTooLarge => {
                 write!(f, "init code exceeds the maximum size (EIP-3860)")
             }
-            Self::MissingBlobParams => write!(
-                f,
-                "block requires blob parameters (Cancun onward) but none were resolved"
-            ),
             Self::TooManyBlobsInTransaction { count, max } => write!(
                 f,
                 "transaction has {count} blobs, exceeding the per-transaction maximum {max}"
@@ -355,8 +452,13 @@ impl fmt::Display for BlockExecutionError {
                 f,
                 "transaction gas limit {tx_gas_limit} exceeds the block's remaining gas {available_gas}"
             ),
-            Self::ArithmeticOverflow => write!(f, "arithmetic overflow in block accounting"),
             Self::InvalidBlockTimestamp => write!(f, "block timestamp does not fit in u64"),
+            Self::Transaction { index, source } => {
+                write!(
+                    f,
+                    "transaction at index {index} makes the block invalid: {source}"
+                )
+            }
             Self::SystemCallFailed => write!(f, "system call failed"),
             Self::ExecutionFailed(reason) => write!(f, "execution failed: {reason:?}"),
             Self::GasUsedMismatch { got, expected } => {

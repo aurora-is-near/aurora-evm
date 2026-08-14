@@ -67,30 +67,36 @@ impl TxSignature {
     /// The legacy `v` for this parity: `27 + y_parity`, or `35 + 2 * chain_id + y_parity` when the
     /// signature covers a chain id (EIP-155).
     ///
-    /// Returns `None` only if `chain_id` is so large that `v` overflows `u64`.
+    /// A `u128`, and therefore **total**: the widest chain id is a `u64`, and `2 * u64::MAX + 36`
+    /// fits with room to spare. Computing it in a `u64` would make the operation partial for chain
+    /// ids near the top of the range, which is a bound `v` itself does not have. RLP encodes integers
+    /// minimally, so the width changes nothing on the wire.
     #[must_use]
-    pub fn legacy_v(&self, chain_id: Option<u64>) -> Option<u64> {
-        let parity = u64::from(self.y_parity);
-        match chain_id {
-            None => Some(LEGACY_V_BASE + parity),
-            Some(chain_id) => chain_id
-                .checked_mul(2)?
-                .checked_add(EIP155_V_BASE)?
-                .checked_add(parity),
-        }
+    pub fn legacy_v(&self, chain_id: Option<u64>) -> u128 {
+        let parity = u128::from(self.y_parity);
+        chain_id.map_or_else(
+            || u128::from(LEGACY_V_BASE) + parity,
+            |chain_id| u128::from(EIP155_V_BASE) + u128::from(chain_id) * 2 + parity,
+        )
     }
 
     /// Splits a legacy `v` into its parity and, from EIP-155 on, the chain id it commits to.
     ///
-    /// Returns `None` for a `v` that encodes neither form (`27`/`28`, or `>= 35`).
+    /// Returns `None` for a `v` that encodes neither form (`27`/`28`, or `>= 35`), and for one whose
+    /// chain id does not fit in a `u64` — the width every other type declares `chain_id` with.
     #[must_use]
-    pub const fn from_legacy_v(v: u64) -> Option<(bool, Option<u64>)> {
+    pub fn from_legacy_v(v: u128) -> Option<(bool, Option<u64>)> {
+        let legacy = u128::from(LEGACY_V_BASE);
+        let eip155 = u128::from(EIP155_V_BASE);
         match v {
-            LEGACY_V_BASE => Some((false, None)),
-            28 => Some((true, None)),
-            v if v >= EIP155_V_BASE => {
-                let offset = v - EIP155_V_BASE;
-                Some((offset % 2 == 1, Some(offset / 2)))
+            _ if v == legacy => Some((false, None)),
+            _ if v == legacy + 1 => Some((true, None)),
+            _ if v >= eip155 => {
+                let offset = v - eip155;
+                // Every other type declares `chain_id` as a `u64`; a `v` demanding more is not a
+                // chain this crate can describe, so it is rejected here rather than truncated.
+                let chain_id = u64::try_from(offset / 2).ok()?;
+                Some((offset % 2 == 1, Some(chain_id)))
             }
             _ => None,
         }
@@ -108,8 +114,8 @@ mod tests {
 
     #[test]
     fn pre_eip155_v_is_27_or_28() {
-        assert_eq!(signature(false).legacy_v(None), Some(27));
-        assert_eq!(signature(true).legacy_v(None), Some(28));
+        assert_eq!(signature(false).legacy_v(None), 27);
+        assert_eq!(signature(true).legacy_v(None), 28);
         assert_eq!(TxSignature::from_legacy_v(27), Some((false, None)));
         assert_eq!(TxSignature::from_legacy_v(28), Some((true, None)));
     }
@@ -118,8 +124,8 @@ mod tests {
     fn eip155_v_roundtrips_for_several_chain_ids() {
         for chain_id in [1u64, 137, 0xFFFF, 1_000_000] {
             for y_parity in [false, true] {
-                let v = signature(y_parity).legacy_v(Some(chain_id)).unwrap();
-                assert_eq!(v, 35 + 2 * chain_id + u64::from(y_parity));
+                let v = signature(y_parity).legacy_v(Some(chain_id));
+                assert_eq!(v, 35 + 2 * u128::from(chain_id) + u128::from(y_parity));
                 assert_eq!(
                     TxSignature::from_legacy_v(v),
                     Some((y_parity, Some(chain_id)))
@@ -131,21 +137,46 @@ mod tests {
     #[test]
     fn mainnet_v_values_are_37_and_38() {
         // The canonical chain-id-1 values, the form seen in EIP-155 mainnet transactions.
-        assert_eq!(signature(false).legacy_v(Some(1)), Some(37));
-        assert_eq!(signature(true).legacy_v(Some(1)), Some(38));
+        assert_eq!(signature(false).legacy_v(Some(1)), 37);
+        assert_eq!(signature(true).legacy_v(Some(1)), 38);
+    }
+
+    /// `v` is a `u128`, so the operation is total for every `u64` chain id — including the ones a
+    /// `u64`-computed `v` could not hold. That was a real transaction being refused, not a synthetic
+    /// edge: `v = u64::MAX` decodes to a chain id one above what such a bound would admit.
+    #[test]
+    fn every_u64_chain_id_has_a_v_and_it_round_trips() {
+        for chain_id in [u64::MAX / 2, u64::MAX - 1, u64::MAX] {
+            for y_parity in [false, true] {
+                let v = signature(y_parity).legacy_v(Some(chain_id));
+                assert_eq!(v, 35 + 2 * u128::from(chain_id) + u128::from(y_parity));
+                assert_eq!(
+                    TxSignature::from_legacy_v(v),
+                    Some((y_parity, Some(chain_id)))
+                );
+            }
+        }
+        // The widest `v` a `u64` could express is legal and its chain id is in range.
+        assert_eq!(
+            TxSignature::from_legacy_v(u128::from(u64::MAX)),
+            Some((false, Some((u64::MAX - 35) / 2)))
+        );
+    }
+
+    /// Beyond a `u64` chain id there is no chain this crate can describe, so `v` is refused rather
+    /// than truncated.
+    #[test]
+    fn a_chain_id_wider_than_a_u64_is_refused() {
+        let too_wide = 35 + (u128::from(u64::MAX) + 1) * 2;
+        assert_eq!(TxSignature::from_legacy_v(too_wide), None);
+        assert_eq!(TxSignature::from_legacy_v(u128::MAX), None);
     }
 
     #[test]
     fn v_values_between_the_two_forms_are_rejected() {
-        for v in [0u64, 1, 26, 29, 30, 31, 32, 33, 34] {
+        for v in [0u128, 1, 26, 29, 30, 31, 32, 33, 34] {
             assert_eq!(TxSignature::from_legacy_v(v), None, "v = {v}");
         }
-    }
-
-    #[test]
-    fn absurd_chain_id_overflows_rather_than_wrapping() {
-        assert_eq!(signature(false).legacy_v(Some(u64::MAX)), None);
-        assert_eq!(signature(false).legacy_v(Some(u64::MAX / 2)), None);
     }
 
     #[test]

@@ -1,13 +1,25 @@
-use crate::blob;
 use crate::block::BlockEnv;
+use crate::eips::eip4844;
+use crate::eips::eip4844::DATA_GAS_PER_BLOB;
+use crate::eips::eip7825;
 use crate::errors::{InvalidHeader, InvalidTransaction};
 use crate::spec::Spec;
-use crate::transaction::{Transaction, TxType, eip7825};
+use crate::transaction::{TxEnv, TxType};
 
 use aurora_evm::Config;
 use aurora_evm::gasometer::Gasometer;
 use core::fmt;
 use primitive_types::{H160, H256, U256};
+
+/// Blob gas a transaction consumes for `blob_count` blobs.
+///
+/// Saturating: a blob count large enough to overflow cannot come from a decoded transaction, and a
+/// saturated value only ever exceeds a limit, never slips under one.
+fn total_blob_gas(blob_count: usize) -> u64 {
+    u64::try_from(blob_count)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(DATA_GAS_PER_BLOB)
+}
 
 /// Init and floor gas from transaction
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,23 +44,23 @@ impl IntrinsicAndFloorGas {
 
 #[derive(Clone, Debug)]
 pub struct EvmContext<'block, 'tx> {
-    pub chain_id: Option<u64>,
+    pub chain_id: u64,
     pub block: &'block BlockEnv,
-    pub tx: &'tx Transaction,
+    pub tx: &'tx TxEnv,
     pub gas_config: Config,
     pub spec: Spec,
 
     /// Configures the gas limit cap for the transaction.
-    /// Introduced in `Osaka` hard fork [EIP-7825: Transaction Gas Limit Cap](https://eips.ethereum.org/EIPS/eip-7825) .
+    /// Introduced in `Osaka` hard fork [EIP-7825: Transaction Gas Limit Cap](https://eips.ethereum.org/EIPS/eip-7825).
     pub tx_gas_limit_cap: Option<u64>,
 }
 
 impl<'block, 'tx> EvmContext<'block, 'tx> {
     #[must_use]
-    pub fn new(
-        chain_id: Option<u64>,
+    pub const fn new(
+        chain_id: u64,
         block: &'block BlockEnv,
-        tx: &'tx Transaction,
+        tx: &'tx TxEnv,
         spec: &Spec,
         tx_gas_limit_cap: Option<u64>,
     ) -> Self {
@@ -57,7 +69,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             block,
             tx,
             gas_config: spec.get_gasometer_config(),
-            spec: spec.clone(),
+            spec: *spec,
             tx_gas_limit_cap,
         }
     }
@@ -100,9 +112,9 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     #[must_use]
     pub fn calc_max_data_fee(&self) -> Option<U256> {
         self.is_tx_eip4844().then(|| {
-            U256::from(self.tx.max_fee_per_blob_gas).saturating_mul(U256::from(
-                blob::get_total_blob_gas(self.tx.blob_versioned_hashes.len()),
-            ))
+            U256::from(self.tx.max_fee_per_blob_gas).saturating_mul(U256::from(total_blob_gas(
+                self.tx.blob_versioned_hashes.len(),
+            )))
         })
     }
 
@@ -120,7 +132,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
                 .blob_excess_gas_and_price
                 .unwrap_or_default()
                 .blob_gas_price;
-            U256::from(blob_gas_price).saturating_mul(U256::from(blob::get_total_blob_gas(
+            U256::from(blob_gas_price).saturating_mul(U256::from(total_blob_gas(
                 self.tx.blob_versioned_hashes.len(),
             )))
         })
@@ -199,33 +211,24 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        if self.spec < Spec::Cancun {
-            if self.block.blob_excess_gas_and_price.is_some() {
-                return Err(InvalidEvmContext::InvalidHeader(
-                    InvalidHeader::ExcessBlobGasNotSupported,
-                ));
-            }
-            if !self.block.blob_hashes.is_empty() {
-                return Err(InvalidEvmContext::InvalidHeader(
-                    InvalidHeader::BlobVersionedHashesNotSupported,
-                ));
-            }
+        if self.spec < Spec::Cancun && self.block.blob_excess_gas_and_price.is_some() {
+            return Err(InvalidEvmContext::InvalidHeader(
+                InvalidHeader::ExcessBlobGasNotSupported,
+            ));
         }
 
-        // If `chain_id` not set for `EvmContext` config, skip this check.
-        // EIP-155: Simple replay attack protection
-        if let Some(cfg_chain_id) = self.chain_id {
-            // Legacy transaction are the only one that can omit chain_id.
-            if self.tx.tx_type > TxType::Legacy && self.tx.chain_id.is_none() {
-                return Err(InvalidEvmContext::InvalidTransaction(
-                    InvalidTransaction::MissingChainId,
-                ));
-            }
-            if self.tx.chain_id.is_some_and(|id| id != cfg_chain_id) {
-                return Err(InvalidEvmContext::InvalidTransaction(
-                    InvalidTransaction::InvalidChainId,
-                ));
-            }
+        // EIP-155: simple replay attack protection. Unconditional — the chain a block belongs to
+        // is not optional. Only a legacy transaction may omit its own `chain_id`, which selects the
+        // six-field signing preimage over the nine-field one; every typed transaction must carry it.
+        if self.tx.tx_type > TxType::Legacy && self.tx.chain_id.is_none() {
+            return Err(InvalidEvmContext::InvalidTransaction(
+                InvalidTransaction::MissingChainId,
+            ));
+        }
+        if self.tx.chain_id.is_some_and(|id| id != self.chain_id) {
+            return Err(InvalidEvmContext::InvalidTransaction(
+                InvalidTransaction::InvalidChainId,
+            ));
         }
 
         // EIP-7825: Transaction Gas Limit Cap.
@@ -279,6 +282,16 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::UnexpectedBlobHashes,
+            ));
+        }
+
+        // An access list is an EIP-2930 field, and a legacy transaction has no field for it: the
+        // encoder never writes one, so a non-empty one here is state no signature covered. Unlike the
+        // two checks above it is also *read* — it feeds intrinsic gas and pre-warms addresses and
+        // slots — so it has to be rejected before the gas computation below.
+        if matches!(self.tx.tx_type, TxType::Legacy) && !self.tx.access_list.is_empty() {
+            return Err(InvalidEvmContext::InvalidTransaction(
+                InvalidTransaction::UnexpectedAccessList,
             ));
         }
 
@@ -427,7 +440,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         // All versioned blob hashes must start with VERSIONED_HASH_VERSION_KZG
         for blob_hash in &self.tx.blob_versioned_hashes {
             let blob_hash = H256(blob_hash.to_big_endian());
-            if blob_hash[0] != blob::VERSIONED_HASH_VERSION_KZG {
+            if blob_hash[0] != eip4844::VERSIONED_HASH_VERSION_KZG {
                 return Err(InvalidEvmContext::InvalidTransaction(
                     InvalidTransaction::BlobVersionNotSupported,
                 ));

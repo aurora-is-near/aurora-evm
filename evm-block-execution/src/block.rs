@@ -12,23 +12,18 @@
 //! Each type dereferences to the one it wraps, so a `RecoveredBlock` reads its header fields
 //! directly (`block.state_root`) and its hash through [`SealedBlock::hash`].
 //!
-//! Alongside them live the execution *environment* types: [`BlockEnv`], the input the transaction
-//! loop reads, and [`ExpectedHeader`], the output values a valid block must reproduce. Nothing here
-//! converts between the two representations yet — the transaction loop is still entered with a
-//! [`BlockEnv`] and a transaction list.
-//!
 //! # Senders
 //!
 //! A block body carries transactions in their consensus form
-//! ([`SignedTransaction`](crate::transaction::SignedTransaction)): a signature, and no sender. The
-//! sender is established by [`recover_block_with_public_keys`], which verifies each signature
-//! against a public key supplied with the block — cheaper than recovering it, and the reason the
-//! keys are an input. The result is a [`RecoveredBlock`]; the executor's transaction form,
-//! [`Transaction`](crate::transaction::Transaction), is that pairing of payload and sender.
+//! ([`SignedTxEnvelope`]): a signature, and no sender. The
+//! sender is established by [`recover_block`], or by [`recover_block_with_public_keys`] when the
+//! caller has the keys and wants them checked against the ones recovery yields. The result is a
+//! [`RecoveredBlock`]; the executor's transaction form,
+//! [`TxEnv`](crate::transaction::TxEnv), is that pairing of payload and sender.
 //!
 //! Only post-merge blocks are modelled, so ommers are absent from [`BlockBody`] entirely: the list
 //! is always empty and `ommers_hash` is the constant
-//! [`EMPTY_OMMERS_HASH`](crate::constants::EMPTY_OMMERS_HASH), which is checkable on the header
+//! [`EMPTY_OMMERS_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), which is checkable on the header
 //! alone.
 
 mod body;
@@ -39,13 +34,15 @@ mod recover;
 mod recovered;
 mod sealed;
 
-use crate::transaction::SignedTransaction;
+use crate::transaction::SignedTxEnvelope;
 pub use body::BlockBody;
 pub use codec::BlockDecodeError;
-pub use env::{BlockEnv, ExpectedHeader};
+pub use env::{BlobExcessGasAndPrice, BlockEnv};
 pub use header::Header;
 use primitive_types::H256;
-pub use recover::{SenderRecoveryError, UncompressedPublicKey, recover_block_with_public_keys};
+pub use recover::{
+    SenderRecoveryError, UncompressedPublicKey, recover_block, recover_block_with_public_keys,
+};
 pub use recovered::{BlockRecoveryError, RecoveredBlock};
 pub use sealed::{SealedBlock, SealedHeader};
 use std::ops::Deref;
@@ -54,8 +51,8 @@ use std::ops::Deref;
 ///
 /// Dereferences to the header, so header fields can be read straight off the block
 /// (`block.state_root`). Sealing it ([`Block::seal_slow`]) caches the block hash; pairing it with
-/// its senders — which [`recover_block_with_public_keys`](super::recover_block_with_public_keys)
-/// establishes — yields a [`RecoveredBlock`](super::RecoveredBlock), the form execution consumes.
+/// its senders — which [`recover_block_with_public_keys`]
+/// establishes — yields a [`RecoveredBlock`], the form execution consumes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Block {
     /// The block header.
@@ -85,7 +82,7 @@ impl Block {
 
     /// The block's transactions.
     #[must_use]
-    pub fn transactions(&self) -> &[SignedTransaction] {
+    pub fn transactions(&self) -> &[SignedTxEnvelope] {
         &self.body.transactions
     }
 

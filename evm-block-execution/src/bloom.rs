@@ -20,7 +20,7 @@
 use crate::crypto::keccak256;
 use aurora_evm::backend::Log;
 
-/// A 2048-bit (256-byte) bloom filter.
+/// Ethereum 256 byte bloom filter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bloom(pub [u8; 256]);
 

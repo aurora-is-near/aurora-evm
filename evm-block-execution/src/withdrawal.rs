@@ -58,7 +58,7 @@ impl rlp::Encodable for Withdrawal {
 
 impl rlp::Decodable for Withdrawal {
     fn decode(rlp: &rlp::Rlp<'_>) -> Result<Self, rlp::DecoderError> {
-        if rlp.item_count()? != 4 {
+        if crate::rlp_strict::checked_len(rlp)? != 4 {
             return Err(rlp::DecoderError::RlpIncorrectListLen);
         }
         Ok(Self {

@@ -1,21 +1,18 @@
 //! The Ethereum block header and its RLP identity.
 //!
 //! [`Header`] is the canonical header: the same fields, in the same order, that the Yellow Paper
-//! and the post-merge EIPs define, expressed over [`primitive_types`] instead of an external
-//! consensus crate. Its RLP encoding is what the block hash is computed from
+//! and the post-merge EIPs define. Its RLP encoding is what the block hash is computed from
 //! ([`Header::hash_slow`]), so the field order and the encoding of every field are
 //! consensus-critical.
-//!
-//! Fields introduced after Frontier are `Option`, and they are appended to the RLP list **only
-//! when present**, in fork-activation order: `base_fee_per_gas` (London, EIP-1559),
-//! `withdrawals_root` (Shanghai, EIP-4895), `blob_gas_used` / `excess_blob_gas` (Cancun,
-//! EIP-4844), `parent_beacon_block_root` (Cancun, EIP-4788), `requests_hash` (Prague, EIP-7685),
-//! `block_access_list_hash` (EIP-7928) and `slot_number` (EIP-7843). A header must therefore
-//! populate them in that order — a `Some` after a `None` would shift every later field's position
-//! in the list and produce a different hash.
 
+use crate::block::SealedHeader;
 use crate::bloom::Bloom;
+use crate::constants::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH};
 use crate::crypto::keccak256;
+use crate::eips::eip1559::{BaseFeeParams, calc_next_block_base_fee};
+use crate::eips::eip7840::BlobParams;
+use crate::rlp_strict;
+use core::cmp::Ordering;
 use primitive_types::{H160, H256, U256};
 
 /// Number of header fields present in every block since Frontier.
@@ -25,11 +22,7 @@ const MANDATORY_FIELDS: usize = 15;
 const ALL_FIELDS: usize = 23;
 
 /// An Ethereum block header.
-///
-/// The `Option` fields are absent before the fork that introduced them; see the module docs for
-/// their RLP ordering. This type deliberately does not derive `serde`: `logs_bloom` is a 256-byte
-/// [`Bloom`] and serde has no built-in impl for arrays that large.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
     /// Keccak-256 hash of the parent block's header.
     pub parent_hash: H256,
@@ -37,17 +30,20 @@ pub struct Header {
     pub ommers_hash: H256,
     /// Address that receives the block's priority fees (the coinbase).
     pub beneficiary: H160,
-    /// Root of the world-state trie after this block has been executed.
+    /// Keccak-256 hash of the root of the world-state trie after this block has been executed
+    /// and finalisations applied.
     pub state_root: H256,
-    /// Root of the trie of this block's transactions.
+    /// Keccak-256 hash of the root of the trie of this block's transactions.
     pub transactions_root: H256,
-    /// Root of the trie of this block's receipts.
+    /// Keccak-256 hash of the root of the trie of this block's receipts.
     pub receipts_root: H256,
-    /// Bloom filter over the addresses and topics of every log in the block.
+    /// The Bloom filter composed from indexable information (logger address and log topics)
+    /// contained in each log entry from the receipt of each transaction in the transactions list;
+    /// formally Hb.
     pub logs_bloom: Bloom,
     /// Proof-of-work difficulty; zero post-merge.
     pub difficulty: U256,
-    /// Block height (genesis is zero).
+    /// Block height, genesis is zero.
     pub number: u64,
     /// Maximum gas the block may consume.
     pub gas_limit: u64,
@@ -60,60 +56,208 @@ pub struct Header {
     /// Proof-of-work mix hash; post-merge this carries the beacon chain's `prevrandao`.
     pub mix_hash: H256,
     /// Proof-of-work nonce; all-zero post-merge. A fixed 8-byte string, never a scalar.
+    /// Value which, combined with the mixhash, proves that a sufficient amount of
+    /// computation has been carried out on this block
     pub nonce: [u8; 8],
     /// EIP-1559 base fee per gas, burned rather than paid to the beneficiary (London+).
     pub base_fee_per_gas: Option<u64>,
-    /// Root of the trie of this block's validator withdrawals (EIP-4895, Shanghai+).
+    /// Keccak-256 hash of the root of the trie of this block's validator withdrawals (EIP-4895,
+    /// Shanghai+).
     pub withdrawals_root: Option<H256>,
     /// Blob gas consumed by the block's blob transactions (EIP-4844, Cancun+).
     pub blob_gas_used: Option<u64>,
     /// Running total of blob gas consumed above target before this block (EIP-4844, Cancun+).
     pub excess_blob_gas: Option<u64>,
-    /// Parent beacon block root, exposed to the EVM by EIP-4788 (Cancun+).
+    /// The hash of the parent beacon block's root is included in execution blocks, as proposed by
+    /// EIP-4788 (Cancun+).
+    ///
+    /// This enables trust-minimized access to consensus state, supporting staking pools, bridges,
+    /// and more.
+    ///
+    /// The beacon roots contract handles root storage, enhancing Ethereum's functionalities.
     pub parent_beacon_block_root: Option<H256>,
-    /// Hash of the block's EIP-7685 request list (Prague+).
+    /// Keccak-256 hash of the block's EIP-7685 request list (Prague+).
     pub requests_hash: Option<H256>,
-    /// Hash of the block's access list (EIP-7928).
+    /// Keccak-256 hash of the block's access list (EIP-7928).
     pub block_access_list_hash: Option<H256>,
     /// Consensus-layer slot this block belongs to (EIP-7843).
     pub slot_number: Option<u64>,
 }
 
+impl AsRef<Self> for Header {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
+impl Default for Header {
+    fn default() -> Self {
+        Self {
+            parent_hash: H256::default(),
+            ommers_hash: EMPTY_OMMER_ROOT_HASH,
+            beneficiary: H160::default(),
+            state_root: EMPTY_ROOT_HASH,
+            transactions_root: EMPTY_ROOT_HASH,
+            receipts_root: EMPTY_ROOT_HASH,
+            logs_bloom: Bloom::default(),
+            difficulty: U256::default(),
+            number: 0,
+            gas_limit: 0,
+            gas_used: 0,
+            timestamp: 0,
+            extra_data: Vec::new(),
+            mix_hash: H256::default(),
+            nonce: [0; 8],
+            base_fee_per_gas: None,
+            withdrawals_root: None,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
+            requests_hash: None,
+            block_access_list_hash: None,
+            slot_number: None,
+        }
+    }
+}
+
 impl Header {
     /// Computes the block hash: `keccak256(rlp(header))`.
     ///
-    /// Named `_slow` because it re-encodes the header on every call; prefer
-    /// [`SealedHeader`](super::SealedHeader), which caches the result.
+    /// Named `slow` because it re-encodes the header on every call; prefer
+    /// [`SealedHeader`](SealedHeader), which caches the result.
     #[must_use]
     pub fn hash_slow(&self) -> H256 {
         keccak256(&rlp::encode(self))
     }
 
+    /// Decodes a header that must occupy `bytes` **entirely**.
+    ///
+    /// The form to use for a header that arrives as a standalone blob — an ancestor supplied in an
+    /// execution witness, say — because its hash is `keccak256` of exactly those bytes: trailing
+    /// bytes that decoding ignored would still be hashed, so a lenient decode would pair a header
+    /// with a hash that is not its own.
+    ///
+    /// # Errors
+    /// [`rlp::DecoderError::RlpIsTooShort`] if the header declares a payload the buffer does not
+    /// hold, [`rlp::DecoderError::RlpIsTooBig`] if bytes follow the header, and
+    /// [`rlp::DecoderError::RlpInvalidLength`] if the declared length overflows a `usize`; otherwise
+    /// whatever decoding the header itself reports.
+    pub fn decode_exact(bytes: &[u8]) -> Result<Self, rlp::DecoderError> {
+        let consumed = rlp_strict::declared_item_len(bytes)?;
+        match consumed.cmp(&bytes.len()) {
+            // The header declares a payload the buffer does not hold: too few bytes, not too many.
+            Ordering::Greater => return Err(rlp::DecoderError::RlpIsTooShort),
+            // The buffer holds bytes past the end of the header.
+            Ordering::Less => return Err(rlp::DecoderError::RlpIsTooBig),
+            Ordering::Equal => {}
+        }
+        rlp::decode(bytes)
+    }
+
     /// Seals the header, computing and caching its hash.
     #[must_use]
-    pub fn seal_slow(self) -> super::SealedHeader {
-        super::SealedHeader::seal_slow(self)
+    pub fn seal_slow(self) -> SealedHeader {
+        SealedHeader::seal_slow(self)
     }
 
     /// Seals the header with a hash the caller already knows, without recomputing it.
     #[must_use]
-    pub fn seal_unchecked(self, hash: H256) -> super::SealedHeader {
-        super::SealedHeader::new(self, hash)
+    pub fn seal_unchecked(self, hash: H256) -> SealedHeader {
+        SealedHeader::new_unchecked(self, hash)
     }
 
-    /// Whether this header carries an EIP-1559 base fee (London+).
+    /// Check if the ommers hash equals to empty hash list.
     #[must_use]
-    pub const fn is_eip1559(&self) -> bool {
-        self.base_fee_per_gas.is_some()
+    pub fn ommers_hash_is_empty(&self) -> bool {
+        self.ommers_hash == EMPTY_OMMER_ROOT_HASH
     }
 
-    /// Blob gas excess and used, present together from Cancun on.
+    /// Check if the transaction root equals to empty root.
     #[must_use]
-    pub const fn blob_gas(&self) -> Option<(u64, u64)> {
-        match (self.excess_blob_gas, self.blob_gas_used) {
-            (Some(excess), Some(used)) => Some((excess, used)),
-            _ => None,
-        }
+    pub fn transaction_root_is_empty(&self) -> bool {
+        self.transactions_root == EMPTY_ROOT_HASH
+    }
+
+    /// Returns the blob fee for _this_ block according to the EIP-4844 spec.
+    ///
+    /// Returns `None` if `excess_blob_gas` is None
+    #[must_use]
+    pub fn blob_fee(&self, blob_params: BlobParams) -> Option<u128> {
+        blob_params.calc_blob_fee(self.excess_blob_gas?)
+    }
+
+    /// Returns the blob fee for the next block according to the EIP-4844 spec.
+    ///
+    /// Returns `None` if `excess_blob_gas` is None.
+    ///
+    /// See also [`Self::next_block_excess_blob_gas`]
+    #[must_use]
+    pub fn next_block_blob_fee(&self, blob_params: BlobParams) -> Option<u128> {
+        blob_params.calc_blob_fee(self.next_block_excess_blob_gas(blob_params)?)
+    }
+
+    /// Calculate base fee for next block according to the EIP-1559 spec.
+    ///
+    /// Returns a `None` if no base fee is set, no EIP-1559 support
+    #[must_use]
+    pub fn next_block_base_fee(&self, base_fee_params: BaseFeeParams) -> Option<u64> {
+        calc_next_block_base_fee(
+            self.gas_used,
+            self.gas_limit,
+            self.base_fee_per_gas?,
+            base_fee_params,
+        )
+    }
+
+    /// Calculate excess blob gas for the next block according to the EIP-4844
+    /// spec.
+    ///
+    /// Returns `None` if `excess_blob_gas`, `blob_gas_used`, or `base_fee_per_gas` is not set.
+    #[must_use]
+    pub fn next_block_excess_blob_gas(&self, blob_params: BlobParams) -> Option<u64> {
+        blob_params.next_block_excess_blob_gas(
+            self.excess_blob_gas?,
+            self.blob_gas_used?,
+            self.base_fee_per_gas?,
+        )
+    }
+
+    /// Calculate a heuristic for the in-memory size of the [Header].
+    #[must_use]
+    pub const fn size(&self) -> usize {
+        size_of::<Self>() + self.extra_data.len()
+    }
+
+    /// True if the shanghai hardfork is active.
+    ///
+    /// This function checks that the withdrawals root field is present.
+    #[must_use]
+    pub const fn shanghai_active(&self) -> bool {
+        self.withdrawals_root.is_some()
+    }
+
+    /// True if the Cancun hardfork is active.
+    ///
+    /// This function checks that the blob gas used field is present.
+    #[must_use]
+    pub const fn cancun_active(&self) -> bool {
+        self.blob_gas_used.is_some()
+    }
+
+    /// True if the Prague hardfork is active.
+    ///
+    /// This function checks that the requests hash is present.
+    #[must_use]
+    pub const fn prague_active(&self) -> bool {
+        self.requests_hash.is_some()
+    }
+
+    /// True if the Amsterdam hardfork is active.
+    ///
+    /// This function checks that the block access list hash is present.
+    #[must_use]
+    pub const fn amsterdam_active(&self) -> bool {
+        self.block_access_list_hash.is_some()
     }
 }
 
@@ -181,7 +325,7 @@ impl rlp::Encodable for Header {
 
 impl rlp::Decodable for Header {
     fn decode(rlp: &rlp::Rlp<'_>) -> Result<Self, rlp::DecoderError> {
-        let items = rlp.item_count()?;
+        let items = crate::rlp_strict::checked_len(rlp)?;
         if !(MANDATORY_FIELDS..=ALL_FIELDS).contains(&items) {
             return Err(rlp::DecoderError::RlpIncorrectListLen);
         }
@@ -237,7 +381,8 @@ impl rlp::Decodable for Header {
 #[cfg(test)]
 mod tests {
     use super::Header;
-    use crate::constants::{EMPTY_OMMERS_HASH, EMPTY_ROOT_HASH};
+    use crate::constants::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH};
+    use crate::rlp_strict::overflowing_header;
     use hex_literal::hex;
     use primitive_types::{H256, U256};
 
@@ -245,7 +390,7 @@ mod tests {
     fn mainnet_genesis() -> Header {
         Header {
             parent_hash: H256::zero(),
-            ommers_hash: EMPTY_OMMERS_HASH,
+            ommers_hash: EMPTY_OMMER_ROOT_HASH,
             state_root: H256(hex!(
                 "d7f8974fb5ac78d9ac099b9ad5018bedc2ce0a72dad1827a1709da30580f0544"
             )),
@@ -318,5 +463,35 @@ mod tests {
         stream.append(&H256::zero());
         let encoded = stream.out();
         assert!(rlp::decode::<Header>(&encoded).is_err());
+    }
+
+    /// `decode_exact` exists because a standalone header's hash is `keccak256` of exactly its bytes.
+    /// The two ways a buffer can disagree with the header it declares are opposite faults, and each
+    /// is reported as itself rather than folded into one "not exact".
+    #[test]
+    fn decode_exact_names_a_truncated_header_apart_from_a_padded_one() {
+        let encoded = rlp::encode(&mainnet_genesis()).to_vec();
+        assert_eq!(Header::decode_exact(&encoded).unwrap(), mainnet_genesis());
+
+        // Bytes past the end of the header: they would be hashed but not decoded.
+        let mut padded = encoded.clone();
+        padded.push(0x00);
+        assert_eq!(
+            Header::decode_exact(&padded).unwrap_err(),
+            rlp::DecoderError::RlpIsTooBig
+        );
+
+        // The header declares a payload the buffer does not hold: too few bytes, not too many.
+        assert_eq!(
+            Header::decode_exact(&encoded[..encoded.len() - 1]).unwrap_err(),
+            rlp::DecoderError::RlpIsTooShort
+        );
+
+        // A declared length that overflows a `usize` is neither, and must not be summed: a header and
+        // its length bytes from a witness would otherwise wrap or panic before any header was read.
+        assert_eq!(
+            Header::decode_exact(&overflowing_header(true)).unwrap_err(),
+            rlp::DecoderError::RlpInvalidLength
+        );
     }
 }

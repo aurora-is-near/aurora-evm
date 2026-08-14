@@ -31,27 +31,34 @@
 //! EIP-2718 envelope wrapped in an RLP **byte string** — otherwise a `0x02…` envelope would not be
 //! a legal item of an RLP list. The bare envelope is what the transactions trie and the
 //! transaction hash are built from, so the two forms must not be confused; the distinction lives in
-//! [`SignedTransaction::encode_block_item`] and its inverse.
+//! [`SignedTxEnvelope::encode_block_item`] and its inverse.
 //!
-//! # Why these are methods and not `rlp::Encodable` / `rlp::Decodable`
+//! # `Encodable` yes, `Decodable` no
 //!
-//! Neither trait can express this codec:
+//! [`Block`] and [`BlockBody`] implement `rlp::Encodable`, and that is the whole encoder — there is no
+//! `encode_rlp` method beside it. Encoding a transaction is total: a [`SignedTxEnvelope`] holds exactly
+//! the fields its own type has, so there is nothing that can contradict itself and nothing to fail on.
 //!
-//! - `rlp::Encodable::rlp_append` is infallible, but encoding a transaction is not — [`TxPayload`]
-//!   holds the union of every type's fields, so a payload can contradict its own `tx_type` (a
-//!   legacy transaction without a `gas_price`). The alternatives inside an infallible trait are to
-//!   panic or to emit wrong consensus bytes; both are worse than a `Result`.
-//! - `rlp::Decodable::decode` can only fail with [`rlp::DecoderError`], whose `Custom(&'static
-//!   str)` cannot carry *which* transaction failed or why. [`BlockDecodeError`] keeps that.
+//! Decoding cannot be a trait impl. `rlp::Decodable::decode` may only fail with
+//! [`rlp::DecoderError`], whose `Custom(&'static str)` carries a fixed string — it cannot say *which*
+//! transaction failed, how many ommers a pre-merge block brought, or by how much a buffer overran.
+//! [`BlockDecodeError`] carries all three, so decoding stays a method and the asymmetry with the
+//! encode side is deliberate.
 //!
-//! Leaf types whose codec is total and whose errors do fit — [`Header`], [`Withdrawal`],
-//! [`Bloom`](crate::bloom::Bloom) — do implement the traits, and this codec uses them.
+//! Two inputs are refused that a lenient decoder would let through: a legacy transaction carrying an
+//! explicit `0x00` type byte, and a legacy transaction wrapped in an RLP byte string as though it were
+//! typed. Both are alternative encodings of a block that already has a canonical one, and admitting
+//! either would mean the same block has two encodings — which is what the strict decoding here exists
+//! to prevent.
 //!
-//! [`TxPayload`]: crate::transaction::TxPayload
+//! The EIP-4844 *network* form, carrying blobs, commitments and proofs, is not modelled at all. It exists
+//! for transaction gossip; a block carries only versioned hashes, so a validator never sees one.
 
 use crate::block::{Block, BlockBody, Header};
-use crate::transaction::{SignedTransaction, TxDecodeError, TxEncodeError};
+use crate::rlp_strict;
+use crate::transaction::{SignedTxEnvelope, TxDecodeError};
 use crate::withdrawal::Withdrawal;
+use core::cmp::Ordering;
 use core::fmt;
 
 /// Why a block or a block body could not be decoded from its RLP form.
@@ -72,6 +79,9 @@ pub enum BlockDecodeError {
         count: usize,
     },
     /// The buffer holds more than the one block that was decoded from its start.
+    ///
+    /// Only this direction: a block declaring *more* than the buffer holds is
+    /// [`rlp::DecoderError::RlpIsTooShort`], so `consumed` is always below `total` here.
     TrailingBytes {
         /// Bytes the block itself occupies.
         consumed: usize,
@@ -123,18 +133,19 @@ const fn body_item_count(body: &BlockBody) -> usize {
 
 /// Appends a body's items — transactions, the empty ommers list, and `withdrawals` when present —
 /// to a list the caller has already opened.
-fn append_body_items(body: &BlockBody, stream: &mut rlp::RlpStream) -> Result<(), TxEncodeError> {
+fn append_body_items(body: &BlockBody, stream: &mut rlp::RlpStream) {
     stream.begin_list(body.transactions.len());
+    // One lazily-created scratch buffer for all typed transactions. Empty and legacy-only lists never
+    // allocate it; after the first typed transaction its capacity is retained for every following one.
+    let mut scratch = None;
     for transaction in &body.transactions {
-        // Pre-encoded, because a typed transaction is a byte string and a legacy one is a list.
-        stream.append_raw(&transaction.encode_block_item()?, 1);
+        transaction.append_block_item(stream, &mut scratch);
     }
     // Ommers: always empty, and the decoder requires it (see the module docs).
     stream.begin_list(0);
     if let Some(withdrawals) = &body.withdrawals {
         stream.append_list(withdrawals);
     }
-    Ok(())
 }
 
 /// Reads a body's items from `rlp` starting at `offset`.
@@ -143,23 +154,22 @@ fn decode_body_items(
     offset: usize,
     has_withdrawals: bool,
 ) -> Result<BlockBody, BlockDecodeError> {
-    let transactions = rlp
-        .at(offset)?
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            SignedTransaction::decode_block_item(&item)
-                .map_err(|source| BlockDecodeError::Transaction { index, source })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let list = rlp.at(offset)?;
+    let mut transactions = Vec::with_capacity(rlp_strict::checked_len(&list)?);
+    for (index, item) in list.iter().enumerate() {
+        transactions.push(
+            SignedTxEnvelope::decode_block_item(&item)
+                .map_err(|source| BlockDecodeError::Transaction { index, source })?,
+        );
+    }
 
-    let ommers = rlp.at(offset.saturating_add(1))?.item_count()?;
+    let ommers = rlp_strict::checked_len(&rlp.at(offset + 1)?)?;
     if ommers != 0 {
         return Err(BlockDecodeError::OmmersNotSupported { count: ommers });
     }
 
     let withdrawals = if has_withdrawals {
-        Some(rlp.list_at::<Withdrawal>(offset.saturating_add(2))?)
+        Some(rlp_strict::checked_list_at::<Withdrawal>(rlp, offset + 2)?)
     } else {
         None
     };
@@ -180,52 +190,53 @@ const fn has_withdrawals(count: usize, expected: usize) -> Result<bool, BlockDec
     }
 }
 
-impl BlockBody {
-    /// RLP-encodes the body as `[transactions, ommers, withdrawals?]`.
-    ///
-    /// ## Errors
-    /// [`TxEncodeError`] if a transaction's fields do not match its transaction type.
-    pub fn encode_rlp(&self) -> Result<Vec<u8>, TxEncodeError> {
-        let mut stream = rlp::RlpStream::new_list(body_item_count(self));
-        append_body_items(self, &mut stream)?;
-        Ok(stream.out().to_vec())
+impl rlp::Encodable for BlockBody {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(body_item_count(self));
+        append_body_items(self, stream);
     }
+}
 
-    /// Decodes a body from `[transactions, ommers, withdrawals?]` — the inverse of
-    /// [`Self::encode_rlp`]. Anything in `bytes` after the body's own list is ignored.
+impl BlockBody {
+    /// Decodes a body from `[transactions, ommers, withdrawals?]` — the inverse of its
+    /// `rlp::Encodable`. Anything in `bytes` after the body's own list is ignored.
+    ///
+    /// Exists for the tests that prove a body's own encoding round-trips, and for nothing else: a body
+    /// never arrives on its own, it arrives inside a block. The decoding itself is not test-only —
+    /// production reaches the same [`decode_body_items`] through [`Block::decode_rlp`].
     ///
     /// ## Errors
     /// [`BlockDecodeError`] if the list has the wrong length, a transaction does not decode, or the
     /// ommers list is not empty.
-    pub fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
+    #[cfg(test)]
+    pub(crate) fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
         let rlp = rlp::Rlp::new(bytes);
-        let withdrawals = has_withdrawals(rlp.item_count()?, 2)?;
+        let withdrawals = has_withdrawals(rlp_strict::checked_len(&rlp)?, 2)?;
         decode_body_items(&rlp, 0, withdrawals)
     }
 }
 
-impl Block {
-    /// RLP-encodes the block as `[header, transactions, ommers, withdrawals?]` — the body's items
-    /// flattened in, not nested.
-    ///
-    /// ## Errors
-    /// [`TxEncodeError`] if a transaction's fields do not match its transaction type.
-    pub fn encode_rlp(&self) -> Result<Vec<u8>, TxEncodeError> {
-        let mut stream = rlp::RlpStream::new_list(body_item_count(&self.body).saturating_add(1));
+impl rlp::Encodable for Block {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(body_item_count(&self.body) + 1);
         stream.append(&self.header);
-        append_body_items(&self.body, &mut stream)?;
-        Ok(stream.out().to_vec())
+        append_body_items(&self.body, stream);
     }
+}
 
-    /// Decodes a block from the start of `bytes`, ignoring anything after it. Use
-    /// [`Self::decode_exact`] for input that must hold exactly one block.
+impl Block {
+    /// Decodes a block from the start of `bytes`, **ignoring anything after it**.
+    ///
+    /// Crate-internal, because that leniency is the hazard the strict path exists to remove: a block
+    /// decoded this way can re-encode to different bytes than it arrived as. [`Self::decode_exact`] is
+    /// the public form, and it is this one plus the check that the block covers its buffer.
     ///
     /// ## Errors
     /// [`BlockDecodeError`] if the list has the wrong length, the header or a transaction does not
     /// decode, or the ommers list is not empty.
-    pub fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
+    pub(crate) fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
         let rlp = rlp::Rlp::new(bytes);
-        let withdrawals = has_withdrawals(rlp.item_count()?, 3)?;
+        let withdrawals = has_withdrawals(rlp_strict::checked_len(&rlp)?, 3)?;
         let header: Header = rlp.val_at(0)?;
         let body = decode_body_items(&rlp, 1, withdrawals)?;
         Ok(Self::new(header, body))
@@ -233,20 +244,30 @@ impl Block {
 
     /// Decodes a block that must occupy `bytes` **entirely**.
     ///
-    /// The stricter form, and the one to use for input that is meant to be a single block: RLP
-    /// itself is self-delimiting, so trailing bytes would otherwise be silently dropped and a
-    /// re-encoding would not reproduce the input.
+    /// The only way in from bytes, and strict on purpose: RLP is self-delimiting, so a lenient
+    /// decoder would silently drop whatever follows the block and then re-encode to something the
+    /// input never was.
     ///
     /// ## Errors
-    /// [`BlockDecodeError::TrailingBytes`] if `bytes` holds more than the block, otherwise as
-    /// [`Self::decode_rlp`].
+    /// [`BlockDecodeError::TrailingBytes`] if `bytes` holds more than the block;
+    /// [`rlp::DecoderError::RlpIsTooShort`] if the block declares a payload `bytes` does not hold —
+    /// the opposite fault, and named as such rather than folded into `TrailingBytes`;
+    /// [`rlp::DecoderError::RlpInvalidLength`] if the declared length overflows a `usize`; and
+    /// otherwise [`BlockDecodeError`] for a list of the wrong length, a header or transaction that
+    /// does not decode, or a non-empty ommers list.
     pub fn decode_exact(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
-        let consumed = rlp::PayloadInfo::from(bytes)?.total();
-        if consumed != bytes.len() {
-            return Err(BlockDecodeError::TrailingBytes {
-                consumed,
-                total: bytes.len(),
-            });
+        let consumed = rlp_strict::declared_item_len(bytes)?;
+        match consumed.cmp(&bytes.len()) {
+            // The block declares a payload the buffer does not hold: too few bytes, not too many.
+            Ordering::Greater => return Err(rlp::DecoderError::RlpIsTooShort.into()),
+            // The buffer holds bytes past the end of the block.
+            Ordering::Less => {
+                return Err(BlockDecodeError::TrailingBytes {
+                    consumed,
+                    total: bytes.len(),
+                });
+            }
+            Ordering::Equal => {}
         }
         Self::decode_rlp(bytes)
     }
@@ -255,7 +276,8 @@ impl Block {
 #[cfg(test)]
 mod tests {
     use super::{Block, BlockBody, BlockDecodeError};
-    use crate::transaction::{SignedTransaction, TxType};
+    use crate::rlp_strict;
+    use crate::transaction::{SignedTxEnvelope, TxType};
     use crate::withdrawal::Withdrawal;
     use hex_literal::hex;
     use primitive_types::{H160, H256};
@@ -266,15 +288,15 @@ mod tests {
     /// Between them the four vectors cover every branch of the codec: an empty body, a body mixing
     /// a legacy transaction with a typed (string-wrapped) one, a pre-Shanghai block whose
     /// `withdrawals` item is *absent*, and a block carrying an actual withdrawal.
-    struct Vector {
+    pub(super) struct Vector {
         name: &'static str,
-        rlp: &'static [u8],
+        pub(super) rlp: &'static [u8],
         hash: [u8; 32],
         tx_types: &'static [TxType],
         withdrawals: Option<usize>,
     }
 
-    fn vectors() -> Vec<Vector> {
+    pub(super) fn vectors() -> Vec<Vector> {
         vec![
             Vector {
                 name: "Prague, empty body (eip7251_consolidations)",
@@ -331,7 +353,7 @@ mod tests {
                 vector.name
             );
             assert_eq!(
-                block.encode_rlp().unwrap(),
+                rlp::encode(&block).to_vec(),
                 vector.rlp,
                 "{} must re-encode byte-identically",
                 vector.name
@@ -340,7 +362,7 @@ mod tests {
             let types: Vec<TxType> = block
                 .transactions()
                 .iter()
-                .map(|transaction| transaction.payload.tx_type)
+                .map(SignedTxEnvelope::tx_type)
                 .collect();
             assert_eq!(types, vector.tx_types, "{} transaction types", vector.name);
             assert_eq!(
@@ -358,7 +380,7 @@ mod tests {
     fn block_encoding_flattens_the_body() {
         for vector in vectors() {
             let block = Block::decode_exact(vector.rlp).unwrap();
-            let body = block.body.encode_rlp().unwrap();
+            let body = rlp::encode(&block.body).to_vec();
 
             let block_payload_start = rlp::PayloadInfo::from(vector.rlp).unwrap().header_len;
             let body_payload_start = rlp::PayloadInfo::from(&body).unwrap().header_len;
@@ -377,7 +399,7 @@ mod tests {
     fn body_roundtrips() {
         for vector in vectors() {
             let body = Block::decode_exact(vector.rlp).unwrap().body;
-            let encoded = body.encode_rlp().unwrap();
+            let encoded = rlp::encode(&body).to_vec();
             assert_eq!(
                 BlockBody::decode_rlp(&encoded).unwrap(),
                 body,
@@ -394,8 +416,8 @@ mod tests {
         let absent = BlockBody::new(Vec::new(), None);
         let empty = BlockBody::new(Vec::new(), Some(Vec::new()));
 
-        let absent_rlp = absent.encode_rlp().unwrap();
-        let empty_rlp = empty.encode_rlp().unwrap();
+        let absent_rlp = rlp::encode(&absent).to_vec();
+        let empty_rlp = rlp::encode(&empty).to_vec();
         assert_eq!(absent_rlp, hex!("c2c0c0"));
         assert_eq!(empty_rlp, hex!("c3c0c0c0"));
 
@@ -418,6 +440,37 @@ mod tests {
             Block::decode_rlp(&padded).unwrap(),
             Block::decode_exact(vector.rlp).unwrap()
         );
+    }
+
+    /// The two ways a buffer can disagree with the block it declares are opposite faults.
+    /// `TrailingBytes` is only ever the one it is named for, so `consumed < total` always holds in it.
+    #[test]
+    fn decode_exact_names_a_truncated_block_apart_from_a_padded_one() {
+        let raw = vectors()[0].rlp;
+
+        let mut padded = raw.to_vec();
+        padded.push(0xff);
+        match Block::decode_exact(&padded).unwrap_err() {
+            BlockDecodeError::TrailingBytes { consumed, total } => {
+                assert_eq!(consumed, raw.len());
+                assert_eq!(total, padded.len());
+                assert!(consumed < total);
+            }
+            other => panic!("padded: {other}"),
+        }
+
+        // The block declares a payload the buffer does not hold: too few bytes, not too many.
+        assert!(matches!(
+            Block::decode_exact(&raw[..raw.len() - 1]).unwrap_err(),
+            BlockDecodeError::Rlp(rlp::DecoderError::RlpIsTooShort)
+        ));
+
+        // A declared length that overflows a `usize` is neither, and must not be summed: a header and
+        // its length bytes would otherwise wrap or panic before any block was read.
+        assert!(matches!(
+            Block::decode_exact(&rlp_strict::overflowing_header(true)).unwrap_err(),
+            BlockDecodeError::Rlp(rlp::DecoderError::RlpInvalidLength)
+        ));
     }
 
     #[test]
@@ -504,8 +557,7 @@ mod tests {
             .unwrap()
             .body
             .transactions[0]
-            .encode_block_item()
-            .unwrap();
+            .encode_block_item();
 
         let mut stream = rlp::RlpStream::new_list(3);
         stream.begin_list(2);
@@ -542,7 +594,7 @@ mod tests {
             Block::decode_exact(vectors()[0].rlp).unwrap().header,
             BlockBody::new(Vec::new(), Some(Vec::new())),
         );
-        let encoded = block.encode_rlp().unwrap();
+        let encoded = rlp::encode(&block).to_vec();
         assert_eq!(&encoded[encoded.len() - 3..], &[0xc0, 0xc0, 0xc0]);
         assert_eq!(Block::decode_exact(&encoded).unwrap(), block);
     }
@@ -552,7 +604,7 @@ mod tests {
     #[test]
     fn mixed_transaction_forms_survive_the_body() {
         let block = Block::decode_exact(vectors()[1].rlp).unwrap();
-        let transactions: &[SignedTransaction] = block.transactions();
+        let transactions: &[SignedTxEnvelope] = block.transactions();
         assert_eq!(transactions.len(), 2);
 
         let list = rlp::Rlp::new(vectors()[1].rlp).at(1).unwrap();
@@ -563,7 +615,188 @@ mod tests {
         );
         assert_eq!(
             list.at(1).unwrap().data().unwrap(),
-            transactions[1].encode_2718().unwrap().as_slice()
+            transactions[1].encode_2718().as_slice()
         );
+    }
+    /// A long-string header claiming 65535 bytes with nothing behind it: `payload_info` fails on it,
+    /// so `rlp`'s own list walk stops there and silently reports fewer items.
+    const POISON: &[u8] = &hex!("b9ffff");
+
+    /// The raw bytes of each item of the RLP list `raw`.
+    fn items_of(raw: &[u8]) -> Vec<Vec<u8>> {
+        rlp::Rlp::new(raw)
+            .iter()
+            .map(|item| item.as_raw().to_vec())
+            .collect()
+    }
+
+    /// An RLP list over `items`, followed by `extra` bytes no item accounts for.
+    ///
+    /// The list header declares the longer payload, so the item still covers the whole input exactly
+    /// and `Block::decode_exact`'s exactness check cannot see the difference — only `checked_len`'s
+    /// tiling requirement can.
+    fn list_of(items: &[Vec<u8>], extra: &[u8]) -> Vec<u8> {
+        let mut payload: Vec<u8> = items.concat();
+        payload.extend_from_slice(extra);
+        let mut out = Vec::new();
+        if payload.len() <= 55 {
+            out.push(0xc0 + u8::try_from(payload.len()).unwrap());
+        } else {
+            let significant: Vec<u8> = payload
+                .len()
+                .to_be_bytes()
+                .into_iter()
+                .skip_while(|byte| *byte == 0)
+                .collect();
+            out.push(0xf7 + u8::try_from(significant.len()).unwrap());
+            out.extend_from_slice(&significant);
+        }
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    /// `raw` re-tagged as an RLP byte string holding the same payload.
+    fn as_byte_string(raw: &[u8]) -> Vec<u8> {
+        let header_len = rlp::PayloadInfo::from(raw).unwrap().header_len;
+        let end = rlp_strict::declared_item_len(raw).unwrap();
+        let mut stream = rlp::RlpStream::new();
+        stream.append(&raw[header_len..end].to_vec());
+        stream.out().to_vec()
+    }
+
+    /// `raw` wrapped verbatim in an RLP byte string.
+    fn wrapped(raw: &[u8]) -> Vec<u8> {
+        let mut stream = rlp::RlpStream::new();
+        stream.append(&raw.to_vec());
+        stream.out().to_vec()
+    }
+
+    /// Vector `vector`'s block with top-level item `index` replaced by `replacement`.
+    fn block_with_item(vector: usize, index: usize, replacement: Vec<u8>) -> Vec<u8> {
+        let mut items = items_of(vectors()[vector].rlp);
+        items[index] = replacement;
+        list_of(&items, &[])
+    }
+
+    /// Asserts that `mutated` occupies its bytes exactly and is rejected as malformed RLP.
+    fn assert_rejected(label: &str, mutated: &[u8]) {
+        // The same call `decode_exact` makes, so the assertion tracks the production check rather
+        // than a second opinion about it.
+        assert_eq!(
+            rlp_strict::declared_item_len(mutated).unwrap(),
+            mutated.len(),
+            "{label}: the mutation must be invisible to the exactness check"
+        );
+        let error = Block::decode_exact(mutated)
+            .err()
+            .unwrap_or_else(|| panic!("{label}: accepted"));
+        assert!(
+            matches!(
+                error,
+                BlockDecodeError::Rlp(_) | BlockDecodeError::Transaction { .. }
+            ),
+            "{label}: {error}"
+        );
+    }
+
+    #[test]
+    fn decode_rejects_a_byte_string_where_a_list_belongs() {
+        // `rlp`'s own walk over a byte string yields nothing, so each of these used to decode as an
+        // *empty* list while `hash_slow()` still returned the genuine block hash.
+        let transactions = items_of(vectors()[1].rlp)[1].clone();
+        for (label, item, replacement) in [
+            (
+                "transactions as a byte string",
+                1,
+                as_byte_string(&transactions),
+            ),
+            ("transactions as 0x80", 1, hex!("80").to_vec()),
+            ("transactions as 0x83aabbcc", 1, hex!("83aabbcc").to_vec()),
+        ] {
+            assert_rejected(label, &block_with_item(1, item, replacement));
+        }
+        // Vector 3 is the one with a real withdrawal.
+        let withdrawals = items_of(vectors()[3].rlp)[3].clone();
+        for (label, replacement) in [
+            ("withdrawals as a byte string", as_byte_string(&withdrawals)),
+            ("withdrawals as 0x80", hex!("80").to_vec()),
+        ] {
+            assert_rejected(label, &block_with_item(3, 3, replacement));
+        }
+    }
+
+    #[test]
+    fn decode_rejects_bytes_that_no_item_accounts_for() {
+        let top = items_of(vectors()[1].rlp);
+        // An "empty" ommers list hiding three bytes: the `!= 0` count check waves it through.
+        assert_rejected(
+            "ommers = c3 b9ffff",
+            &block_with_item(1, 2, hex!("c3b9ffff").to_vec()),
+        );
+        // Inside the transactions list.
+        assert_rejected(
+            "poison after the last transaction",
+            &block_with_item(1, 1, list_of(&items_of(&top[1]), POISON)),
+        );
+        // Inside the header's own list.
+        assert_rejected(
+            "poison inside the header",
+            &block_with_item(1, 0, list_of(&items_of(&top[0]), POISON)),
+        );
+        // Inside the block's own list payload: this is the contract `decode_exact` documents.
+        assert_rejected("poison inside the block's payload", &list_of(&top, POISON));
+        // Inside a withdrawal, and after the last withdrawal.
+        let with_withdrawals = items_of(vectors()[3].rlp);
+        let withdrawals = items_of(&with_withdrawals[3]);
+        assert_rejected(
+            "poison after the last withdrawal",
+            &block_with_item(3, 3, list_of(&withdrawals, POISON)),
+        );
+        let mut poisoned = withdrawals.clone();
+        poisoned[0] = list_of(&items_of(&withdrawals[0]), POISON);
+        assert_rejected(
+            "poison inside a withdrawal",
+            &block_with_item(3, 3, list_of(&poisoned, POISON.get(..0).unwrap())),
+        );
+    }
+
+    #[test]
+    fn decode_rejects_a_legacy_transaction_wrapped_in_a_byte_string() {
+        // Vector 1's first transaction is a bare legacy list. Wrapping it decodes to the same
+        // transaction, so accepting both forms would give this block two valid encodings.
+        let top = items_of(vectors()[1].rlp);
+        let mut transactions = items_of(&top[1]);
+        transactions[0] = wrapped(&transactions[0]);
+        let mutated = block_with_item(1, 1, list_of(&transactions, &[]));
+        let error = Block::decode_exact(&mutated).unwrap_err();
+        assert!(
+            matches!(error, BlockDecodeError::Transaction { index: 0, .. }),
+            "{error}"
+        );
+        assert!(
+            format!("{error}").contains("must not be wrapped"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn decoding_is_injective() {
+        // The property the individual cases above are instances of: anything `decode_exact` accepts
+        // re-encodes to exactly its input, so one block has exactly one encoding.
+        let mut inputs: Vec<Vec<u8>> = vectors().iter().map(|v| v.rlp.to_vec()).collect();
+        let top = items_of(vectors()[1].rlp);
+        inputs.push(block_with_item(1, 1, hex!("80").to_vec()));
+        inputs.push(block_with_item(1, 2, hex!("c3b9ffff").to_vec()));
+        inputs.push(list_of(&top, POISON));
+        inputs.push(block_with_item(1, 1, list_of(&items_of(&top[1]), POISON)));
+        for input in inputs {
+            if let Ok(block) = Block::decode_exact(&input) {
+                assert_eq!(
+                    rlp::encode(&block).to_vec(),
+                    input,
+                    "an accepted encoding must reproduce itself"
+                );
+            }
+        }
     }
 }

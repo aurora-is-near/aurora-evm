@@ -1,7 +1,7 @@
 use aurora_evm::Config;
 use core::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Spec {
     /// Istanbul hard fork
     /// Activated at block 9069000

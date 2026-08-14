@@ -2,9 +2,10 @@
 //!
 //! The caller hands over three things, and nothing else:
 //!
-//! 1. the [`Block`] to validate, in consensus form (signed transactions, no senders);
-//! 2. one public key per transaction, so each sender can be *verified* rather than recovered
-//!    (see [`recover_block_with_public_keys`]);
+//! 1. the [`Block`] to validate, in consensus form (signed transactions, no senders), whose header
+//!    must commit to the body it arrived with;
+//! 2. one public key per transaction, checked against the key recovery yields for it (see
+//!    [`recover_block_with_public_keys`]);
 //! 3. an [`ExecutionWitness`] holding the trie nodes, contract codes and ancestor headers the
 //!    block's execution touches.
 
@@ -12,11 +13,12 @@ use crate::block::{
     Block, RecoveredBlock, SenderRecoveryError, UncompressedPublicKey,
     recover_block_with_public_keys,
 };
-use crate::errors::BlockExecutionError;
+use crate::errors::{BlockExecutionError, InvalidHeader};
 use crate::execution_types::execution::BlockExecutionOutput;
 use crate::execution_types::witness::ExecutionWitness;
 use core::fmt;
 
+use crate::chain_spec::ChainSpec;
 use primitive_types::H256;
 
 /// Output of a successfully validated block.
@@ -29,12 +31,30 @@ pub struct StatelessValidationOutput {
 }
 
 /// Errors of the stateless validation of a block.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatelessValidationError {
+    /// The ancestor headers in the witness do not form a chain ending at this block's parent.
+    // TODO
+    // AncestorChain(AncestorChainError),
+    /// The header's fields do not match the fork it is being validated against.
+    InvalidHeader(InvalidHeader),
     /// A transaction's sender could not be established from the supplied public key.
     SenderRecovery(SenderRecoveryError),
     /// The block is invalid, or its execution failed.
     Execution(BlockExecutionError),
+}
+
+// TODO: add after Ancestors
+// impl From<AncestorChainError> for StatelessValidationError {
+//     fn from(error: AncestorChainError) -> Self {
+//         Self::AncestorChain(error)
+//     }
+// }
+
+impl From<InvalidHeader> for StatelessValidationError {
+    fn from(error: InvalidHeader) -> Self {
+        Self::InvalidHeader(error)
+    }
 }
 
 impl From<SenderRecoveryError> for StatelessValidationError {
@@ -52,6 +72,9 @@ impl From<BlockExecutionError> for StatelessValidationError {
 impl fmt::Display for StatelessValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            // TODO
+            // Self::AncestorChain(error) => write!(f, "ancestor chain is invalid: {error}"),
+            Self::InvalidHeader(error) => write!(f, "header does not match its fork: {error}"),
             Self::SenderRecovery(error) => write!(f, "sender recovery failed: {error}"),
             Self::Execution(error) => write!(f, "block execution failed: {error}"),
         }
@@ -61,6 +84,9 @@ impl fmt::Display for StatelessValidationError {
 impl core::error::Error for StatelessValidationError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
+            // TODO
+            // Self::AncestorChain(error) => Some(error),
+            Self::InvalidHeader(error) => Some(error),
             Self::SenderRecovery(error) => Some(error),
             Self::Execution(error) => Some(error),
         }
@@ -73,21 +99,32 @@ impl core::error::Error for StatelessValidationError {
 /// The public keys must be in transaction order, one per transaction.
 ///
 /// ## Errors
-/// [`StatelessValidationError::SenderRecovery`] if any transaction's signature does not verify
-/// against its public key, or if the key count does not match the transaction count.
+/// supplied for it, or if the key count does not match the transaction count.
 pub fn stateless_validation(
     block: Block,
     public_keys: &[UncompressedPublicKey],
     witness: ExecutionWitness,
+    chain_spec: ChainSpec,
 ) -> Result<StatelessValidationOutput, StatelessValidationError> {
     let recovered_block = recover_block_with_public_keys(block, public_keys)?;
-    stateless_validation_recovered(recovered_block, witness)
+    stateless_validation_recovered(recovered_block, witness, chain_spec)
 }
 
 /// Validates a block whose senders are already established.
 fn stateless_validation_recovered(
     _block: RecoveredBlock,
     _witness: ExecutionWitness,
+    _chain_spec: ChainSpec,
 ) -> Result<StatelessValidationOutput, StatelessValidationError> {
+    // Before any state is touched: bind the pre-state root to this block. Nothing downstream can
+    // establish it, because a block hash commits to its parent's *hash* and to its own post-state
+    // root, never to the state root it started from.
+    //-> let ancestors = derive_ancestors(block.header(), &witness.headers)?;
+
+    // The parent belongs to a fork too, and a parent that does not is not a parent this block can
+    // follow — its `state_root` would be read out of a header no chain produced.
+    //-> validate_header_fork_fields(ancestors.parent().header(), chain_spec)?;
+    //-> let (_parent, _ancestor_hashes) = ancestors.split();
+
     todo!("execution against the witness-revealed state; see the module docs")
 }

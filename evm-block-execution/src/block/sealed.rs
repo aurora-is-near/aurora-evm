@@ -8,13 +8,13 @@
 //!
 //! The cache is **lazy**: [`SealedHeader::new_unhashed`] stores nothing and hashes on first use, so
 //! a caller that never needs the hash never pays for it, while
-//! [`SealedHeader::new`] adopts a hash the caller already has (from a witness, say) without
+//! [`SealedHeader::new_unchecked`] adopts a hash the caller already has (from a witness, say) without
 //! recomputing it.
 
 use crate::block::Block;
 use crate::block::body::BlockBody;
 use crate::block::header::Header;
-use crate::transaction::SignedTransaction;
+use crate::transaction::SignedTxEnvelope;
 use core::ops::Deref;
 use primitive_types::H256;
 use std::sync::OnceLock;
@@ -34,7 +34,7 @@ pub struct SealedHeader {
 impl SealedHeader {
     /// Seals a header with a hash the caller already knows.
     #[must_use]
-    pub fn new(header: Header, hash: H256) -> Self {
+    pub fn new_unchecked(header: Header, hash: H256) -> Self {
         let cell = OnceLock::new();
         // The cell was just created, so this cannot fail.
         let _ = cell.set(hash);
@@ -54,7 +54,7 @@ impl SealedHeader {
     #[must_use]
     pub fn seal_slow(header: Header) -> Self {
         let hash = header.hash_slow();
-        Self::new(header, hash)
+        Self::new_unchecked(header, hash)
     }
 
     /// The block hash, computing and caching it if it is not known yet.
@@ -121,7 +121,7 @@ impl SealedBlock {
     pub fn new_unchecked(block: Block, hash: H256) -> Self {
         let (header, body) = block.split();
         Self {
-            header: SealedHeader::new(header, hash),
+            header: SealedHeader::new_unchecked(header, hash),
             body,
         }
     }
@@ -178,7 +178,7 @@ impl SealedBlock {
 
     /// The block's transactions.
     #[must_use]
-    pub fn transactions(&self) -> &[SignedTransaction] {
+    pub fn transactions(&self) -> &[SignedTxEnvelope] {
         &self.body.transactions
     }
 
@@ -236,7 +236,7 @@ mod tests {
     fn cached_hash_is_returned_verbatim() {
         // `new` adopts the caller's hash without recomputing it, so a stale hash is returned as is.
         let stale = H256::repeat_byte(0xff);
-        let sealed = SealedHeader::new(header(), stale);
+        let sealed = SealedHeader::new_unchecked(header(), stale);
         assert_eq!(sealed.hash(), stale);
         assert_ne!(sealed.hash(), sealed.header().hash_slow());
     }

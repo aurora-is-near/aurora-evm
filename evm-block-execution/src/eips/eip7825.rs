@@ -1,6 +1,7 @@
-//! ## IP-7825: Transaction Gas Limit Cap
+//! Contains constants for [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825): Transaction Gas Limit Cap
 //!
-//! `Fusaka` hard fork. Introduces a protocol-level cap on the maximum gas used by a transaction.
+//! Introduced in the `Osaka` hard fork. Caps the gas a single transaction may declare, so that no one
+//! transaction can claim a whole block's capacity.
 
 /// Transaction gas limit cap.
 ///
