@@ -7,7 +7,8 @@
 //!
 //! Ommers are not modelled: this crate executes post-merge blocks only, where the list is always
 //! empty and `ommers_hash` is therefore the constant
-//! [`EMPTY_OMMERS_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), checkable on the header alone.
+//! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), checkable on the header
+//! alone.
 
 use crate::transaction::SignedTxEnvelope;
 use crate::withdrawal::Withdrawal;

@@ -183,12 +183,11 @@ impl SignedTxEnvelope {
     /// [`TxDecodeError`] as [`Self::decode_2718`], plus [`TxDecodeError::WrappedLegacy`] if a
     /// byte-string item wraps a bare legacy RLP list rather than an EIP-2718 envelope, and
     /// [`TxDecodeError::Rlp`] if the item is neither an RLP list nor a byte string, or does not cover
-    /// `rlp` exactly.
+    /// `rlp` exactly — the two ways it can miss are named apart, `RlpIsTooShort` for an item declaring
+    /// more bytes than the buffer holds and `RlpIsTooBig` for bytes past its end.
     pub fn decode_block_item(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
         let raw = rlp.as_raw();
-        if rlp_strict::declared_item_len(raw)? != raw.len() {
-            return Err(TxDecodeError::Rlp(rlp::DecoderError::RlpIsTooBig));
-        }
+        check_covers_exactly(raw)?;
         if rlp.is_list() {
             // Legacy: the item *is* the transaction's RLP list.
             return Self::decode_2718(raw);
@@ -515,12 +514,20 @@ mod tests {
                 "{tx_type:?}"
             );
 
-            let mut padded = item;
+            let mut padded = item.clone();
             padded.extend_from_slice(&hex!("deadbeef"));
             assert_eq!(
                 SignedTxEnvelope::decode_block_item(&rlp::Rlp::new(&padded)).unwrap_err(),
                 TxDecodeError::Rlp(rlp::DecoderError::RlpIsTooBig),
                 "{tx_type:?} with bytes after the item"
+            );
+
+            // The opposite fault, named apart: the item declares a payload the buffer does not hold.
+            assert_eq!(
+                SignedTxEnvelope::decode_block_item(&rlp::Rlp::new(&item[..item.len() - 1]))
+                    .unwrap_err(),
+                TxDecodeError::Rlp(rlp::DecoderError::RlpIsTooShort),
+                "{tx_type:?} truncated"
             );
         }
     }

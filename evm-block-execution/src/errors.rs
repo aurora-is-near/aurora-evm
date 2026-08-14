@@ -41,6 +41,16 @@ pub enum InvalidHeader {
         /// Whether the header carries it.
         present: bool,
     },
+    /// A trailing-optional header field is present while an earlier one is absent.
+    ///
+    /// The trailing fields are **positional** — the RLP carries a length, not names — so a gap has no
+    /// encoding at all: writing it shifts every later field one place earlier, and reading those bytes
+    /// back yields a different header. Unlike [`Self::ForkFieldMismatch`] this needs no fork to judge:
+    /// no fork, present or future, can produce it.
+    TrailingFieldGap {
+        /// The first field present while the one before it is absent.
+        field: HeaderField,
+    },
 }
 
 /// A trailing-optional header field, named for reporting a fork disagreement.
@@ -99,6 +109,9 @@ impl fmt::Display for InvalidHeader {
                 } else {
                     write!(f, "`{field}` is missing on a fork that requires it")
                 }
+            }
+            Self::TrailingFieldGap { field } => {
+                write!(f, "`{field}` is set while an earlier trailing field is not")
             }
             Self::MaxFeePerBlobGasNotSupported => {
                 write!(f, "`max_fee_per_blob_gas` not supported for this spec")

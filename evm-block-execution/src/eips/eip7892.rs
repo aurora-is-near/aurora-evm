@@ -40,14 +40,16 @@ pub struct BlobScheduleBlobParams {
     pub prague: BlobParams,
     /// Configuration for blob-related calculations for the Osaka hardfork.
     pub osaka: BlobParams,
-    /// All Time-based scheduled updates to blob parameters after Osaka.
+    /// All time-based scheduled updates to blob parameters after Osaka.
     ///
-    /// These are ordered by activation timestamps in natural order.
-    ///
-    /// This can include blobparams for hardforks after osaka (e.g. amsterdam) that are interleaved
+    /// This can include blob params for hardforks after Osaka (e.g. Amsterdam) that are interleaved
     /// with BPOs.
     ///
-    /// Caution: It is expected that these are only activated at or after osaka.
+    /// The order is **not** significant: the field is `pub` and the only constructor that fills it
+    /// keeps the caller's order, so [`Self::active_scheduled_params_at_timestamp`] picks the latest
+    /// active entry rather than trusting a position.
+    ///
+    /// Caution: it is expected that these are only activated at or after Osaka.
     pub scheduled: Vec<(u64, BlobParams)>,
 }
 
@@ -73,15 +75,20 @@ impl BlobScheduleBlobParams {
         self
     }
 
-    /// Returns the highest active blob parameters at the given timestamp.
+    /// Returns the latest blob parameters already active at `timestamp`.
     ///
-    /// Note: this does only scan the entries scheduled by timestamp and not cancun or prague.
+    /// Chosen by activation timestamp, not by position: [`Self::scheduled`] is a `pub` field and
+    /// [`Self::with_scheduled`] keeps whatever order it is handed, so reading the last active *entry*
+    /// would hand back an older parameter set for an unsorted schedule — and blob fees and the
+    /// per-block blob limit are validated against it. For a schedule in ascending order the two agree.
+    ///
+    /// Note: this scans only the entries scheduled by timestamp, not cancun or prague.
     #[must_use]
     pub fn active_scheduled_params_at_timestamp(&self, timestamp: u64) -> Option<&BlobParams> {
         self.scheduled
             .iter()
-            .rev()
-            .find(|(ts, _)| timestamp >= *ts)
+            .filter(|(activation, _)| timestamp >= *activation)
+            .max_by_key(|(activation, _)| *activation)
             .map(|(_, params)| params)
     }
 
@@ -107,5 +114,59 @@ impl BlobScheduleBlobParams {
 impl Default for BlobScheduleBlobParams {
     fn default() -> Self {
         Self::mainnet()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlobParams, BlobScheduleBlobParams};
+
+    /// The two BPOs, deliberately handed over newest-first — the order a caller has no obligation to
+    /// get right, since the field is `pub` and the setter does not sort.
+    fn unordered() -> BlobScheduleBlobParams {
+        BlobScheduleBlobParams::mainnet()
+            .with_scheduled([(200, BlobParams::bpo2()), (100, BlobParams::bpo1())])
+    }
+
+    #[test]
+    fn the_latest_active_entry_wins_whatever_the_order() {
+        let ordered = BlobScheduleBlobParams::mainnet()
+            .with_scheduled([(100, BlobParams::bpo1()), (200, BlobParams::bpo2())]);
+        for timestamp in [0, 99, 100, 101, 199, 200, 201, u64::MAX] {
+            assert_eq!(
+                unordered().active_scheduled_params_at_timestamp(timestamp),
+                ordered.active_scheduled_params_at_timestamp(timestamp),
+                "timestamp {timestamp}"
+            );
+        }
+    }
+
+    /// The boundaries themselves: activation is inclusive, and nothing is active before the first.
+    #[test]
+    fn activation_is_inclusive_and_starts_empty() {
+        let schedule = unordered();
+        assert_eq!(schedule.active_scheduled_params_at_timestamp(99), None);
+        assert_eq!(
+            schedule.active_scheduled_params_at_timestamp(100),
+            Some(&BlobParams::bpo1())
+        );
+        assert_eq!(
+            schedule.active_scheduled_params_at_timestamp(199),
+            Some(&BlobParams::bpo1())
+        );
+        assert_eq!(
+            schedule.active_scheduled_params_at_timestamp(200),
+            Some(&BlobParams::bpo2())
+        );
+    }
+
+    #[test]
+    fn an_empty_schedule_has_nothing_active() {
+        let schedule = BlobScheduleBlobParams::mainnet();
+        assert!(schedule.scheduled.is_empty());
+        assert_eq!(
+            schedule.active_scheduled_params_at_timestamp(u64::MAX),
+            None
+        );
     }
 }

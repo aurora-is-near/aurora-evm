@@ -23,8 +23,8 @@
 //!
 //! Only post-merge blocks are modelled, so ommers are absent from [`BlockBody`] entirely: the list
 //! is always empty and `ommers_hash` is the constant
-//! [`EMPTY_OMMERS_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), which is checkable on the header
-//! alone.
+//! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), which is checkable on the
+//! header alone.
 
 mod body;
 mod codec;

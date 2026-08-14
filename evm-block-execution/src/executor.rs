@@ -15,8 +15,8 @@
 //! # The phase this covers
 //!
 //! The block pipeline is wider than this type. Ahead of it: the header's fork fields, the body
-//!
-//! [`recover_block`](crate::block::recover_block)). Behind it: the state root and the
+//! commitments the header claims, and the sender of every transaction
+//! ([`recover_block`](crate::block::recover_block)). Behind it: the state root and the
 //! post-execution header comparison.
 //!
 //! Deliberately **not** here yet, and named so the gap is not mistaken for a decision that they
@@ -428,23 +428,12 @@ fn resolve_blob_params(
     Ok(chain.blob_params_at_timestamp(timestamp))
 }
 
-/// Runs the transactions loop over a mutable world state, returning the receipts and the block gas /
-/// blob-gas totals.
-///
-/// The first invalid or fatally-failing transaction aborts the loop; because the caller owns
-/// `state`, a partially-mutated state is never published on the error path.
 /// Whether `code` is an EIP-7702 delegation designation (`0xef0100 || address`), which lets an
 /// account with code still originate transactions from Prague onward.
 fn is_delegated_sender(code: &[u8], spec: Spec) -> bool {
     spec >= Spec::Prague && Authorization::is_delegated(code)
 }
 
-/// Validates one transaction against the current world state and block, returning the values the
-/// execution stage needs. Performs no mutation.
-///
-/// ## Errors
-/// Returns the first failing check as a [`BlockExecutionError`]; an invalid transaction makes the
-/// whole block invalid.
 /// Owned inputs one validated transaction hands to [`exec_tx_with_backend`].
 struct TxExec<'a> {
     caller: H160,
@@ -522,7 +511,7 @@ fn exec_tx_with_backend(
     // burned), refund the caller its unused gas, burn the blob fee.
     let gas_used = executor.used_gas();
     let actual_fee = executor.fee(exec.effective_gas_price);
-    let miner_reward = if exec.spec > Spec::Berlin {
+    let miner_reward = if exec.spec >= Spec::London {
         executor.fee(exec.effective_gas_price.saturating_sub(exec.base_fee))
     } else {
         actual_fee
@@ -544,7 +533,6 @@ fn exec_tx_with_backend(
     })
 }
 
-/// Executes a validated transaction and returns its outcome plus the reusable `MemoryVicinity`.
 /// The [`MemoryVicinity`] fields that belong to a *transaction* rather than to the block.
 ///
 /// The vicinity is built once per block ([`block_vicinity`]) and reused, so every one of these has to

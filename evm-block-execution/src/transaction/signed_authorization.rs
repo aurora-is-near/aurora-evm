@@ -256,6 +256,44 @@ mod tests {
         }
     }
 
+    /// The preimage is `MAGIC ‖ rlp([chain_id, address, nonce])`, and every part of that is
+    /// consensus-critical: the magic byte separates an authorization signature from a transaction
+    /// signature, and the three fields are the ones EIP-7702 binds — the `y_parity, r, s` that follow
+    /// them in the tuple are the signature *over* this, never part of it.
+    ///
+    /// Asserted on the bytes rather than only through the address they recover, so that a wrong magic
+    /// byte or a reordered field is reported here, as the preimage it is, instead of surfacing as an
+    /// unexplained sender three layers up.
+    #[test]
+    fn the_signing_preimage_is_the_magic_byte_and_three_fields() {
+        let mut scratch = rlp::RlpStream::new();
+        let recovered = vector().recover_authority(1, &mut scratch);
+
+        // `d7` is a 23-byte list: `80` (chain_id 0), `94 ‖ 20 zero bytes` (address), `80` (nonce 0).
+        assert_eq!(
+            scratch.as_raw(),
+            hex!("05d78094000000000000000000000000000000000000000080"),
+            "MAGIC ‖ rlp([chain_id, address, nonce])"
+        );
+
+        // The authority this preimage recovers. Also asserted where the carrying transaction is
+        // decoded, which is what makes it a value and not just this function's own output.
+        assert!(recovered.is_valid);
+        assert_eq!(
+            recovered.authority,
+            H160(hex!("dde0a8f1c754bca49c7ad9017cbb242d3116d9a3"))
+        );
+
+        // A `chain_id` of zero authorises on every chain, so the preimage does not depend on the
+        // transaction's — the tuple's own field is what is hashed.
+        let mut other_chain = rlp::RlpStream::new();
+        assert_eq!(
+            vector().recover_authority(0xdead_beef, &mut other_chain),
+            recovered
+        );
+        assert_eq!(other_chain.as_raw(), scratch.as_raw());
+    }
+
     #[test]
     fn decode_rejects_a_wrong_length_list() {
         let mut stream = rlp::RlpStream::new_list(5);

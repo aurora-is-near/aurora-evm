@@ -98,9 +98,16 @@ pub fn calc_next_block_base_fee(
     base_fee_params: BaseFeeParams,
 ) -> Option<u64> {
     let gas_target = gas_limit.checked_div(base_fee_params.elasticity_multiplier)?;
-    if gas_target == 0 || base_fee_params.max_change_denominator == 0 {
-        // With a zero target every block is "at target"; with a zero denominator the change is
-        // undefined. Neither is a parameter set any chain uses.
+    if base_fee_params.max_change_denominator == 0 {
+        // The movement is `base_fee * shoot / (gas_target * denominator)`, so a zero denominator makes
+        // it a division by zero. Reported for every block rather than answered for the ones at target:
+        // a degenerate parameter set is a configuration bug, and answering exactly where the formula
+        // happens not to need the denominator is where it would go unnoticed.
+        return None;
+    }
+    if gas_target == 0 {
+        // With a zero target no block is below it, and every non-empty block overshoots by its whole
+        // gas usage divided by nothing. Only an unused block has an answer.
         return (gas_used == gas_target).then_some(base_fee);
     }
 
@@ -187,6 +194,18 @@ mod tests {
         let params = BaseFeeParams::ethereum();
         assert_eq!(calc_next_block_base_fee(0, 0, 100, params), Some(100));
         assert_eq!(calc_next_block_base_fee(1, 0, 100, params), None);
+
+        // A zero denominator is reported for every block, including the ones exactly at target where
+        // the formula would not have divided by it.
+        let zero_denominator = BaseFeeParams::new(0, 2);
+        assert_eq!(zero_denominator.max_change_denominator, 0);
+        for (gas_used, gas_limit) in [(5_000_000, 10_000_000), (1, 10_000_000), (0, 0), (1, 0)] {
+            assert_eq!(
+                calc_next_block_base_fee(gas_used, gas_limit, 100, zero_denominator),
+                None,
+                "gas_used {gas_used}, gas_limit {gas_limit}"
+            );
+        }
     }
 
     /// The fee floors at zero rather than wrapping when the decrease exceeds it.

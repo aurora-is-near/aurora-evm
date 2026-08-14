@@ -73,8 +73,8 @@ pub struct RecoveredBlock {
 }
 
 impl RecoveredBlock {
-    /// Pairs a block and its senders, adopting a hash the caller already knows, **without** checking
-    /// that there is one sender per transaction.
+    /// Pairs a block and its senders, leaving the hash to be computed on first use, **without**
+    /// checking that there is one sender per transaction.
     ///
     /// Crate-internal: the public entry point is [`Self::try_new`].
     #[must_use]
