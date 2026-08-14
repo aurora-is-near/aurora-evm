@@ -1,10 +1,9 @@
 use core::ops::Deref;
 use primitive_types::{H160, H256};
-use serde::{Deserialize, Serialize};
 
 /// A list of addresses and storage keys that the transaction plans to access.
 /// Accesses outside the list are possible, but become more expensive.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct AccessListItem {
     /// Account addresses that would be loaded at the start of execution
     pub address: H160,
@@ -13,7 +12,7 @@ pub struct AccessListItem {
 }
 
 /// `AccessList` as defined in EIP-2930
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct AccessList(pub Vec<AccessListItem>);
 
 impl From<Vec<AccessListItem>> for AccessList {

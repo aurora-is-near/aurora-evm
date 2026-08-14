@@ -1,5 +1,3 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
 /// EVM transaction types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -40,18 +38,5 @@ impl TryFrom<u8> for TxType {
             0x04 => Ok(Self::Eip7702),
             _ => Err("unknown transaction type"),
         }
-    }
-}
-
-impl Serialize for TxType {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u8((*self).into())
-    }
-}
-
-impl<'de> Deserialize<'de> for TxType {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = u8::deserialize(deserializer)?;
-        Self::try_from(value).map_err(serde::de::Error::custom)
     }
 }

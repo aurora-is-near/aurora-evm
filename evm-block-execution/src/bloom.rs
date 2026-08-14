@@ -20,7 +20,7 @@
 use crate::crypto::keccak256;
 use aurora_evm::backend::Log;
 
-/// A 2048-bit (256-byte) bloom filter.
+/// Ethereum 256 byte bloom filter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bloom(pub [u8; 256]);
 
@@ -63,6 +63,17 @@ impl rlp::Encodable for Bloom {
     }
 }
 
+impl rlp::Decodable for Bloom {
+    /// A bloom is a fixed-width byte string: exactly 256 bytes, never trimmed of leading zeros.
+    fn decode(rlp: &rlp::Rlp<'_>) -> Result<Self, rlp::DecoderError> {
+        rlp.decoder().decode_value(|bytes| {
+            <[u8; 256]>::try_from(bytes)
+                .map(Self)
+                .map_err(|_| rlp::DecoderError::Custom("bloom filter is not 256 bytes"))
+        })
+    }
+}
+
 /// Computes the bloom filter for a set of logs (each log contributes its address and topics).
 #[must_use]
 pub fn logs_bloom(logs: &[Log]) -> Bloom {
@@ -81,6 +92,52 @@ mod tests {
     use super::{Bloom, logs_bloom};
     use aurora_evm::backend::Log;
     use primitive_types::{H160, H256};
+    use rlp::{Decodable, Encodable};
+
+    #[test]
+    fn rlp_is_a_fixed_256_byte_string() {
+        // Long-string header (0xb9) plus a two-byte length, then the untrimmed 256 bytes: a bloom
+        // keeps its leading zeros, unlike an integer.
+        let encoded = rlp::encode(&Bloom::zero());
+        assert_eq!(&encoded[..3], &[0xb9, 0x01, 0x00]);
+        assert_eq!(encoded.len(), 259);
+        assert!(encoded[3..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn rlp_roundtrip() {
+        let mut bloom = Bloom::zero();
+        bloom.accrue(H160::repeat_byte(0xaa).as_bytes());
+        bloom.accrue(H256::repeat_byte(0xbb).as_bytes());
+        let encoded = rlp::encode(&bloom);
+        assert_eq!(rlp::decode::<Bloom>(&encoded).unwrap(), bloom);
+    }
+
+    #[test]
+    fn rlp_rejects_wrong_width() {
+        for width in [0usize, 32, 255, 257] {
+            let encoded = rlp::encode(&vec![0u8; width]);
+            assert!(
+                rlp::decode::<Bloom>(&encoded).is_err(),
+                "a {width}-byte string must not decode as a bloom"
+            );
+        }
+    }
+
+    #[test]
+    fn rlp_rejects_a_list() {
+        let mut stream = rlp::RlpStream::new_list(1);
+        stream.append(&vec![0u8; 256]);
+        assert!(Bloom::decode(&rlp::Rlp::new(&stream.out())).is_err());
+    }
+
+    #[test]
+    fn rlp_append_matches_encodable() {
+        let bloom = Bloom::zero();
+        let mut stream = rlp::RlpStream::new();
+        bloom.rlp_append(&mut stream);
+        assert_eq!(stream.out().to_vec(), rlp::encode(&bloom).to_vec());
+    }
 
     #[test]
     fn empty_logs_zero_bloom() {

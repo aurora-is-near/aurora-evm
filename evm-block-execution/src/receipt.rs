@@ -13,7 +13,8 @@
 //!
 //! The transaction loop builds one [`Receipt`] per transaction — status from the exit reason,
 //! gas accumulated across the loop, logs from the executor — and collects them in
-//! [`BlockExecutionResult`](crate::result::BlockExecutionResult). Two header commitments derive
+//! [`BlockExecutionResult`](crate::execution_types::execution::BlockExecutionResult). Two header
+//! commitments derive
 //! from receipts: `receipts_root`, an [`ordered_trie_root`](crate::trie::ordered_trie_root) over
 //! the encoded receipts, and the block `logs_bloom`, the union (OR) of all receipt blooms.
 //!

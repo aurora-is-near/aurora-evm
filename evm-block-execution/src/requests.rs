@@ -18,7 +18,8 @@
 //!
 //! Requests are gathered in the **post-execution** stage, after the transaction loop: deposits
 //! from the receipt logs, then the outputs of the two request-draining system calls. They are
-//! stored in [`BlockExecutionResult`](crate::result::BlockExecutionResult), and the computed
+//! stored in [`BlockExecutionResult`](crate::execution_types::execution::BlockExecutionResult), and
+//! the computed
 //! [`Requests::requests_hash`] is compared against the header value during post-execution header
 //! validation.
 //!

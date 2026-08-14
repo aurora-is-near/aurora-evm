@@ -19,6 +19,7 @@ aurora-engine-precompiles.workspace = true
 c-kzg = "2.1"
 hash-db = "0.15"
 hex-literal.workspace = true
+libsecp256k1.workspace = true
 primitive-types = { workspace = true, features = ["rlp", "serde", "std"] }
 plain_hasher = "0.2"
 rlp = { workspace = true, features = ["std"] }

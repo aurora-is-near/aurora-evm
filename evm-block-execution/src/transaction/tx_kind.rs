@@ -69,15 +69,3 @@ impl TxKind {
         matches!(self, Self::Call(_))
     }
 }
-
-impl serde::Serialize for TxKind {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.to().serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for TxKind {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(Option::<H160>::deserialize(deserializer)?.into())
-    }
-}

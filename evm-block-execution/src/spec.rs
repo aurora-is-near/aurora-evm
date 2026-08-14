@@ -1,10 +1,7 @@
 use aurora_evm::Config;
-use core::fmt;
 use core::str::FromStr;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Spec {
     /// Istanbul hard fork
     /// Activated at block 9069000
@@ -63,31 +60,5 @@ impl FromStr for Spec {
             "Osaka" => Ok(Self::Osaka),
             _ => Err(format!("Unknown Spec value: {value}")),
         }
-    }
-}
-impl<'de> Deserialize<'de> for Spec {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct SpecVisitor;
-
-        impl Visitor<'_> for SpecVisitor {
-            type Value = Spec;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("Ethereum hard fork name")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Spec, E>
-            where
-                E: de::Error,
-            {
-                Spec::from_str(value)
-                    .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(value), &self))
-            }
-        }
-
-        deserializer.deserialize_str(SpecVisitor)
     }
 }
