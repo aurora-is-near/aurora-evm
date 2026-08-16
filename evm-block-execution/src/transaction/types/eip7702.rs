@@ -60,13 +60,13 @@ impl TxEip7702 {
         stream.append_list(&self.authorization_list);
     }
 
-    /// Writes the signing preimage — the type byte, then this type\'s fields — into `stream`.
+    /// Writes the signing preimage — the type byte, then this type's fields — into `stream`.
     ///
     /// The type byte goes in as raw bytes ahead of the list, so the preimage is one contiguous buffer
     /// rather than a list that then has to be copied to make room for a prefix. Takes the stream so a
     /// caller hashing a whole block's transactions can reuse one buffer for all of them.
     ///
-    /// The list is unbounded and finalised, so the stream counts the fields itself. A hand-written count
+    /// The list is unbounded and finalized, so the stream counts the fields itself. A handwritten count
     /// would be the field list repeated in a second place, and the two can disagree — a preimage read
     /// back with `as_raw` does not check that its list was completed, so a wrong count would silently
     /// produce a wrong signature hash and therefore a wrong sender.
@@ -132,14 +132,14 @@ impl SignedTxEip7702 {
 }
 
 impl TxEip7702 {
-    /// The authorities this transaction's tuples authorise, one entry per tuple.
+    /// The authorities this transaction's tuples authorize, one entry per tuple.
     ///
     /// One RLP buffer is built here and reused for every tuple: each preimage is three small fields,
     /// so a fresh buffer per tuple would cost more than hashing it does. `recover_authority` clears the
     /// buffer before writing, so the tuples cannot bleed into one another's preimage.
     ///
     /// The list is never shortened. A tuple that fails a check is present with `is_valid: false`,
-    /// because intrinsic gas is charged per tuple whether it authorises anyone or not.
+    /// because intrinsic gas is charged per tuple whether it authorizes anyone or not.
     #[must_use]
     pub fn recovered_authorizations(&self) -> Vec<Authorization> {
         let mut scratch = rlp::RlpStream::new();
@@ -291,7 +291,7 @@ mod tests {
 
     /// The list is never shortened, whatever a tuple turns out to be.
     ///
-    /// Intrinsic gas is charged per tuple, so a tuple that authorises nobody must still occupy its
+    /// Intrinsic gas is charged per tuple, so a tuple that authorizes nobody must still occupy its
     /// place — dropping it would undercharge the transaction and change the state root. A failure is
     /// `is_valid: false`, not an absence.
     #[test]
@@ -306,7 +306,7 @@ mod tests {
             "authority independently recovered from the published tuple"
         );
 
-        // Four independent ways for a tuple to authorise nobody, plus one that works — every one of
+        // Four independent ways for a tuple to authorize nobody, plus one that works — every one of
         // them still yields exactly one entry.
         let mut tx = tx;
         let sound = tx.authorization_list[0];
@@ -321,7 +321,7 @@ mod tests {
                 ..sound
             },
             SignedAuthorization {
-                s: crate::transaction::SECP256K1N_HALF + U256::one(), // EIP-2 unnormalised
+                s: crate::transaction::SECP256K1N_HALF + U256::one(), // EIP-2 unnormalized
                 ..sound
             },
             SignedAuthorization {

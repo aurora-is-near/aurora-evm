@@ -51,7 +51,7 @@ impl TxEip1559 {
         append_access_list(stream, &self.access_list);
     }
 
-    /// Writes the signing preimage — the type byte, then this type\'s fields — into `stream`.
+    /// Writes the signing preimage — the type byte, then this type's fields — into `stream`.
     ///
     /// The type byte goes in as raw bytes ahead of the list, so the preimage is one contiguous buffer
     /// rather than a list that then has to be copied to make room for a prefix. Takes the stream so a

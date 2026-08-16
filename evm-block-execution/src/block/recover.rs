@@ -394,15 +394,10 @@ mod tests {
 
         let recovered = recover_block_with_public_keys(block_of(transactions), &keys).unwrap();
         assert_eq!(recovered.senders(), expected);
-        // Senders line up with their transactions, in order.
-        for ((sender, transaction), vector) in recovered.transactions_with_senders().zip(&all) {
-            assert_eq!(*sender, H160(vector.sender), "{}", vector.name);
-            assert_eq!(
-                transaction.encode_2718(),
-                vector.raw.to_vec(),
-                "{}",
-                vector.name
-            );
+        // Senders line up with their transactions, in order — asked of the pairing where it is spent,
+        // because that is the only place the two lists are read against each other.
+        for (tx_env, vector) in recovered.into_tx_envs().unwrap().iter().zip(&all) {
+            assert_eq!(tx_env.caller, H160(vector.sender), "{}", vector.name);
         }
     }
 

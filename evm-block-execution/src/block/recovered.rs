@@ -9,9 +9,10 @@
 //! The public constructors here pair a block with senders a caller has already established:
 //! [`RecoveredBlock::try_new`] and its siblings check that the two lists line up, which is all that
 //! can be checked without re-doing the recovery. The unchecked forms they wrap are crate-internal,
-//! because a mismatched senders list is a crate bug, and
-//! [`transactions_with_senders`](RecoveredBlock::transactions_with_senders) aborts on one rather
-//! than yielding a prefix of the block.
+//! because a mismatched senders list is a crate bug rather than bad input.
+//!
+//! [`RecoveredBlock::into_tx_envs`] is where the pairing is spent: it consumes the block and yields
+//! one [`TxEnv`] per transaction, which is what the executor reads.
 //!
 //! What the type does *not* prove: [`RecoveredBlock::try_new`] and its siblings compare only the
 //! two lengths, so a caller can pair a block with senders of its own choosing. The type is a
@@ -25,7 +26,7 @@ use crate::block::Block;
 use crate::block::body::BlockBody;
 use crate::block::header::Header;
 use crate::block::sealed::{SealedBlock, SealedHeader};
-use crate::transaction::SignedTxEnvelope;
+use crate::transaction::{SignedTxEnvelope, TxEnv};
 use core::fmt;
 use core::ops::Deref;
 use primitive_types::{H160, H256};
@@ -148,25 +149,6 @@ impl RecoveredBlock {
         self.senders.iter().copied()
     }
 
-    /// Iterates over the transactions paired with their senders.
-    ///
-    /// # Panics
-    /// If the senders and the transactions do not line up. Every value a caller outside this module
-    /// can build has one sender per transaction, so this can only fire on a bug in the crate-internal
-    /// unchecked constructors — but it is checked unconditionally rather than with a
-    /// `debug_assert!`, because the alternative in a release build is a truncating `zip` that
-    /// silently yields a *prefix* of the block. Executing part of a block and reporting success is
-    /// the worst available outcome; aborting is the mildest. The cost is one length comparison per
-    /// call, not per transaction.
-    pub fn transactions_with_senders(&self) -> impl Iterator<Item = (&H160, &SignedTxEnvelope)> {
-        assert_eq!(
-            self.senders.len(),
-            self.transactions().len(),
-            "sender count must match transaction count"
-        );
-        core::iter::zip(&self.senders, self.transactions())
-    }
-
     /// The block hash, computing and caching it if it is not known yet.
     #[must_use]
     pub fn hash(&self) -> H256 {
@@ -213,6 +195,33 @@ impl RecoveredBlock {
     #[must_use]
     pub fn split(self) -> (SealedBlock, Vec<H160>) {
         (self.block, self.senders)
+    }
+
+    /// Projects the whole block into the executor's transaction form, **consuming** it.
+    ///
+    /// The bridge from the consensus shape to the execution shape, and the reason both halves of the
+    /// pairing are owned: [`SignedTxEnvelope::into_tx_env`] takes its transaction by value, so the call
+    /// data, the access list and the authorization tuples *move* into the result. Borrowing the
+    /// transactions here would force a copy of each that the executor immediately takes ownership of
+    /// anyway. Nothing reads the block after this point, which is what makes that safe.
+    ///
+    /// Order is preserved: entry `i` is transaction `i` paired with its own sender.
+    ///
+    /// ## Errors
+    /// [`BlockRecoveryError::SenderCountMismatch`] if the two lists do not line up. Unreachable for
+    /// any value built through the public constructors, which all check it, or by
+    /// [`recover_block`](super::recover_block), which derives one sender per transaction from the
+    /// transactions themselves — but it is checked rather than assumed, because the alternative is a
+    /// `zip` that pairs the shorter of the two and yields a *prefix* of the block. Executing part of a
+    /// block and reporting success is the worst outcome available here. The cost is one length
+    /// comparison per block.
+    pub fn into_tx_envs(self) -> Result<Vec<TxEnv>, BlockRecoveryError> {
+        check_sender_count(self.transactions(), &self.senders)?;
+        let (block, senders) = self.split();
+        let transactions = block.into_block().body.transactions;
+        Ok(core::iter::zip(senders, transactions)
+            .map(|(sender, transaction)| transaction.into_tx_env(sender))
+            .collect())
     }
 }
 
@@ -269,10 +278,6 @@ mod tests {
         assert_eq!(recovered.senders(), senders);
         assert_eq!(recovered.transactions().len(), 2);
         assert_eq!(recovered.senders_iter().count(), 2);
-        for (sender, transaction) in recovered.transactions_with_senders() {
-            assert!(senders.contains(sender));
-            assert_eq!(transaction.tx_type(), TxType::Eip1559);
-        }
     }
 
     #[test]
@@ -315,14 +320,73 @@ mod tests {
         assert_eq!(split_senders, senders);
         assert_eq!(sealed.into_block(), source);
     }
+    /// The projection is the only place the pairing is spent, so it is where order has to be proven:
+    /// entry `i` must carry sender `i`, not merely some sender from the list.
     #[test]
-    #[should_panic(expected = "sender count must match transaction count")]
-    fn zipping_a_mismatched_pairing_panics_in_every_profile() {
-        // Not `debug_assert!`: in a release build that would let `zip` truncate and execute a
-        // prefix of the block. This test is meaningful only because it also runs under
-        // `--release`.
+    fn into_tx_envs_pairs_each_transaction_with_its_own_sender() {
+        let senders = vec![H160::repeat_byte(0xaa), H160::repeat_byte(0xbb)];
+        let recovered = RecoveredBlock::try_new_unhashed(block(2), senders.clone()).unwrap();
+
+        let tx_envs = recovered.into_tx_envs().unwrap();
+        assert_eq!(tx_envs.len(), 2);
+        for (index, tx_env) in tx_envs.iter().enumerate() {
+            assert_eq!(tx_env.caller, senders[index], "transaction {index}");
+            assert_eq!(tx_env.tx_type, TxType::Eip1559, "transaction {index}");
+        }
+    }
+
+    /// The fields the consuming projection moves rather than copies must arrive intact, or the
+    /// executor would run a transaction that is not the one the block carried.
+    #[test]
+    fn into_tx_envs_carries_the_transactions_own_fields() {
+        let sender = H160::repeat_byte(0xaa);
+        let source = transaction();
+        let tx_envs = RecoveredBlock::try_new_unhashed(block(1), vec![sender])
+            .unwrap()
+            .into_tx_envs()
+            .unwrap();
+
+        let SignedTxEnvelope::Eip1559(expected) = source else {
+            panic!("the vector is an EIP-1559 transaction")
+        };
+        assert_eq!(tx_envs[0].data, expected.tx.data);
+        assert_eq!(tx_envs[0].nonce, expected.tx.nonce);
+        assert_eq!(tx_envs[0].gas_limit, expected.tx.gas_limit);
+        assert_eq!(tx_envs[0].chain_id, Some(expected.tx.chain_id));
+    }
+
+    #[test]
+    fn into_tx_envs_on_an_empty_block_yields_nothing() {
+        let recovered = RecoveredBlock::try_new_unhashed(block(0), Vec::new()).unwrap();
+        assert!(recovered.into_tx_envs().unwrap().is_empty());
+    }
+
+    /// A mismatched pairing is refused rather than zipped down to a prefix: executing part of a block
+    /// and reporting success is worse than refusing it. Only the crate-internal unchecked
+    /// constructors can build one, which is why this reaches for one.
+    #[test]
+    fn into_tx_envs_refuses_a_mismatched_pairing_instead_of_truncating() {
         let recovered = RecoveredBlock::new_unhashed_unchecked(block(2), Vec::new());
-        let _ = recovered.transactions_with_senders().count();
+        assert_eq!(
+            recovered.into_tx_envs().unwrap_err(),
+            BlockRecoveryError::SenderCountMismatch {
+                senders: 0,
+                transactions: 2
+            }
+        );
+
+        // The other direction too: `zip` truncates whichever list is longer.
+        let recovered = RecoveredBlock::new_unhashed_unchecked(
+            block(1),
+            vec![H160::repeat_byte(0xaa), H160::repeat_byte(0xbb)],
+        );
+        assert_eq!(
+            recovered.into_tx_envs().unwrap_err(),
+            BlockRecoveryError::SenderCountMismatch {
+                senders: 2,
+                transactions: 1
+            }
+        );
     }
 
     #[test]

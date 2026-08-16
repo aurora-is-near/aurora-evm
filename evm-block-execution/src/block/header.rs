@@ -273,7 +273,7 @@ impl Header {
     /// The fork predicates above read the same shape — [`Self::shanghai_active`] answers from
     /// `withdrawals_root` alone — so a gap makes them disagree with one another too.
     #[must_use]
-    pub fn first_trailing_field_gap(&self) -> Option<HeaderField> {
+    fn first_trailing_field_gap(&self) -> Option<HeaderField> {
         let present = [
             (HeaderField::BaseFeePerGas, self.base_fee_per_gas.is_some()),
             (
@@ -389,7 +389,7 @@ impl rlp::Encodable for Header {
 
 impl rlp::Decodable for Header {
     fn decode(rlp: &rlp::Rlp<'_>) -> Result<Self, rlp::DecoderError> {
-        let items = crate::rlp_strict::checked_len(rlp)?;
+        let items = rlp_strict::checked_len(rlp)?;
         if !(MANDATORY_FIELDS..=ALL_FIELDS).contains(&items) {
             return Err(rlp::DecoderError::RlpIncorrectListLen);
         }
