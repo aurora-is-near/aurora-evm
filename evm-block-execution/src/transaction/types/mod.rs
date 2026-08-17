@@ -178,7 +178,9 @@ pub(super) fn decode_access_list(
     index: usize,
 ) -> Result<AccessList, TxDecodeError> {
     let list = rlp.at(index)?;
-    let mut items = Vec::with_capacity(rlp_strict::checked_len(&list)?);
+    rlp_strict::checked_len(&list)?;
+    // Validate up front, but do not preallocate from an untrusted RLP item count (with `Vec::with_capacity`).
+    let mut items = Vec::new();
     for item in &list {
         if rlp_strict::checked_len(&item)? != 2 {
             return Err(TxDecodeError::Rlp(rlp::DecoderError::RlpIncorrectListLen));

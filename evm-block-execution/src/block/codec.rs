@@ -137,9 +137,9 @@ fn append_body_items(body: &BlockBody, stream: &mut rlp::RlpStream) {
     stream.begin_list(body.transactions.len());
     // One lazily-created scratch buffer for all typed transactions. Empty and legacy-only lists never
     // allocate it; after the first typed transaction its capacity is retained for every following one.
-    let mut scratch = None;
+    let mut tx_rlp_stream = None;
     for transaction in &body.transactions {
-        transaction.append_block_item(stream, &mut scratch);
+        transaction.append_block_item(stream, &mut tx_rlp_stream);
     }
     // Ommers: always empty, and the decoder requires it (see the module docs).
     stream.begin_list(0);
@@ -155,7 +155,9 @@ fn decode_body_items(
     has_withdrawals: bool,
 ) -> Result<BlockBody, BlockDecodeError> {
     let list = rlp.at(offset)?;
-    let mut transactions = Vec::with_capacity(rlp_strict::checked_len(&list)?);
+    rlp_strict::checked_len(&list)?;
+    // Validate up front, but do not preallocate from an untrusted RLP item count (with `Vec::with_capacity`).
+    let mut transactions = Vec::new();
     for (index, item) in list.iter().enumerate() {
         transactions.push(
             SignedTxEnvelope::decode_block_item(&item)

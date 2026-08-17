@@ -134,23 +134,23 @@ impl SignedTxEnvelope {
             stream.append(tx);
             return;
         }
-        let scratch = scratch.get_or_insert_with(rlp::RlpStream::new);
-        scratch.clear();
+        let tx_rlp_stream = scratch.get_or_insert_with(rlp::RlpStream::new);
+        tx_rlp_stream.clear();
         let type_byte = match self {
             Self::Eip2930(tx) => {
-                scratch.append(tx);
+                tx_rlp_stream.append(tx);
                 eip2930::TYPE_BYTE
             }
             Self::Eip1559(tx) => {
-                scratch.append(tx);
+                tx_rlp_stream.append(tx);
                 eip1559::TYPE_BYTE
             }
             Self::Eip4844(tx) => {
-                scratch.append(tx);
+                tx_rlp_stream.append(tx);
                 eip4844::TYPE_BYTE
             }
             Self::Eip7702(tx) => {
-                scratch.append(tx);
+                tx_rlp_stream.append(tx);
                 eip7702::TYPE_BYTE
             }
             // Returned above; repeated because the match must be total.
@@ -162,8 +162,10 @@ impl SignedTxEnvelope {
         // The 2718 envelope is `type_byte ‖ list`, and the body carries it as one byte string. The
         // chained iterator has an exact size hint, so `RlpStream` writes the string header and the two
         // pieces directly into `stream` without collecting an intermediate envelope or length buffer.
-        let list = scratch.as_raw();
-        stream.append_iter(core::iter::once(type_byte).chain(list.iter().copied()));
+        let tx_list = tx_rlp_stream.as_raw();
+
+        let tx_envelope = core::iter::once(type_byte).chain(tx_list.iter().copied());
+        stream.append_iter(tx_envelope);
     }
 
     /// Decodes one item of a block body's transaction list — the inverse of
