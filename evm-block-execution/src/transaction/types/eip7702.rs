@@ -142,10 +142,10 @@ impl TxEip7702 {
     /// because intrinsic gas is charged per tuple whether it authorizes anyone or not.
     #[must_use]
     pub fn recovered_authorizations(&self) -> Vec<Authorization> {
-        let mut scratch = rlp::RlpStream::new();
+        let mut stream = rlp::RlpStream::new();
         self.authorization_list
             .iter()
-            .map(|tuple| tuple.recover_authority(self.chain_id, &mut scratch))
+            .map(|tuple| tuple.recover_authority(self.chain_id, &mut stream))
             .collect()
     }
 

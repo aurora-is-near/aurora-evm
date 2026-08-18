@@ -78,6 +78,124 @@ impl UncompressedPublicKey {
     }
 }
 
+/// Establishes the sender of every transaction in `block` and returns the block paired with those
+/// senders.
+///
+/// ## Errors
+/// [`SenderRecoveryError`] if any transaction fails the EIP-2 `s` check or
+/// carries a signature no public key can be recovered from.
+pub fn recover_block(block: Block) -> Result<RecoveredBlock, SenderRecoveryError> {
+    // One RLP buffer for the whole block, reused for every transaction's signing preimage.
+    let mut stream = rlp::RlpStream::new();
+    let senders = block
+        .transactions()
+        .iter()
+        .enumerate()
+        .map(|(index, transaction)| {
+            recover_public_key(transaction, index, &mut stream)?.address(index)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(pair_with_senders(block, senders))
+}
+
+/// Establishes the sender of every transaction in `block`, additionally requiring each to be the
+/// account the matching supplied public key controls, and returns the block paired with those
+/// senders.
+///
+/// The keys must be given in transaction order, one per transaction. They are a hint, not an input
+/// to the result: the sender is recovered from the transaction either way, and a key that does not
+/// match the recovered one can only get the block rejected.
+///
+/// ## Errors
+/// [`SenderRecoveryError`] if the key count does not match the transaction count, or if any
+/// transaction fails the EIP-2 `s` check, carries a signature no public key can
+/// be recovered from, or was not signed by the key supplied for it.
+pub fn recover_block_with_public_keys(
+    block: Block,
+    public_keys: &[UncompressedPublicKey],
+) -> Result<RecoveredBlock, SenderRecoveryError> {
+    let transactions = block.transactions();
+    if transactions.len() != public_keys.len() {
+        return Err(SenderRecoveryError::KeyCountMismatch {
+            keys: public_keys.len(),
+            transactions: transactions.len(),
+        });
+    }
+
+    // One RLP stream for the whole block: every transaction's signing preimage is built and hashed
+    // in the same backing storage, whose capacity is retained between transactions.
+    let mut stream = rlp::RlpStream::new();
+    let senders = public_keys
+        .iter()
+        .zip(transactions)
+        .enumerate()
+        .map(|(index, (key, transaction))| {
+            recover_and_check_sender(key, transaction, index, &mut stream)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(pair_with_senders(block, senders))
+}
+
+/// Pairs a block with the senders just established for it.
+///
+/// `senders` was built by mapping over `transactions`, so there is exactly one per transaction and
+/// the count check would be redundant; the lazy hash keeps callers that never ask for it from paying
+/// for it.
+fn pair_with_senders(block: Block, senders: Vec<H160>) -> RecoveredBlock {
+    RecoveredBlock::new_unhashed_unchecked(block, senders)
+}
+
+/// The public key `ecrecover` yields for one transaction's signature.
+///
+/// Deliberately takes no candidate key: the recovered key — and therefore the sender — is a function
+/// of the transaction's signature hash, `r`, `s` and `y_parity` alone, all of which are inside the
+/// bytes the block hash commits to, so no caller-supplied value can steer it.
+fn recover_public_key(
+    transaction: &SignedTxEnvelope,
+    index: usize,
+    rlp_stream: &mut rlp::RlpStream,
+) -> Result<UncompressedPublicKey, SenderRecoveryError> {
+    // EIP-2 first: `(r, n - s)` at the opposite parity recovers the *same* key, so recovery alone
+    // would accept a malleable signature and yield the same sender under a different hash.
+    if !transaction.signature().is_s_normalized() {
+        return Err(SenderRecoveryError::SignatureSNotNormalized { index });
+    }
+
+    let message = libsecp256k1::Message::parse(&transaction.signature_hash_in(rlp_stream).0);
+    let signature =
+        libsecp256k1::Signature::parse_standard_slice(&transaction.signature().rs_bytes())
+            .map_err(|_| SenderRecoveryError::InvalidSignature { index })?;
+    // `parse` accepts `0..=3`; `y_parity` is a `bool`, so the `r + n` wraparound that ids `2` and
+    // `3` denote — which `verify` tolerates but `ecrecover` forbids — is unrepresentable here.
+    let recovery_id = libsecp256k1::RecoveryId::parse(u8::from(transaction.signature().y_parity))
+        .map_err(|_| SenderRecoveryError::InvalidSignature { index })?;
+    let key = libsecp256k1::recover(&message, &signature, &recovery_id)
+        .map_err(|_| SenderRecoveryError::InvalidSignature { index })?;
+    // `serialize` normalizes the point and writes the `0x04` tag, so these 65 bytes are canonical
+    // and comparable with a supplied key however that one was produced.
+    Ok(UncompressedPublicKey(key.serialize()))
+}
+
+/// Recovers one transaction's signer, requires it to be `pub_key`, and returns its address.
+fn recover_and_check_sender(
+    pub_key: &UncompressedPublicKey,
+    transaction: &SignedTxEnvelope,
+    index: usize,
+    rlp_stream: &mut rlp::RlpStream,
+) -> Result<H160, SenderRecoveryError> {
+    // The supplied key's own tag is checked first, so a malformed hint stays distinguishable from a
+    // merely mismatching one.
+    pub_key.address(index)?;
+    let recovered = recover_public_key(transaction, index, rlp_stream)?;
+    if recovered != *pub_key {
+        return Err(SenderRecoveryError::VerificationFailed { index });
+    }
+    // The address of the *recovered* key: the supplied one decides only whether an address is
+    // returned, never which one.
+    recovered.address(index)
+}
+
 /// Why a block's senders cannot be established.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SenderRecoveryError {
@@ -137,124 +255,6 @@ impl fmt::Display for SenderRecoveryError {
 }
 
 impl core::error::Error for SenderRecoveryError {}
-
-/// Establishes the sender of every transaction in `block` and returns the block paired with those
-/// senders.
-///
-/// ## Errors
-/// [`SenderRecoveryError`] if any transaction fails the EIP-2 `s` check or
-/// carries a signature no public key can be recovered from.
-pub fn recover_block(block: Block) -> Result<RecoveredBlock, SenderRecoveryError> {
-    // One RLP buffer for the whole block, reused for every transaction's signing preimage.
-    let mut scratch = rlp::RlpStream::new();
-    let senders = block
-        .transactions()
-        .iter()
-        .enumerate()
-        .map(|(index, transaction)| {
-            recover_public_key(transaction, index, &mut scratch)?.address(index)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(pair_with_senders(block, senders))
-}
-
-/// Establishes the sender of every transaction in `block`, additionally requiring each to be the
-/// account the matching supplied public key controls, and returns the block paired with those
-/// senders.
-///
-/// The keys must be given in transaction order, one per transaction. They are a hint, not an input
-/// to the result: the sender is recovered from the transaction either way, and a key that does not
-/// match the recovered one can only get the block rejected.
-///
-/// ## Errors
-/// [`SenderRecoveryError`] if the key count does not match the transaction count, or if any
-/// transaction fails the EIP-2 `s` check, carries a signature no public key can
-/// be recovered from, or was not signed by the key supplied for it.
-pub fn recover_block_with_public_keys(
-    block: Block,
-    public_keys: &[UncompressedPublicKey],
-) -> Result<RecoveredBlock, SenderRecoveryError> {
-    let transactions = block.transactions();
-    if transactions.len() != public_keys.len() {
-        return Err(SenderRecoveryError::KeyCountMismatch {
-            keys: public_keys.len(),
-            transactions: transactions.len(),
-        });
-    }
-
-    // One RLP stream for the whole block: every transaction's signing preimage is built and hashed
-    // in the same backing storage, whose capacity is retained between transactions.
-    let mut scratch = rlp::RlpStream::new();
-    let senders = public_keys
-        .iter()
-        .zip(transactions)
-        .enumerate()
-        .map(|(index, (key, transaction))| {
-            recover_and_check_sender(key, transaction, index, &mut scratch)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(pair_with_senders(block, senders))
-}
-
-/// Pairs a block with the senders just established for it.
-///
-/// `senders` was built by mapping over `transactions`, so there is exactly one per transaction and
-/// the count check would be redundant; the lazy hash keeps callers that never ask for it from paying
-/// for it.
-fn pair_with_senders(block: Block, senders: Vec<H160>) -> RecoveredBlock {
-    RecoveredBlock::new_unhashed_unchecked(block, senders)
-}
-
-/// The public key `ecrecover` yields for one transaction's signature.
-///
-/// Deliberately takes no candidate key: the recovered key — and therefore the sender — is a function
-/// of the transaction's signature hash, `r`, `s` and `y_parity` alone, all of which are inside the
-/// bytes the block hash commits to, so no caller-supplied value can steer it.
-fn recover_public_key(
-    transaction: &SignedTxEnvelope,
-    index: usize,
-    scratch: &mut rlp::RlpStream,
-) -> Result<UncompressedPublicKey, SenderRecoveryError> {
-    // EIP-2 first: `(r, n - s)` at the opposite parity recovers the *same* key, so recovery alone
-    // would accept a malleable signature and yield the same sender under a different hash.
-    if !transaction.signature().is_s_normalized() {
-        return Err(SenderRecoveryError::SignatureSNotNormalized { index });
-    }
-
-    let message = libsecp256k1::Message::parse(&transaction.signature_hash_in(scratch).0);
-    let signature =
-        libsecp256k1::Signature::parse_standard_slice(&transaction.signature().rs_bytes())
-            .map_err(|_| SenderRecoveryError::InvalidSignature { index })?;
-    // `parse` accepts `0..=3`; `y_parity` is a `bool`, so the `r + n` wraparound that ids `2` and
-    // `3` denote — which `verify` tolerates but `ecrecover` forbids — is unrepresentable here.
-    let recovery_id = libsecp256k1::RecoveryId::parse(u8::from(transaction.signature().y_parity))
-        .map_err(|_| SenderRecoveryError::InvalidSignature { index })?;
-    let key = libsecp256k1::recover(&message, &signature, &recovery_id)
-        .map_err(|_| SenderRecoveryError::InvalidSignature { index })?;
-    // `serialize` normalizes the point and writes the `0x04` tag, so these 65 bytes are canonical
-    // and comparable with a supplied key however that one was produced.
-    Ok(UncompressedPublicKey(key.serialize()))
-}
-
-/// Recovers one transaction's signer, requires it to be `pub_key`, and returns its address.
-fn recover_and_check_sender(
-    pub_key: &UncompressedPublicKey,
-    transaction: &SignedTxEnvelope,
-    index: usize,
-    scratch: &mut rlp::RlpStream,
-) -> Result<H160, SenderRecoveryError> {
-    // The supplied key's own tag is checked first, so a malformed hint stays distinguishable from a
-    // merely mismatching one.
-    pub_key.address(index)?;
-    let recovered = recover_public_key(transaction, index, scratch)?;
-    if recovered != *pub_key {
-        return Err(SenderRecoveryError::VerificationFailed { index });
-    }
-    // The address of the *recovered* key: the supplied one decides only whether an address is
-    // returned, never which one.
-    recovered.address(index)
-}
 
 #[cfg(test)]
 mod tests {

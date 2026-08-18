@@ -31,36 +31,6 @@ use core::fmt;
 use core::ops::Deref;
 use primitive_types::{H160, H256};
 
-/// Why a block and a senders list cannot be paired.
-///
-/// A construction-time error: it reports an inconsistent *input*, not a failed block validation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlockRecoveryError {
-    /// The senders list and the transaction list have different lengths.
-    SenderCountMismatch {
-        /// Number of senders supplied.
-        senders: usize,
-        /// Number of transactions in the block.
-        transactions: usize,
-    },
-}
-
-impl fmt::Display for BlockRecoveryError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SenderCountMismatch {
-                senders,
-                transactions,
-            } => write!(
-                f,
-                "block has {transactions} transactions but {senders} senders were supplied"
-            ),
-        }
-    }
-}
-
-impl core::error::Error for BlockRecoveryError {}
-
 /// A [`SealedBlock`] with the sender of every transaction alongside it.
 ///
 /// Dereferences to the sealed block, and through it to the header, so `recovered.hash()` and
@@ -247,6 +217,36 @@ const fn check_sender_count(
         })
     }
 }
+
+/// Why a block and a senders list cannot be paired.
+///
+/// A construction-time error: it reports an inconsistent *input*, not a failed block validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockRecoveryError {
+    /// The senders list and the transaction list have different lengths.
+    SenderCountMismatch {
+        /// Number of senders supplied.
+        senders: usize,
+        /// Number of transactions in the block.
+        transactions: usize,
+    },
+}
+
+impl fmt::Display for BlockRecoveryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SenderCountMismatch {
+                senders,
+                transactions,
+            } => write!(
+                f,
+                "block has {transactions} transactions but {senders} senders were supplied"
+            ),
+        }
+    }
+}
+
+impl core::error::Error for BlockRecoveryError {}
 
 #[cfg(test)]
 mod tests {

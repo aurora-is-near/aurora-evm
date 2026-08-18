@@ -35,8 +35,8 @@
 //!
 //! # `Encodable` yes, `Decodable` no
 //!
-//! [`Block`] and [`BlockBody`] implement `rlp::Encodable`, and that is the whole encoder — there is no
-//! `encode_rlp` method beside it. Encoding a transaction is total: a [`SignedTxEnvelope`] holds exactly
+//! [`Block`] and [`BlockBody`] implement `rlp::Encodable`, and that is the whole encoder.
+//! Encoding a transaction is total: a [`SignedTxEnvelope`] holds exactly
 //! the fields its own type has, so there is nothing that can contradict itself and nothing to fail on.
 //!
 //! Decoding cannot be a trait impl. `rlp::Decodable::decode` may only fail with
@@ -60,6 +60,143 @@ use crate::transaction::{SignedTxEnvelope, TxDecodeError};
 use crate::withdrawal::Withdrawal;
 use core::cmp::Ordering;
 use core::fmt;
+
+const BODY_ITEM_COUNT_WITHOUT_WITHDRAWALS: usize = 2;
+const BLOCK_ITEM_COUNT_WITHOUT_WITHDRAWALS: usize = BODY_ITEM_COUNT_WITHOUT_WITHDRAWALS + 1;
+
+/// Number of items a body contributes to a list: two, plus `withdrawals` when present.
+const fn body_item_count(body: &BlockBody) -> usize {
+    if body.withdrawals.is_some() {
+        BODY_ITEM_COUNT_WITHOUT_WITHDRAWALS + 1
+    } else {
+        BODY_ITEM_COUNT_WITHOUT_WITHDRAWALS
+    }
+}
+
+/// Appends a body's items — transactions, the empty ommers list, and `withdrawals` when present —
+/// to a list the caller has already opened.
+fn append_body_items(body: &BlockBody, stream: &mut rlp::RlpStream) {
+    stream.begin_list(body.transactions.len());
+    // One lazily-created scratch buffer for all typed transactions. Empty and legacy-only lists never
+    // allocate it; after the first typed transaction its capacity is retained for every following one.
+    let mut tx_rlp_stream = None;
+    for transaction in &body.transactions {
+        transaction.append_block_item(stream, &mut tx_rlp_stream);
+    }
+    // Ommers: always empty, and the decoder requires it (see the module docs).
+    stream.begin_list(0);
+    if let Some(withdrawals) = &body.withdrawals {
+        stream.append_list(withdrawals);
+    }
+}
+
+/// Reads a body's items from `rlp` starting at `offset`.
+fn decode_body_items(
+    rlp: &rlp::Rlp<'_>,
+    offset: usize,
+    has_withdrawals: bool,
+) -> Result<BlockBody, BlockDecodeError> {
+    let list = rlp.at(offset)?;
+    rlp_strict::checked_len(&list)?;
+    // Validate up front, but do not preallocate from an untrusted RLP item count (with `Vec::with_capacity`).
+    let mut transactions = Vec::new();
+    for (index, item) in list.iter().enumerate() {
+        transactions.push(
+            SignedTxEnvelope::decode_block_item(&item)
+                .map_err(|source| BlockDecodeError::Transaction { index, source })?,
+        );
+    }
+
+    let ommers = rlp_strict::checked_len(&rlp.at(offset + 1)?)?;
+    if ommers != 0 {
+        return Err(BlockDecodeError::OmmersNotSupported { count: ommers });
+    }
+
+    let withdrawals = if has_withdrawals {
+        Some(rlp_strict::checked_list_at::<Withdrawal>(rlp, offset + 2)?)
+    } else {
+        None
+    };
+
+    Ok(BlockBody::new(transactions, withdrawals))
+}
+
+/// Whether a block list of `count` items carries trailing withdrawals.
+const fn has_withdrawals(count: usize) -> Result<bool, BlockDecodeError> {
+    if count == BLOCK_ITEM_COUNT_WITHOUT_WITHDRAWALS {
+        Ok(false)
+    } else if count == BLOCK_ITEM_COUNT_WITHOUT_WITHDRAWALS + 1 {
+        Ok(true)
+    } else {
+        Err(BlockDecodeError::Rlp(
+            rlp::DecoderError::RlpIncorrectListLen,
+        ))
+    }
+}
+
+impl rlp::Encodable for BlockBody {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(body_item_count(self));
+        append_body_items(self, stream);
+    }
+}
+
+impl rlp::Encodable for Block {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(body_item_count(&self.body) + 1);
+        stream.append(&self.header);
+        append_body_items(&self.body, stream);
+    }
+}
+
+impl Block {
+    /// Decodes a block from the start of `bytes`, **ignoring anything after it**.
+    ///
+    /// Crate-internal, because that leniency is the hazard the strict path exists to remove: a block
+    /// decoded this way can re-encode to different bytes than it arrived as. [`Self::decode_exact`] is
+    /// the public form, and it is this one plus the check that the block covers its buffer.
+    ///
+    /// ## Errors
+    /// [`BlockDecodeError`] if the list has the wrong length, the header or a transaction does not
+    /// decode, or the ommers list is not empty.
+    pub(crate) fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
+        let rlp = rlp::Rlp::new(bytes);
+        let withdrawals = has_withdrawals(rlp_strict::checked_len(&rlp)?)?;
+        let header: Header = rlp.val_at(0)?;
+        let body = decode_body_items(&rlp, 1, withdrawals)?;
+        Ok(Self::new(header, body))
+    }
+
+    /// Decodes a block that must occupy `bytes` **entirely**.
+    ///
+    /// The only way in from bytes, and strict on purpose: RLP is self-delimiting, so a lenient
+    /// decoder would silently drop whatever follows the block and then re-encode to something the
+    /// input never was.
+    ///
+    /// ## Errors
+    /// [`BlockDecodeError::TrailingBytes`] if `bytes` holds more than the block;
+    /// [`rlp::DecoderError::RlpIsTooShort`] if the block declares a payload `bytes` does not hold —
+    /// the opposite fault, and named as such rather than folded into `TrailingBytes`;
+    /// [`rlp::DecoderError::RlpInvalidLength`] if the declared length overflows a `usize`; and
+    /// otherwise [`BlockDecodeError`] for a list of the wrong length, a header or transaction that
+    /// does not decode, or a non-empty ommers list.
+    pub fn decode_exact(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
+        let consumed = rlp_strict::declared_item_len(bytes)?;
+        match consumed.cmp(&bytes.len()) {
+            // The block declares a payload the buffer does not hold: too few bytes, not too many.
+            Ordering::Greater => return Err(rlp::DecoderError::RlpIsTooShort.into()),
+            // The buffer holds bytes past the end of the block.
+            Ordering::Less => {
+                return Err(BlockDecodeError::TrailingBytes {
+                    consumed,
+                    total: bytes.len(),
+                });
+            }
+            Ordering::Equal => {}
+        }
+        Self::decode_rlp(bytes)
+    }
+}
 
 /// Why a block or a block body could not be decoded from its RLP form.
 #[derive(Debug)]
@@ -126,144 +263,27 @@ impl core::error::Error for BlockDecodeError {
     }
 }
 
-/// Number of items a body contributes to a list: two, plus `withdrawals` when present.
-const fn body_item_count(body: &BlockBody) -> usize {
-    if body.withdrawals.is_some() { 3 } else { 2 }
-}
-
-/// Appends a body's items — transactions, the empty ommers list, and `withdrawals` when present —
-/// to a list the caller has already opened.
-fn append_body_items(body: &BlockBody, stream: &mut rlp::RlpStream) {
-    stream.begin_list(body.transactions.len());
-    // One lazily-created scratch buffer for all typed transactions. Empty and legacy-only lists never
-    // allocate it; after the first typed transaction its capacity is retained for every following one.
-    let mut tx_rlp_stream = None;
-    for transaction in &body.transactions {
-        transaction.append_block_item(stream, &mut tx_rlp_stream);
-    }
-    // Ommers: always empty, and the decoder requires it (see the module docs).
-    stream.begin_list(0);
-    if let Some(withdrawals) = &body.withdrawals {
-        stream.append_list(withdrawals);
-    }
-}
-
-/// Reads a body's items from `rlp` starting at `offset`.
-fn decode_body_items(
-    rlp: &rlp::Rlp<'_>,
-    offset: usize,
-    has_withdrawals: bool,
-) -> Result<BlockBody, BlockDecodeError> {
-    let list = rlp.at(offset)?;
-    rlp_strict::checked_len(&list)?;
-    // Validate up front, but do not preallocate from an untrusted RLP item count (with `Vec::with_capacity`).
-    let mut transactions = Vec::new();
-    for (index, item) in list.iter().enumerate() {
-        transactions.push(
-            SignedTxEnvelope::decode_block_item(&item)
-                .map_err(|source| BlockDecodeError::Transaction { index, source })?,
-        );
-    }
-
-    let ommers = rlp_strict::checked_len(&rlp.at(offset + 1)?)?;
-    if ommers != 0 {
-        return Err(BlockDecodeError::OmmersNotSupported { count: ommers });
-    }
-
-    let withdrawals = if has_withdrawals {
-        Some(rlp_strict::checked_list_at::<Withdrawal>(rlp, offset + 2)?)
-    } else {
-        None
-    };
-
-    Ok(BlockBody::new(transactions, withdrawals))
-}
-
-/// Whether a list of `count` items carries trailing withdrawals, given `expected` items without.
-const fn has_withdrawals(count: usize, expected: usize) -> Result<bool, BlockDecodeError> {
-    if count == expected {
-        Ok(false)
-    } else if count == expected.saturating_add(1) {
-        Ok(true)
-    } else {
-        Err(BlockDecodeError::Rlp(
-            rlp::DecoderError::RlpIncorrectListLen,
-        ))
-    }
-}
-
-impl rlp::Encodable for BlockBody {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(body_item_count(self));
-        append_body_items(self, stream);
-    }
-}
-
-impl rlp::Encodable for Block {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(body_item_count(&self.body) + 1);
-        stream.append(&self.header);
-        append_body_items(&self.body, stream);
-    }
-}
-
-impl Block {
-    /// Decodes a block from the start of `bytes`, **ignoring anything after it**.
-    ///
-    /// Crate-internal, because that leniency is the hazard the strict path exists to remove: a block
-    /// decoded this way can re-encode to different bytes than it arrived as. [`Self::decode_exact`] is
-    /// the public form, and it is this one plus the check that the block covers its buffer.
-    ///
-    /// ## Errors
-    /// [`BlockDecodeError`] if the list has the wrong length, the header or a transaction does not
-    /// decode, or the ommers list is not empty.
-    pub(crate) fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
-        let rlp = rlp::Rlp::new(bytes);
-        let withdrawals = has_withdrawals(rlp_strict::checked_len(&rlp)?, 3)?;
-        let header: Header = rlp.val_at(0)?;
-        let body = decode_body_items(&rlp, 1, withdrawals)?;
-        Ok(Self::new(header, body))
-    }
-
-    /// Decodes a block that must occupy `bytes` **entirely**.
-    ///
-    /// The only way in from bytes, and strict on purpose: RLP is self-delimiting, so a lenient
-    /// decoder would silently drop whatever follows the block and then re-encode to something the
-    /// input never was.
-    ///
-    /// ## Errors
-    /// [`BlockDecodeError::TrailingBytes`] if `bytes` holds more than the block;
-    /// [`rlp::DecoderError::RlpIsTooShort`] if the block declares a payload `bytes` does not hold —
-    /// the opposite fault, and named as such rather than folded into `TrailingBytes`;
-    /// [`rlp::DecoderError::RlpInvalidLength`] if the declared length overflows a `usize`; and
-    /// otherwise [`BlockDecodeError`] for a list of the wrong length, a header or transaction that
-    /// does not decode, or a non-empty ommers list.
-    pub fn decode_exact(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
-        let consumed = rlp_strict::declared_item_len(bytes)?;
-        match consumed.cmp(&bytes.len()) {
-            // The block declares a payload the buffer does not hold: too few bytes, not too many.
-            Ordering::Greater => return Err(rlp::DecoderError::RlpIsTooShort.into()),
-            // The buffer holds bytes past the end of the block.
-            Ordering::Less => {
-                return Err(BlockDecodeError::TrailingBytes {
-                    consumed,
-                    total: bytes.len(),
-                });
-            }
-            Ordering::Equal => {}
-        }
-        Self::decode_rlp(bytes)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Block, BlockBody, BlockDecodeError, decode_body_items, has_withdrawals};
+    use super::{Block, BlockBody, BlockDecodeError, decode_body_items};
     use crate::rlp_strict;
     use crate::transaction::{SignedTxEnvelope, TxType};
     use crate::withdrawal::Withdrawal;
     use hex_literal::hex;
     use primitive_types::{H160, H256};
+
+    /// Test-only helper for whether `count` items carry trailing withdrawals, given the count without.
+    const fn has_withdrawals(count: usize, expected: usize) -> Result<bool, BlockDecodeError> {
+        if count == expected {
+            Ok(false)
+        } else if count == expected + 1 {
+            Ok(true)
+        } else {
+            Err(BlockDecodeError::Rlp(
+                rlp::DecoderError::RlpIncorrectListLen,
+            ))
+        }
+    }
 
     /// Test-only inverse of `BlockBody::rlp_append`; bytes after the first body item are ignored.
     fn decode_body_rlp_allowing_trailing_bytes(

@@ -81,14 +81,14 @@ impl SignedAuthorization {
     /// nonce against the authority's account and the delegation rules need the world state and belong
     /// to the executor, which reads `is_valid` and applies the rest.
     ///
-    /// `scratch` is the projection's RLP buffer, cleared before use and reused across a whole list.
+    /// `rlp_stream` is the projection's RLP buffer, cleared before use and reused across a whole list.
     /// Both `MAGIC` and the three-field list are written into it, so recovery allocates no separate
     /// preimage per tuple.
     #[must_use]
     pub(crate) fn recover_authority(
         &self,
         tx_chain_id: u64,
-        scratch: &mut rlp::RlpStream,
+        rlp_stream: &mut rlp::RlpStream,
     ) -> Authorization {
         let invalid = Authorization::new(H160::zero(), self.address, self.nonce, false);
 
@@ -105,14 +105,14 @@ impl SignedAuthorization {
             return invalid;
         }
 
-        scratch.clear();
+        rlp_stream.clear();
         // Not an RLP item: EIP-7702 hashes the raw magic byte followed by the encoded list.
-        scratch.append_raw(&[MAGIC], 0);
-        scratch.begin_list(3);
-        scratch.append(&self.chain_id);
-        scratch.append(&self.address);
-        scratch.append(&self.nonce);
-        let message = libsecp256k1::Message::parse(&keccak256(scratch.as_raw()).0);
+        rlp_stream.append_raw(&[MAGIC], 0);
+        rlp_stream.begin_list(3);
+        rlp_stream.append(&self.chain_id);
+        rlp_stream.append(&self.address);
+        rlp_stream.append(&self.nonce);
+        let message = libsecp256k1::Message::parse(&keccak256(rlp_stream.as_raw()).0);
         let Ok(parsed) = libsecp256k1::Signature::parse_standard_slice(&signature.rs_bytes())
         else {
             return invalid;
@@ -266,12 +266,12 @@ mod tests {
     /// unexplained sender three layers up.
     #[test]
     fn the_signing_preimage_is_the_magic_byte_and_three_fields() {
-        let mut scratch = rlp::RlpStream::new();
-        let recovered = vector().recover_authority(1, &mut scratch);
+        let mut stream = rlp::RlpStream::new();
+        let recovered = vector().recover_authority(1, &mut stream);
 
         // `d7` is a 23-byte list: `80` (chain_id 0), `94 ‖ 20 zero bytes` (address), `80` (nonce 0).
         assert_eq!(
-            scratch.as_raw(),
+            stream.as_raw(),
             hex!("05d78094000000000000000000000000000000000000000080"),
             "MAGIC ‖ rlp([chain_id, address, nonce])"
         );
@@ -291,7 +291,7 @@ mod tests {
             vector().recover_authority(0xdead_beef, &mut other_chain),
             recovered
         );
-        assert_eq!(other_chain.as_raw(), scratch.as_raw());
+        assert_eq!(other_chain.as_raw(), stream.as_raw());
     }
 
     #[test]

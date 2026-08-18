@@ -162,9 +162,9 @@ impl SignedTxEnvelope {
         // The 2718 envelope is `type_byte ‖ list`, and the body carries it as one byte string. The
         // chained iterator has an exact size hint, so `RlpStream` writes the string header and the two
         // pieces directly into `stream` without collecting an intermediate envelope or length buffer.
-        let tx_list = tx_rlp_stream.as_raw();
+        let tx_payload_rlp = tx_rlp_stream.as_raw();
 
-        let tx_envelope = core::iter::once(type_byte).chain(tx_list.iter().copied());
+        let tx_envelope = core::iter::once(type_byte).chain(tx_payload_rlp.iter().copied());
         stream.append_iter(tx_envelope);
     }
 
