@@ -91,6 +91,7 @@ pub fn logs_bloom(logs: &[Log]) -> Bloom {
 mod tests {
     use super::{Bloom, logs_bloom};
     use aurora_evm::backend::Log;
+    use hex_literal::hex;
     use primitive_types::{H160, H256};
     use rlp::{Decodable, Encodable};
 
@@ -142,6 +143,58 @@ mod tests {
     #[test]
     fn empty_logs_zero_bloom() {
         assert_eq!(logs_bloom(&[]), Bloom::zero());
+    }
+
+    /// A known-answer vector: the exact 256 bytes that one address and one topic must produce.
+    ///
+    /// The tests above count *how many* bits an input sets; this one pins *which*. That is the
+    /// property every receipt's encoding — and therefore the receipts root of every block carrying
+    /// logs — depends on, and a transposed byte index or a wrong bit mask would set the right number
+    /// of wrong bits and pass all the counting tests.
+    ///
+    /// Vector taken from `alloy-primitives`' own bloom test: an independent known-answer oracle, not
+    /// a recording of this implementation's output.
+    #[test]
+    fn a_known_address_and_topic_set_known_bit_positions() {
+        const EXPECTED: [u8; 256] = hex!(
+            "00000000000000000000000000000000"
+            "00000000100000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000002020000000000000000000000"
+            "00000000000000000000000800000000"
+            "10000000000000000000000000000000"
+            "00000000000000000000001000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+            "00000000000000000000000000000000"
+        );
+        let address = hex!("ef2d6d194084c2de36e0dabfce45d046b37d1106");
+        let topic = hex!("02c69be41d0b7e40352fc85be1cd65eb03d40ef8427a0ca4596b1ead9a00e9fc");
+
+        let mut bloom = Bloom::zero();
+        bloom.accrue(&address);
+        bloom.accrue(&topic);
+        assert_eq!(bloom, Bloom(EXPECTED));
+
+        // Six bits for two inputs: the vector has no collision, which is what lets the positions
+        // above speak about each input separately.
+        let set: u32 = bloom.0.iter().map(|byte| byte.count_ones()).sum();
+        assert_eq!(set, 6);
+
+        // The same value through the production entry point, so the address-and-topics walk is
+        // anchored to the vector and not only the primitive.
+        let log = Log {
+            address: H160(address),
+            topics: vec![H256(topic)],
+            data: vec![],
+        };
+        assert_eq!(logs_bloom(std::slice::from_ref(&log)), bloom);
     }
 
     #[test]

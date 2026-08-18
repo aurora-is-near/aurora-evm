@@ -1,20 +1,24 @@
 //! Strict RLP boundary helpers for consensus decoding.
 //!
-//! The upstream `rlp` API exposes two low-level behaviours that are useful in its general-purpose
+//! The upstream `rlp` API exposes three low-level behaviours that are useful in its general-purpose
 //! decoding model but do not, by themselves, establish the invariants required at this crate's
 //! untrusted input boundary:
 //!
 //! - [`rlp::Rlp::item_count`] and [`rlp::Rlp::list_at`] rely on a list walk whose parse failure ends
 //!   iteration, so they can report a valid prefix as the whole list or treat a byte string as an
 //!   empty list;
+//! - [`rlp::Rlp::data`] returns the payload declared by an item's header without requiring the item
+//!   to be a canonical byte string, so fixed-width strings must decode through
+//!   `Rlp::decoder().decode_value` instead;
 //! - [`rlp::PayloadInfo::total`] adds header and payload lengths without checked arithmetic and does
 //!   not classify how the declared extent relates to the supplied buffer.
 //!
-//! This module makes those assumptions explicit and fallible: [`checked_len`] and
-//! [`checked_list_at`] prove the expected list shape and complete payload coverage, while
-//! [`declared_item_len`] computes the encoded extent without overflow and leaves exact/truncated/
-//! trailing-buffer classification to the caller. It is not a replacement RLP decoder; after these
-//! boundary invariants are established, the crate continues to use `rlp` for ordinary decoding.
+//! This module documents and pins those boundaries. [`checked_len`] and [`checked_list_at`] prove the
+//! expected list shape and complete payload coverage, while [`declared_item_len`] computes the
+//! encoded extent without overflow and leaves exact/truncated/trailing-buffer classification to the
+//! caller. Fixed-width field decoders use `decode_value` directly because upstream already provides
+//! the strict accessor they need. This is not a replacement RLP decoder; after these boundary
+//! invariants are established, the crate continues to use `rlp` for ordinary decoding.
 //!
 //! # A list walk that cannot report a failure
 //!
@@ -276,6 +280,37 @@ mod tests {
         assert_eq!(
             checked_list_at::<u8>(&rlp, 1).unwrap_err(),
             rlp::DecoderError::RlpExpectedToBeList
+        );
+    }
+    /// Why every fixed-width field in this crate decodes through `decoder().decode_value` and never
+    /// through [`rlp::Rlp::data`].
+    ///
+    /// `data()` returns whatever payload an item's header declares, without asking whether the item is
+    /// a string at all or whether a one-byte string used its minimal form. Both leniencies are
+    /// asserted rather than described, for the same reason as the rest of this module: a future `rlp`
+    /// that closes them makes this test fail loudly instead of leaving the rule silently unnecessary —
+    /// and a reader tempted to simplify a decoder to `data()` finds the counterexamples already
+    /// written down.
+    #[test]
+    fn rlp_data_is_lenient_where_decode_value_is_not() {
+        let borrow = |bytes: &[u8]| Ok::<Vec<u8>, rlp::DecoderError>(bytes.to_vec());
+
+        // A list, whose payload `data()` hands back as though it were a string.
+        let list = hex!("c101");
+        let rlp = rlp::Rlp::new(&list);
+        assert_eq!(rlp.data().unwrap(), hex!("01"));
+        assert_eq!(
+            rlp.decoder().decode_value(borrow).unwrap_err(),
+            rlp::DecoderError::RlpExpectedToBeData
+        );
+
+        // The non-minimal encoding of `0x01`: one value must have one encoding, and this is not it.
+        let indirect = hex!("8101");
+        let rlp = rlp::Rlp::new(&indirect);
+        assert_eq!(rlp.data().unwrap(), hex!("01"));
+        assert_eq!(
+            rlp.decoder().decode_value(borrow).unwrap_err(),
+            rlp::DecoderError::RlpInvalidIndirection
         );
     }
 }

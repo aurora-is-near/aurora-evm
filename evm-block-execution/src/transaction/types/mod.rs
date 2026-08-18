@@ -247,3 +247,81 @@ pub(super) fn append_blob_hashes(stream: &mut rlp::RlpStream, hashes: &[H256]) {
         stream.append(hash);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{TxDecodeError, decode_destination, decode_required_destination};
+    use crate::transaction::{TxKind, TxType};
+    use hex_literal::hex;
+    use primitive_types::H160;
+
+    /// Decodes `raw` as a `to` field, by making it the only item of a one-item list.
+    ///
+    /// Asking about the field in isolation rather than through a whole transaction, because the width
+    /// verdict is the field's own and every transaction type routes into the same helper.
+    fn destination_of(raw: &[u8]) -> Result<TxKind, TxDecodeError> {
+        let mut stream = rlp::RlpStream::new_list(1);
+        stream.append_raw(raw, 1);
+        let bytes = stream.out().to_vec();
+        decode_destination(&rlp::Rlp::new(&bytes), 0)
+    }
+
+    /// `to` is empty for a creation and exactly twenty bytes for a call, and the width is what
+    /// decides which — so a wrong width must be refused rather than padded or truncated into an
+    /// address the sender never signed.
+    #[test]
+    fn a_destination_is_empty_or_exactly_twenty_bytes() {
+        assert_eq!(destination_of(&hex!("80")).unwrap(), TxKind::Create);
+
+        let address = hex!("ef2d6d194084c2de36e0dabfce45d046b37d1106");
+        assert_eq!(
+            destination_of(&rlp::encode(&address.to_vec())).unwrap(),
+            TxKind::Call(H160(address))
+        );
+
+        for width in [1usize, 19, 21, 32] {
+            assert_eq!(
+                destination_of(&rlp::encode(&vec![0xaa; width])).unwrap_err(),
+                TxDecodeError::InvalidDestination,
+                "{width}-byte destination"
+            );
+        }
+    }
+
+    /// A malformed or non-canonical `to` is an RLP fault, not a width verdict.
+    ///
+    /// Keeping the two apart matters because `InvalidDestination` means "a well-formed string of the
+    /// wrong width": reporting a decoder fault under that name would present a malformed input as a
+    /// consensus judgement about an address. Both cases here are ones `Rlp::data()` would have
+    /// accepted silently.
+    #[test]
+    fn a_malformed_destination_is_an_rlp_fault_not_an_invalid_address() {
+        assert_eq!(
+            destination_of(&hex!("8101")).unwrap_err(),
+            TxDecodeError::Rlp(rlp::DecoderError::RlpInvalidIndirection)
+        );
+
+        let list = rlp::RlpStream::new_list(0).out().to_vec();
+        assert_eq!(
+            destination_of(&list).unwrap_err(),
+            TxDecodeError::Rlp(rlp::DecoderError::RlpExpectedToBeData)
+        );
+    }
+
+    /// The types that have no creation form reject an empty `to` at decode time, so the case is gone
+    /// from their payloads rather than checked later.
+    #[test]
+    fn a_type_without_a_creation_form_rejects_an_empty_destination() {
+        let mut stream = rlp::RlpStream::new_list(1);
+        stream.append_raw(&hex!("80"), 1);
+        let bytes = stream.out().to_vec();
+
+        for tx_type in [TxType::Eip4844, TxType::Eip7702] {
+            assert_eq!(
+                decode_required_destination(&rlp::Rlp::new(&bytes), 0, tx_type).unwrap_err(),
+                TxDecodeError::CreateNotSupported(tx_type),
+                "{tx_type:?}"
+            );
+        }
+    }
+}

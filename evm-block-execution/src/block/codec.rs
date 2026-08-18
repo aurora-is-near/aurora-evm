@@ -199,25 +199,6 @@ impl rlp::Encodable for BlockBody {
     }
 }
 
-impl BlockBody {
-    /// Decodes a body from `[transactions, ommers, withdrawals?]` — the inverse of its
-    /// `rlp::Encodable`. Anything in `bytes` after the body's own list is ignored.
-    ///
-    /// Exists for the tests that prove a body's own encoding round-trips, and for nothing else: a body
-    /// never arrives on its own, it arrives inside a block. The decoding itself is not test-only —
-    /// production reaches the same [`decode_body_items`] through [`Block::decode_rlp`].
-    ///
-    /// ## Errors
-    /// [`BlockDecodeError`] if the list has the wrong length, a transaction does not decode, or the
-    /// ommers list is not empty.
-    #[cfg(test)]
-    pub(crate) fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
-        let rlp = rlp::Rlp::new(bytes);
-        let withdrawals = has_withdrawals(rlp_strict::checked_len(&rlp)?, 2)?;
-        decode_body_items(&rlp, 0, withdrawals)
-    }
-}
-
 impl rlp::Encodable for Block {
     fn rlp_append(&self, stream: &mut rlp::RlpStream) {
         stream.begin_list(body_item_count(&self.body) + 1);
@@ -277,12 +258,21 @@ impl Block {
 
 #[cfg(test)]
 mod tests {
-    use super::{Block, BlockBody, BlockDecodeError};
+    use super::{Block, BlockBody, BlockDecodeError, decode_body_items, has_withdrawals};
     use crate::rlp_strict;
     use crate::transaction::{SignedTxEnvelope, TxType};
     use crate::withdrawal::Withdrawal;
     use hex_literal::hex;
     use primitive_types::{H160, H256};
+
+    /// Test-only inverse of `BlockBody::rlp_append`; bytes after the first body item are ignored.
+    fn decode_body_rlp_allowing_trailing_bytes(
+        bytes: &[u8],
+    ) -> Result<BlockBody, BlockDecodeError> {
+        let rlp = rlp::Rlp::new(bytes);
+        let withdrawals = has_withdrawals(rlp_strict::checked_len(&rlp)?, 2)?;
+        decode_body_items(&rlp, 0, withdrawals)
+    }
 
     /// A real block from the Ethereum execution-spec fixtures: its `rlp` field, the `blockHeader.hash`
     /// it must reproduce, and the body shape it must decode to.
@@ -403,7 +393,7 @@ mod tests {
             let body = Block::decode_exact(vector.rlp).unwrap().body;
             let encoded = rlp::encode(&body).to_vec();
             assert_eq!(
-                BlockBody::decode_rlp(&encoded).unwrap(),
+                decode_body_rlp_allowing_trailing_bytes(&encoded).unwrap(),
                 body,
                 "{} body",
                 vector.name
@@ -423,8 +413,14 @@ mod tests {
         assert_eq!(absent_rlp, hex!("c2c0c0"));
         assert_eq!(empty_rlp, hex!("c3c0c0c0"));
 
-        assert_eq!(BlockBody::decode_rlp(&absent_rlp).unwrap(), absent);
-        assert_eq!(BlockBody::decode_rlp(&empty_rlp).unwrap(), empty);
+        assert_eq!(
+            decode_body_rlp_allowing_trailing_bytes(&absent_rlp).unwrap(),
+            absent
+        );
+        assert_eq!(
+            decode_body_rlp_allowing_trailing_bytes(&empty_rlp).unwrap(),
+            empty
+        );
     }
 
     #[test]
@@ -541,7 +537,7 @@ mod tests {
             }
             assert!(
                 matches!(
-                    BlockBody::decode_rlp(&stream.out()),
+                    decode_body_rlp_allowing_trailing_bytes(&stream.out()),
                     Err(BlockDecodeError::Rlp(
                         rlp::DecoderError::RlpIncorrectListLen
                     ))
@@ -568,7 +564,7 @@ mod tests {
         stream.begin_list(0);
         stream.begin_list(0);
 
-        match BlockBody::decode_rlp(&stream.out()) {
+        match decode_body_rlp_allowing_trailing_bytes(&stream.out()) {
             Err(BlockDecodeError::Transaction { index, .. }) => assert_eq!(index, 1),
             other => panic!("expected a transaction error at index 1, got {other:?}"),
         }

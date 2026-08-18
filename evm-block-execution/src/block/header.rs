@@ -318,16 +318,26 @@ impl Header {
     }
 }
 
-/// Reads a fixed-size byte string from position `index` of an RLP list.
-fn fixed_bytes_at<const N: usize>(
-    rlp: &rlp::Rlp<'_>,
-    index: usize,
-    field: &'static str,
-) -> Result<[u8; N], rlp::DecoderError> {
-    let bytes: Vec<u8> = rlp.val_at(index)?;
-    bytes
-        .try_into()
-        .map_err(|_| rlp::DecoderError::Custom(field))
+/// Reads the 8-byte proof-of-work nonce from position `index` of an RLP list.
+///
+/// Borrowed rather than through `val_at::<Vec<u8>>`: the width is checked on the slice the decoder
+/// already holds, so a wrong-width value — as large as the input the block arrived in — is refused
+/// without being copied first.
+///
+/// Through `decoder().decode_value` and never through [`rlp::Rlp::data`]: only the former enforces
+/// canonical RLP. `data()` hands back whatever payload an item's header declares, so it accepts the
+/// non-minimal `0x81 0x01` and returns a *list's* payload as though it were a string. Both leniencies
+/// are pinned by tests in [`rlp_strict`](crate::rlp_strict).
+///
+/// [`Header`]'s [`rlp::Decodable`] impl can return only [`rlp::DecoderError`]. `Custom` preserves a
+/// field-specific width verdict (`invalid nonce length`); the generic `RlpIsTooShort` and
+/// `RlpIsTooBig` variants would lose that context, while a typed header error cannot cross the trait.
+fn decode_nonce_at(rlp: &rlp::Rlp<'_>, index: usize) -> Result<[u8; 8], rlp::DecoderError> {
+    rlp.at(index)?.decoder().decode_value(|bytes| {
+        bytes
+            .try_into()
+            .map_err(|_| rlp::DecoderError::Custom("invalid nonce length"))
+    })
 }
 
 /// Total, and only for a header whose trailing fields form a prefix.
@@ -401,7 +411,10 @@ impl rlp::Decodable for Header {
             state_root: rlp.val_at(3)?,
             transactions_root: rlp.val_at(4)?,
             receipts_root: rlp.val_at(5)?,
-            logs_bloom: Bloom(fixed_bytes_at(rlp, 6, "invalid logs bloom length")?),
+            // Through `Bloom`'s own decoder: it already owns the width and shape rules, and this is
+            // the only place a bloom arrives from the wire, so restating them here would be the
+            // second copy of one rule.
+            logs_bloom: rlp.val_at(6)?,
             difficulty: rlp.val_at(7)?,
             number: rlp.val_at(8)?,
             gas_limit: rlp.val_at(9)?,
@@ -409,7 +422,7 @@ impl rlp::Decodable for Header {
             timestamp: rlp.val_at(11)?,
             extra_data: rlp.val_at(12)?,
             mix_hash: rlp.val_at(13)?,
-            nonce: fixed_bytes_at(rlp, 14, "invalid nonce length")?,
+            nonce: decode_nonce_at(rlp, 14)?,
             ..Self::default()
         };
 
@@ -587,6 +600,93 @@ mod tests {
             }
             present
         })
+    }
+
+    /// The genesis header's RLP with item `index` replaced by the raw RLP fragment `raw`.
+    ///
+    /// Every other item comes from the encoder, so a rejection can only be about the substituted one.
+    fn header_with_raw_item(index: usize, raw: &[u8]) -> Vec<u8> {
+        let encoded = rlp::encode(&mainnet_genesis()).to_vec();
+        let source = rlp::Rlp::new(&encoded);
+        let count = source.item_count().unwrap();
+        let mut stream = rlp::RlpStream::new_list(count);
+        for position in 0..count {
+            let item = if position == index {
+                raw
+            } else {
+                source.at(position).unwrap().as_raw()
+            };
+            stream.append_raw(item, 1);
+        }
+        stream.out().to_vec()
+    }
+
+    /// The bloom is decoded by `Bloom`'s own decoder rather than by a width check restated here, so
+    /// these cases pin that inheritance: `Header::decode` is the only place in production a bloom
+    /// arrives from the wire, which makes it the only place `Bloom::decode`'s rules are load-bearing.
+    #[test]
+    fn a_header_bloom_must_be_exactly_256_bytes() {
+        for width in [0usize, 8, 255, 257] {
+            let raw = rlp::encode(&vec![0u8; width]).to_vec();
+            assert_eq!(
+                Header::decode_exact(&header_with_raw_item(6, &raw)).unwrap_err(),
+                rlp::DecoderError::Custom("bloom filter is not 256 bytes"),
+                "{width}-byte bloom"
+            );
+        }
+    }
+
+    /// A wrong *shape* is an RLP fault, not a width verdict. Both cases are ones `Rlp::data()` would
+    /// have accepted, which is why the decoder goes through `decode_value`.
+    #[test]
+    fn a_header_bloom_must_be_a_canonical_string() {
+        let mut list = rlp::RlpStream::new_list(1);
+        list.append(&vec![0u8; 256]);
+        assert_eq!(
+            Header::decode_exact(&header_with_raw_item(6, &list.out())).unwrap_err(),
+            rlp::DecoderError::RlpExpectedToBeData
+        );
+        // `0x01` has one encoding, and `0x81 0x01` is not it.
+        assert_eq!(
+            Header::decode_exact(&header_with_raw_item(6, &hex!("8101"))).unwrap_err(),
+            rlp::DecoderError::RlpInvalidIndirection
+        );
+    }
+
+    /// The nonce is a fixed 8-byte string, so a wrong width is refused rather than padded or
+    /// trimmed — and refused without the value being copied first, however large it is.
+    #[test]
+    fn a_header_nonce_must_be_exactly_eight_bytes() {
+        for width in [0usize, 7, 9, 32] {
+            let raw = rlp::encode(&vec![0u8; width]).to_vec();
+            assert_eq!(
+                Header::decode_exact(&header_with_raw_item(14, &raw)).unwrap_err(),
+                rlp::DecoderError::Custom("invalid nonce length"),
+                "{width}-byte nonce"
+            );
+        }
+        // The other half of "fixed-width, not a scalar": the genesis nonce's leading zeros survive
+        // decoding verbatim, where an integer would have been required to drop them.
+        assert_eq!(
+            Header::decode_exact(&rlp::encode(&mainnet_genesis()))
+                .unwrap()
+                .nonce,
+            hex!("0000000000000042")
+        );
+    }
+
+    #[test]
+    fn a_header_nonce_must_be_a_canonical_string() {
+        let mut list = rlp::RlpStream::new_list(1);
+        list.append(&vec![0u8; 8]);
+        assert_eq!(
+            Header::decode_exact(&header_with_raw_item(14, &list.out())).unwrap_err(),
+            rlp::DecoderError::RlpExpectedToBeData
+        );
+        assert_eq!(
+            Header::decode_exact(&header_with_raw_item(14, &hex!("8101"))).unwrap_err(),
+            rlp::DecoderError::RlpInvalidIndirection
+        );
     }
 
     /// `encode_rlp` must accept exactly the prefixes, on all 256 shapes and not just the 9 real ones,
