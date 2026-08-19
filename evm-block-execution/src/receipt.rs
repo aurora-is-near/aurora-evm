@@ -22,6 +22,7 @@
 
 use crate::bloom::{Bloom, logs_bloom};
 use crate::transaction::TxType;
+use crate::transaction::types::{eip1559, eip2930, eip4844, eip7702};
 use aurora_evm::backend::Log;
 
 /// Execution receipt for a single transaction.
@@ -70,14 +71,17 @@ impl Receipt {
         let mut stream = rlp::RlpStream::new();
         self.append_body(&mut stream);
         let body = stream.out();
-        if self.tx_type == TxType::Legacy {
-            body.to_vec()
-        } else {
-            let mut out = Vec::with_capacity(body.len() + 1);
-            out.push(u8::from(self.tx_type));
-            out.extend_from_slice(body.as_ref());
-            out
-        }
+        let type_byte = match self.tx_type {
+            TxType::Legacy => return body.to_vec(),
+            TxType::Eip2930 => eip2930::TYPE_BYTE,
+            TxType::Eip1559 => eip1559::TYPE_BYTE,
+            TxType::Eip4844 => eip4844::TYPE_BYTE,
+            TxType::Eip7702 => eip7702::TYPE_BYTE,
+        };
+        let mut out = Vec::with_capacity(body.len() + 1);
+        out.push(type_byte);
+        out.extend_from_slice(body.as_ref());
+        out
     }
 }
 
@@ -96,9 +100,16 @@ mod tests {
     }
 
     #[test]
-    fn typed_receipt_has_type_prefix() {
-        let receipt = Receipt::new(TxType::Eip1559, true, 21_000, vec![]);
-        assert_eq!(receipt.encoded()[0], 0x02);
+    fn every_typed_receipt_has_its_transaction_type_prefix() {
+        for (tx_type, expected) in [
+            (TxType::Eip2930, 0x01),
+            (TxType::Eip1559, 0x02),
+            (TxType::Eip4844, 0x03),
+            (TxType::Eip7702, 0x04),
+        ] {
+            let receipt = Receipt::new(tx_type, true, 21_000, vec![]);
+            assert_eq!(receipt.encoded()[0], expected, "{tx_type:?}");
+        }
     }
 
     #[test]

@@ -220,7 +220,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         // EIP-155: simple replay attack protection. Unconditional — the chain a block belongs to
         // is not optional. Only a legacy transaction may omit its own `chain_id`, which selects the
         // six-field signing preimage over the nine-field one; every typed transaction must carry it.
-        if self.tx.tx_type > TxType::Legacy && self.tx.chain_id.is_none() {
+        if self.tx.tx_type != TxType::Legacy && self.tx.chain_id.is_none() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::MissingChainId,
             ));

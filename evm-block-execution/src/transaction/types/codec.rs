@@ -8,8 +8,12 @@ use primitive_types::{H160, H256, U256};
 pub enum TxDecodeError {
     /// The input carried no bytes.
     Empty,
-    /// The leading byte is not a known EIP-2718 type and not an RLP list header.
+    /// The leading byte is in EIP-2718's typed range but is not a supported transaction type.
     UnknownTxType(u8),
+    /// The leading byte is neither an EIP-2718 type byte nor a legacy RLP list prefix.
+    InvalidEnvelopePrefix(u8),
+    /// The `0xff` extension sentinel reserved by EIP-2718.
+    ReservedSentinel,
     /// The input is not well-formed RLP for its transaction type.
     Rlp(rlp::DecoderError),
     /// A legacy `v` that encodes neither a pre-EIP-155 parity nor a chain id.
@@ -38,6 +42,11 @@ impl core::fmt::Display for TxDecodeError {
         match self {
             Self::Empty => write!(f, "no bytes to decode"),
             Self::UnknownTxType(byte) => write!(f, "unknown transaction type byte {byte:#04x}"),
+            Self::InvalidEnvelopePrefix(byte) => write!(
+                f,
+                "byte {byte:#04x} is neither an EIP-2718 type nor a legacy transaction prefix"
+            ),
+            Self::ReservedSentinel => write!(f, "EIP-2718 prefix 0xff is reserved"),
             Self::Rlp(error) => write!(f, "malformed transaction RLP: {error}"),
             Self::InvalidLegacyV(v) => write!(f, "legacy signature `v` {v} is out of range"),
             Self::InvalidYParity(parity) => write!(f, "`y_parity` {parity} is not 0 or 1"),

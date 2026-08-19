@@ -1,42 +1,17 @@
-/// EVM transaction types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(u8)]
+/// The semantic kind of an Ethereum transaction.
+///
+/// Not an EIP-2718 wire byte: a legacy transaction has no type prefix. Envelope and receipt codecs
+/// map the typed variants to their owning EIP module's `TYPE_BYTE` explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxType {
     /// Legacy transaction (pre-EIP-2718)
-    Legacy = 0x00,
+    Legacy,
     /// EIP-2930: Optional access lists
-    Eip2930 = 0x01,
+    Eip2930,
     /// EIP-1559: Fee market change
-    Eip1559 = 0x02,
+    Eip1559,
     /// EIP-4844: Shard Blob Transactions
-    Eip4844 = 0x03,
+    Eip4844,
     /// EIP-7702: Set EOA account code
-    Eip7702 = 0x04,
-}
-
-impl From<TxType> for u8 {
-    fn from(tx_type: TxType) -> Self {
-        match tx_type {
-            TxType::Legacy => 0x00,
-            TxType::Eip2930 => 0x01,
-            TxType::Eip1559 => 0x02,
-            TxType::Eip4844 => 0x03,
-            TxType::Eip7702 => 0x04,
-        }
-    }
-}
-
-impl TryFrom<u8> for TxType {
-    type Error = &'static str;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(Self::Legacy),
-            0x01 => Ok(Self::Eip2930),
-            0x02 => Ok(Self::Eip1559),
-            0x03 => Ok(Self::Eip4844),
-            0x04 => Ok(Self::Eip7702),
-            _ => Err("unknown transaction type"),
-        }
-    }
+    Eip7702,
 }

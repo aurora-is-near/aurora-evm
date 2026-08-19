@@ -285,6 +285,13 @@ mod tests {
         }
     }
 
+    fn encode_block_item(tx: &SignedTxEnvelope) -> Vec<u8> {
+        let mut stream = rlp::RlpStream::new();
+        let mut scratch = None;
+        tx.append_block_item(&mut stream, &mut scratch);
+        stream.out().to_vec()
+    }
+
     /// Test-only inverse of `BlockBody::rlp_append`; bytes after the first body item are ignored.
     fn decode_body_rlp_allowing_trailing_bytes(
         bytes: &[u8],
@@ -571,11 +578,12 @@ mod tests {
     /// block diagnosable at all.
     #[test]
     fn transaction_errors_carry_their_index() {
-        let good = Block::decode_exact(vectors()[1].rlp)
-            .unwrap()
-            .body
-            .transactions[0]
-            .encode_block_item();
+        let good = encode_block_item(
+            &Block::decode_exact(vectors()[1].rlp)
+                .unwrap()
+                .body
+                .transactions[0],
+        );
 
         let mut stream = rlp::RlpStream::new_list(3);
         stream.begin_list(2);

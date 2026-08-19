@@ -73,50 +73,48 @@ impl SignedTxEnvelope {
     /// Decodes an EIP-2718 encoded transaction.
     ///
     /// # Errors
-    /// [`TxDecodeError`] if the input is empty, carries an unknown type byte, is not well-formed RLP
-    /// for its type, encodes a creation for a type that forbids one, or does not cover its buffer
-    /// exactly — `RlpIsTooShort` when it declares more than it carries, `RlpIsTooBig` when bytes follow
-    /// it, and `RlpInvalidLength` when the declared length overflows a `usize`.
+    /// [`TxDecodeError`] if the input is empty, carries an unknown or reserved type byte, starts with
+    /// neither a type byte nor a legacy-list prefix, is not well-formed RLP for its type, encodes a
+    /// creation for a type that forbids one, or does not cover its buffer exactly — `RlpIsTooShort`
+    /// when it declares more than it carries, `RlpIsTooBig` when bytes follow it, and
+    /// `RlpInvalidLength` when the declared length overflows a `usize`.
     pub fn decode_2718(bytes: &[u8]) -> Result<Self, TxDecodeError> {
-        let (&first, _) = bytes.split_first().ok_or(TxDecodeError::Empty)?;
-        // An RLP list header (>= 0xc0) means the legacy, un-prefixed form.
-        if first >= 0xc0 {
-            check_covers_exactly(bytes)?;
-            return Ok(Self::Legacy(SignedTxLegacy::decode_strict(
-                &rlp::Rlp::new(bytes),
-            )?));
+        let (&first, payload) = bytes.split_first().ok_or(TxDecodeError::Empty)?;
+        match first {
+            eip2930::TYPE_BYTE => {
+                check_covers_exactly(payload)?;
+                Ok(Self::Eip2930(SignedTxEip2930::decode_strict(
+                    &rlp::Rlp::new(payload),
+                )?))
+            }
+            eip1559::TYPE_BYTE => {
+                check_covers_exactly(payload)?;
+                Ok(Self::Eip1559(SignedTxEip1559::decode_strict(
+                    &rlp::Rlp::new(payload),
+                )?))
+            }
+            eip4844::TYPE_BYTE => {
+                check_covers_exactly(payload)?;
+                Ok(Self::Eip4844(SignedTxEip4844::decode_strict(
+                    &rlp::Rlp::new(payload),
+                )?))
+            }
+            eip7702::TYPE_BYTE => {
+                check_covers_exactly(payload)?;
+                Ok(Self::Eip7702(SignedTxEip7702::decode_strict(
+                    &rlp::Rlp::new(payload),
+                )?))
+            }
+            0x00..=0x7f => Err(TxDecodeError::UnknownTxType(first)),
+            0x80..=0xbf => Err(TxDecodeError::InvalidEnvelopePrefix(first)),
+            0xc0..=0xfe => {
+                check_covers_exactly(bytes)?;
+                Ok(Self::Legacy(SignedTxLegacy::decode_strict(
+                    &rlp::Rlp::new(bytes),
+                )?))
+            }
+            0xff => Err(TxDecodeError::ReservedSentinel),
         }
-        let tx_type = TxType::try_from(first).map_err(|_| TxDecodeError::UnknownTxType(first))?;
-        if tx_type == TxType::Legacy {
-            // `0x00` is the legacy type in EIP-2718's numbering, but a legacy transaction carries no
-            // type byte, so the prefixed form must not exist.
-            return Err(TxDecodeError::UnknownTxType(first));
-        }
-        let tx_payload = &bytes[1..];
-        check_covers_exactly(tx_payload)?;
-        let rlp = rlp::Rlp::new(tx_payload);
-        match tx_type {
-            TxType::Eip2930 => Ok(Self::Eip2930(SignedTxEip2930::decode_strict(&rlp)?)),
-            TxType::Eip1559 => Ok(Self::Eip1559(SignedTxEip1559::decode_strict(&rlp)?)),
-            TxType::Eip4844 => Ok(Self::Eip4844(SignedTxEip4844::decode_strict(&rlp)?)),
-            TxType::Eip7702 => Ok(Self::Eip7702(SignedTxEip7702::decode_strict(&rlp)?)),
-            // Already rejected above; repeated because the match must be total.
-            TxType::Legacy => Err(TxDecodeError::UnknownTxType(first)),
-        }
-    }
-
-    /// The encoding of the transaction as an item of a **block body's** transaction list.
-    ///
-    /// This is *not* [`Self::encode_2718`]: inside a block body a legacy transaction appears as a
-    /// bare RLP list, but a typed one has its 2718 envelope wrapped in an RLP **byte string**, so
-    /// that a list of mixed types stays a well-formed RLP list. Confusing the two forms is a
-    /// consensus bug: the trie and the transaction hash use the bare envelope, block RLP uses this.
-    #[must_use]
-    pub fn encode_block_item(&self) -> Vec<u8> {
-        let mut stream = rlp::RlpStream::new();
-        let mut scratch = None;
-        self.append_block_item(&mut stream, &mut scratch);
-        stream.out().to_vec()
     }
 
     /// Writes this transaction's block-body form straight into `stream`.
@@ -169,8 +167,8 @@ impl SignedTxEnvelope {
         stream.append_iter(tx_envelope);
     }
 
-    /// Decodes one item of a block body's transaction list — the inverse of
-    /// [`Self::encode_block_item`], accepting a bare RLP list or a string-wrapped 2718 envelope.
+    /// Decodes one item of a block body's transaction list. Accepting a bare RLP list or a
+    /// string-wrapped 2718 envelope.
     ///
     /// The two forms are **exclusive**: a bare list is legacy, a byte string is typed. A legacy
     /// transaction wrapped in a byte string decodes to the same transaction as the bare form, so
@@ -200,7 +198,7 @@ impl SignedTxEnvelope {
         // list range; `0x00` is rejected by `decode_2718` itself.
         let envelope = rlp.data()?;
         let (&first, _) = envelope.split_first().ok_or(TxDecodeError::Empty)?;
-        if first >= 0xc0 {
+        if matches!(first, 0xc0..=0xfe) {
             return Err(TxDecodeError::WrappedLegacy);
         }
         Self::decode_2718(envelope)
@@ -350,6 +348,13 @@ mod tests {
     use hex_literal::hex;
     use primitive_types::{H160, H256};
 
+    fn encode_block_item(tx: &SignedTxEnvelope) -> Vec<u8> {
+        let mut stream = rlp::RlpStream::new();
+        let mut scratch = None;
+        tx.append_block_item(&mut stream, &mut scratch);
+        stream.out().to_vec()
+    }
+
     /// The EIP-1559 type byte, for building a typed envelope whose payload is deliberately malformed.
     const TYPE_BYTE_EIP1559: u8 = super::eip1559::TYPE_BYTE;
 
@@ -437,7 +442,7 @@ mod tests {
     fn the_block_body_form_wraps_only_typed_transactions() {
         for (tx_type, raw) in vectors() {
             let envelope = SignedTxEnvelope::decode_2718(&raw).unwrap();
-            let item = envelope.encode_block_item();
+            let item = encode_block_item(&envelope);
             if tx_type == TxType::Legacy {
                 assert_eq!(item, raw);
             } else {
@@ -485,22 +490,32 @@ mod tests {
         }
     }
 
-    /// Nine bytes whose declared length overflows a `usize`, in both positions the check runs from:
-    /// a bare legacy list, and the payload after a type byte.
+    /// A declared length that overflows `usize` is rejected wherever EIP-2718 permits RLP parsing.
+    ///
+    /// After a type byte the overflowing list header is always payload. At the envelope boundary its
+    /// first byte is `0xff` on a 64-bit target, so EIP-2718 classifies it as the reserved sentinel
+    /// before RLP sees it; on a 32-bit zkVM the header starts with `0xfb` and remains a legacy prefix.
     #[test]
     fn a_declared_length_that_overflows_a_usize_is_rejected() {
-        // The legacy position needs the list form, because a string header is not a legacy header and
-        // would be turned away as an unknown type byte before the length is ever summed.
-        let legacy = overflowing_header(true);
+        let overflowing = overflowing_header(true);
         let mut typed = vec![TYPE_BYTE_EIP1559];
-        typed.extend_from_slice(&overflowing_header(true));
-        for bytes in [legacy, typed] {
-            assert_eq!(
-                SignedTxEnvelope::decode_2718(&bytes).unwrap_err(),
-                TxDecodeError::Rlp(rlp::DecoderError::RlpInvalidLength),
-                "{bytes:02x?}"
-            );
-        }
+        typed.extend_from_slice(&overflowing);
+        assert_eq!(
+            SignedTxEnvelope::decode_2718(&typed).unwrap_err(),
+            TxDecodeError::Rlp(rlp::DecoderError::RlpInvalidLength),
+            "typed payload"
+        );
+
+        let expected = if overflowing[0] == 0xff {
+            TxDecodeError::ReservedSentinel
+        } else {
+            TxDecodeError::Rlp(rlp::DecoderError::RlpInvalidLength)
+        };
+        assert_eq!(
+            SignedTxEnvelope::decode_2718(&overflowing).unwrap_err(),
+            expected,
+            "envelope boundary"
+        );
     }
 
     /// `decode_block_item` establishes the exact-item invariant itself instead of trusting the caller.
@@ -511,7 +526,7 @@ mod tests {
     fn a_block_item_must_cover_its_buffer_exactly_in_both_branches() {
         for (tx_type, raw) in vectors() {
             let envelope = SignedTxEnvelope::decode_2718(&raw).unwrap();
-            let item = envelope.encode_block_item();
+            let item = encode_block_item(&envelope);
             assert_eq!(
                 SignedTxEnvelope::decode_block_item(&rlp::Rlp::new(&item)).unwrap(),
                 envelope,
@@ -540,9 +555,7 @@ mod tests {
     /// trimmed to its own bytes, so the block decoder never relied on the caller either.
     #[test]
     fn an_item_taken_from_a_list_is_trimmed_to_itself() {
-        let item = SignedTxEnvelope::decode_2718(&vectors()[2].1)
-            .unwrap()
-            .encode_block_item();
+        let item = encode_block_item(&SignedTxEnvelope::decode_2718(&vectors()[2].1).unwrap());
         let mut list = rlp::RlpStream::new_list(2);
         list.append_raw(&item, 1);
         list.append_raw(&item, 1);
@@ -553,21 +566,50 @@ mod tests {
         }
     }
 
+    /// Every first-byte class in EIP-2718 is rejected under its own name when it cannot introduce a
+    /// transaction: unsupported typed values, the gap before an RLP list, and the reserved sentinel.
     #[test]
-    fn unknown_and_absent_type_bytes_are_rejected() {
+    fn envelope_prefix_ranges_are_classified_before_rlp_decoding() {
         assert_eq!(
             SignedTxEnvelope::decode_2718(&[]).unwrap_err(),
             TxDecodeError::Empty
         );
-        // `0x00` is the legacy type in EIP-2718's numbering, but a legacy transaction carries no
-        // type byte, so the prefixed form must not exist.
+
+        // `0x00` has no supported typed transaction, and `0x05..=0x7f` are the remainder of the
+        // EIP-2718 typed range after the four types this crate implements.
+        for first in core::iter::once(0x00).chain(0x05..=0x7f) {
+            assert_eq!(
+                SignedTxEnvelope::decode_2718(&[first]).unwrap_err(),
+                TxDecodeError::UnknownTxType(first),
+                "typed-range byte {first:#04x}"
+            );
+        }
+
+        // These bytes introduce RLP strings, not typed envelopes or the RLP list a legacy
+        // transaction must be.
+        for first in 0x80..=0xbf {
+            assert_eq!(
+                SignedTxEnvelope::decode_2718(&[first]).unwrap_err(),
+                TxDecodeError::InvalidEnvelopePrefix(first),
+                "invalid envelope prefix {first:#04x}"
+            );
+        }
+
         assert_eq!(
-            SignedTxEnvelope::decode_2718(&hex!("00c0")).unwrap_err(),
-            TxDecodeError::UnknownTxType(0x00)
+            SignedTxEnvelope::decode_2718(&[0xff]).unwrap_err(),
+            TxDecodeError::ReservedSentinel
         );
+    }
+
+    /// Wrapping does not hide EIP-2718's reserved sentinel behind the block-body byte string.
+    #[test]
+    fn a_wrapped_reserved_sentinel_keeps_its_own_error() {
+        let mut stream = rlp::RlpStream::new();
+        stream.append(&vec![0xff]);
+        let item = stream.out();
         assert_eq!(
-            SignedTxEnvelope::decode_2718(&hex!("05c0")).unwrap_err(),
-            TxDecodeError::UnknownTxType(0x05)
+            SignedTxEnvelope::decode_block_item(&rlp::Rlp::new(&item)).unwrap_err(),
+            TxDecodeError::ReservedSentinel
         );
     }
 
