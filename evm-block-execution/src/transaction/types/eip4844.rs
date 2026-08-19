@@ -6,7 +6,7 @@
 //!
 //! [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 
-use super::{
+use super::codec::{
     TxDecodeError, append_access_list, append_blob_hashes, append_signature, decode_access_list,
     decode_required_destination, decode_signature, decode_u128, expect_items,
 };

@@ -1,6 +1,7 @@
 //! The legacy (pre-EIP-2718) transaction: a bare RLP list with no type byte.
 
-use super::{TxDecodeError, append_destination, decode_destination, expect_items};
+use super::codec::{TxDecodeError, append_destination, decode_destination, expect_items};
+
 use crate::transaction::env::TxEnv;
 use crate::transaction::signature::TxSignature;
 use crate::transaction::{AccessList, TxKind, TxType};

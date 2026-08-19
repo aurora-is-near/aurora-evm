@@ -2,7 +2,7 @@
 //!
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use super::{
+use super::codec::{
     TxDecodeError, append_access_list, append_signature, decode_access_list,
     decode_required_destination, decode_signature, expect_items,
 };

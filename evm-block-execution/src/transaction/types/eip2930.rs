@@ -2,7 +2,7 @@
 //!
 //! [EIP-2930]: https://eips.ethereum.org/EIPS/eip-2930
 
-use super::{
+use super::codec::{
     TxDecodeError, append_access_list, append_destination, append_signature, decode_access_list,
     decode_destination, decode_signature, expect_items,
 };

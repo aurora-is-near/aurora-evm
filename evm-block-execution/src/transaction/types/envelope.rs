@@ -11,6 +11,7 @@ use super::{
     SignedTxEip1559, SignedTxEip2930, SignedTxEip4844, SignedTxEip7702, SignedTxLegacy,
     TxDecodeError, eip1559, eip2930, eip4844, eip7702,
 };
+
 use crate::crypto::keccak256;
 use crate::rlp_strict;
 use crate::transaction::TxType;
@@ -344,7 +345,8 @@ fn check_covers_exactly(bytes: &[u8]) -> Result<(), TxDecodeError> {
 mod tests {
     use super::SignedTxEnvelope;
     use crate::rlp_strict::overflowing_header;
-    use crate::transaction::{TxDecodeError, TxType};
+    use crate::transaction::TxType;
+    use crate::transaction::types::codec::TxDecodeError;
     use hex_literal::hex;
     use primitive_types::{H160, H256};
 
