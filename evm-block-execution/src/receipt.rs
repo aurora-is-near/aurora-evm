@@ -7,7 +7,7 @@
 //!
 //! The consensus encoding is `rlp([status, cumulative_gas_used, bloom, logs])`, wrapped in the
 //! EIP-2718 envelope by [`Receipt::encoded`]: a legacy receipt is the bare RLP list, a typed
-//! receipt is prefixed with its [`TxType`] byte.
+//! receipt is prefixed with the EIP-defined byte corresponding to its [`TxType`].
 //!
 //! # Place in the execution pipeline
 //!

@@ -30,8 +30,8 @@
 //! Inside the transaction list a legacy transaction is a bare RLP list, while a typed one is its
 //! EIP-2718 envelope wrapped in an RLP **byte string** — otherwise a `0x02…` envelope would not be
 //! a legal item of an RLP list. The bare envelope is what the transactions trie and the
-//! transaction hash are built from, so the two forms must not be confused; the distinction lives in
-//! [`SignedTxEnvelope::encode_block_item`] and its inverse.
+//! transaction hash are built from, so the two forms must not be confused. The block encoder writes
+//! the item form directly, and [`SignedTxEnvelope::decode_block_item`] enforces the inverse mapping.
 //!
 //! # `Encodable` yes, `Decodable` no
 //!
@@ -625,8 +625,8 @@ mod tests {
         assert_eq!(Block::decode_exact(&encoded).unwrap(), block);
     }
 
-    /// Decoding is the inverse of `encode_block_item`, so a transaction list mixing the two forms
-    /// survives a round trip through the body with each form preserved.
+    /// The block encoder and decoder agree on both transaction-item forms, so a mixed list survives
+    /// a round trip with each form preserved.
     #[test]
     fn mixed_transaction_forms_survive_the_body() {
         let block = Block::decode_exact(vectors()[1].rlp).unwrap();

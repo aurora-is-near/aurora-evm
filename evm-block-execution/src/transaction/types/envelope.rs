@@ -80,6 +80,9 @@ impl SignedTxEnvelope {
     /// `RlpInvalidLength` when the declared length overflows a `usize`.
     pub fn decode_2718(bytes: &[u8]) -> Result<Self, TxDecodeError> {
         let (&first, payload) = bytes.split_first().ok_or(TxDecodeError::Empty)?;
+
+        // EIP-2718: https://eips.ethereum.org/EIPS/eip-2718
+        // Section:  Backwards Compatibility
         match first {
             eip2930::TYPE_BYTE => {
                 check_covers_exactly(payload)?;
@@ -167,8 +170,8 @@ impl SignedTxEnvelope {
         stream.append_iter(tx_envelope);
     }
 
-    /// Decodes one item of a block body's transaction list. Accepting a bare RLP list or a
-    /// string-wrapped 2718 envelope.
+    /// Decodes one item of a block body's transaction list, accepting a bare RLP list or a
+    /// string-wrapped EIP-2718 envelope.
     ///
     /// The two forms are **exclusive**: a bare list is legacy, a byte string is typed. A legacy
     /// transaction wrapped in a byte string decodes to the same transaction as the bare form, so
@@ -194,8 +197,8 @@ impl SignedTxEnvelope {
             return Self::decode_2718(raw);
         }
         // Typed: unwrap the byte string to get the 2718 envelope. Borrowed, not copied — the envelope
-        // is only read from here on. Its first byte must be an EIP-2718 type byte, i.e. below the RLP
-        // list range; `0x00` is rejected by `decode_2718` itself.
+        // is only read from here on. A wrapped bare legacy list (`0xc0..=0xfe`) is rejected here;
+        // `decode_2718` classifies every other leading-byte range, including the `0xff` sentinel.
         let envelope = rlp.data()?;
         let (&first, _) = envelope.split_first().ok_or(TxDecodeError::Empty)?;
         if matches!(first, 0xc0..=0xfe) {
@@ -203,9 +206,7 @@ impl SignedTxEnvelope {
         }
         Self::decode_2718(envelope)
     }
-}
 
-impl SignedTxEnvelope {
     /// The sender's signature over [`Self::signature_hash`].
     #[must_use]
     pub const fn signature(&self) -> TxSignature {
@@ -295,9 +296,7 @@ impl SignedTxEnvelope {
             Self::Legacy(_) | Self::Eip2930(_) | Self::Eip1559(_) | Self::Eip4844(_) => &[],
         }
     }
-}
 
-impl SignedTxEnvelope {
     /// The execution environment for this transaction, **consuming** it.
     ///
     /// The last use of the consensus form. Everything it was needed for — the transactions root, the
