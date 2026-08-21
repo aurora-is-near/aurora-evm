@@ -1,3 +1,10 @@
+//! Shared RLP primitives for concrete transaction types.
+//!
+//! The helpers centralize field-count checks, destinations, access lists, signatures and fixed-width
+//! blob hashes. Decoding keeps RLP payloads borrowed where possible and routes every nested list
+//! through [`crate::rlp_strict`]; semantic errors that `rlp::DecoderError` cannot express are reported
+//! as [`TxDecodeError`].
+
 use crate::rlp_strict;
 use crate::transaction::signature::TxSignature;
 use crate::transaction::{AccessList, AccessListItem, TxKind, TxType};
@@ -75,18 +82,21 @@ pub(super) fn expect_items(rlp: &rlp::Rlp<'_>, expected: usize) -> Result<(), Tx
 }
 
 /// Decodes `to`: an address, or a contract creation when the field is empty.
+///
+/// The RLP payload stays borrowed while its width is checked, so an invalid `to` as large as the
+/// input is rejected without first allocating and copying it.
 pub(super) fn decode_destination(
     rlp: &rlp::Rlp<'_>,
     index: usize,
 ) -> Result<TxKind, TxDecodeError> {
-    let bytes: Vec<u8> = rlp.val_at(index)?;
-    if bytes.is_empty() {
-        return Ok(TxKind::Create);
-    }
-    let address: [u8; 20] = bytes
-        .try_into()
-        .map_err(|_| TxDecodeError::InvalidDestination)?;
-    Ok(TxKind::Call(H160(address)))
+    let destination = rlp.at(index)?.decoder().decode_value(|bytes| {
+        Ok(match bytes.len() {
+            0 => Some(TxKind::Create),
+            20 => Some(TxKind::Call(H160::from_slice(bytes))),
+            _ => None,
+        })
+    })?;
+    destination.ok_or(TxDecodeError::InvalidDestination)
 }
 
 /// Decodes `to` for a type that has no creation form.

@@ -1,39 +1,13 @@
-//! Establishing a block's senders from public keys supplied alongside it.
+//! Recovering each transaction's sender from its signature.
 //!
-//! The sender is `ecrecover`: the public key that produced the signature over the transaction's
-//! [signature hash](SignedTxEnvelope::signature_hash), whose low 20 keccak bytes are the address.
-//! [`recover_block`] does exactly that and needs nothing but the block.
+//! [`recover_block`] derives the public key selected by the signature's parity and converts it to an
+//! address. [`recover_block_with_public_keys`] additionally compares that recovered key with an
+//! untrusted caller-supplied key; a mismatch can only reject the block.
 //!
-//! A block does not carry its senders, so a stateless validator may prefer to be handed the public
-//! keys alongside it; [`recover_block_with_public_keys`] takes them and *checks* them against the
-//! key recovery yields. That makes the keys untrusted input, and harmless as such: they are compared
-//! against a key that is a function of the transaction alone, so the only thing a caller can do by
-//! supplying the wrong key is having the block rejected.
-//!
-//! # Why recover, and not merely verify
-//!
-//! Verifying a signature against a supplied key and taking that key's address as the sender is
-//! cheaper — no modular square root — but it does not *bind* the sender: both candidate public keys
-//! satisfy the same `(r, s)`, and the parity that distinguishes them is never consulted. The sender
-//! would become the caller's choice of two, with the block's bytes and hash unchanged, and the wrong
-//! choice would only surface later, when two different senders execute into two different post-state
-//! roots and only one matches the header.
-//!
-//! Recovering and then comparing makes the sender a function of the block alone — sound on its own
-//! rather than sound because a later check happens to run. That is why supplying keys is a
-//! convenience here and not an optimisation: the square root is paid either way.
-//!
-//! Two rules are applied per transaction, in this order:
-//!
-//! 1. `s` must be in the lower half of the curve order ([EIP-2]). Recovery does not enforce this,
-//!    and `(r, n - s)` at the opposite parity recovers the *same* key, so without this check a
-//!    transaction could be re-signed into a different hash while keeping its sender.
-//! 2. the key recovery yields at the transaction's `y_parity` must be exactly the supplied key.
-//!    Checking only that the signature *verifies* against the supplied key is not equivalent:
-//!    `libsecp256k1::verify` compares only the x coordinate of the recomputed point `R`
-//!    (libsecp256k1-core `ecdsa.rs:45`) and never its parity, so both of the two keys that share
-//!    one `(hash, r, s)` pass it — which would make the sender a caller-chosen 1-of-2 for a block
-//!    whose bytes, and therefore whose hash, are untouched.
+//! Recovery is required rather than verification against the supplied key because two candidate
+//! keys can verify the same `(hash, r, s)`. Selecting the supplied key would let the caller choose the
+//! sender without changing the transaction bytes. Each transaction also enforces the low-`s` rule
+//! from [EIP-2] before recovery.
 //!
 //! [EIP-2]: https://eips.ethereum.org/EIPS/eip-2
 
@@ -66,7 +40,7 @@ impl Deref for UncompressedPublicKey {
 impl UncompressedPublicKey {
     /// The account address this key controls: the low 20 bytes of `keccak256(x || y)`.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`SenderRecoveryError::InvalidPublicKey`] if the key does not carry the uncompressed tag.
     pub fn address(&self, index: usize) -> Result<H160, SenderRecoveryError> {
         if self.0[0] != UNCOMPRESSED_TAG {
@@ -81,7 +55,7 @@ impl UncompressedPublicKey {
 /// Establishes the sender of every transaction in `block` and returns the block paired with those
 /// senders.
 ///
-/// ## Errors
+/// # Errors
 /// [`SenderRecoveryError`] if any transaction fails the EIP-2 `s` check or
 /// carries a signature no public key can be recovered from.
 pub fn recover_block(block: Block) -> Result<RecoveredBlock, SenderRecoveryError> {
@@ -106,7 +80,7 @@ pub fn recover_block(block: Block) -> Result<RecoveredBlock, SenderRecoveryError
 /// to the result: the sender is recovered from the transaction either way, and a key that does not
 /// match the recovered one can only get the block rejected.
 ///
-/// ## Errors
+/// # Errors
 /// [`SenderRecoveryError`] if the key count does not match the transaction count, or if any
 /// transaction fails the EIP-2 `s` check, carries a signature no public key can
 /// be recovered from, or was not signed by the key supplied for it.

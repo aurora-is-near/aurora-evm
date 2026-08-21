@@ -1,4 +1,6 @@
-//! Contains constants and utility functions for [EIP-7691](https://eips.ethereum.org/EIPS/eip-7691)
+//! [EIP-7691] blob targets, limits and fee parameters for Pectra.
+//!
+//! [EIP-7691]: https://eips.ethereum.org/EIPS/eip-7691
 
 use crate::eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
 

@@ -51,16 +51,10 @@ impl TxEip1559 {
         append_access_list(stream, &self.access_list);
     }
 
-    /// Writes the signing preimage — the type byte, then this type's fields — into `stream`.
+    /// Writes the type byte and signing fields into a reusable stream.
     ///
-    /// The type byte goes in as raw bytes ahead of the list, so the preimage is one contiguous buffer
-    /// rather than a list that then has to be copied to make room for a prefix. Takes the stream so a
-    /// caller hashing a whole block's transactions can reuse one buffer for all of them.
-    ///
-    /// The list is unbounded and finalised, so the stream counts the fields itself. A hand-written count
-    /// would be the field list repeated in a second place, and the two can disagree — a preimage read
-    /// back with `as_raw` does not check that its list was completed, so a wrong count would silently
-    /// produce a wrong signature hash and therefore a wrong sender.
+    /// An unbounded list derives its arity from the fields written, avoiding a duplicated manual
+    /// count before the preimage is hashed through `as_raw`.
     pub(crate) fn append_signing_preimage(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         stream.append_raw(&[TYPE_BYTE], 0);
@@ -121,18 +115,10 @@ impl SignedTxEip1559 {
 }
 
 impl TxEip1559 {
-    /// This transaction's contribution to the execution environment, **consuming** it.
+    /// Consumes the transaction into its execution fields for the recovered `caller`.
     ///
-    /// Consuming rather than borrowing so that the owned fields — the call data, the access list and
-    /// its storage keys — *move* instead of being copied. The executor takes them by value in the end,
-    /// so a borrowing conversion would copy them once here and then hand the copy on; nothing reads the
-    /// transaction after this point.
-    ///
-    /// `caller` is an argument because it is not a transaction field: it is what verifying the
-    /// signature established.
-    ///
-    /// Every field is destructured by name. That is deliberate — adding a field to this type breaks
-    /// this function, so a new consensus field cannot silently fail to reach execution.
+    /// Owned data moves without cloning. Named destructuring makes a newly added consensus field a
+    /// compile-time update point for this projection.
     #[must_use]
     pub fn into_tx_env(self, caller: H160) -> TxEnv {
         let Self {

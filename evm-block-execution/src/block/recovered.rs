@@ -1,23 +1,11 @@
-//! A sealed block paired with the sender of every transaction.
+//! A sealed block paired with one sender per transaction.
 //!
-//! [`RecoveredBlock`] is the form block execution consumes. A block body carries transactions in
-//! their consensus form, which holds a signature but no sender; the sender is the *product* of
-//! recovering from that signature, so it is established once per block and carried alongside it
-//! rather than re-derived per use. That recovery is [`recover_block`](super::recover_block), which is
-//! the intended way to build this type.
+//! [`RecoveredBlock`] is consumed into the [`TxEnv`] values used by execution. The intended
+//! constructors are [`recover_block`] and [`recover_block_with_public_keys`], which derive senders
+//! from signatures.
 //!
-//! The public constructors here pair a block with senders a caller has already established:
-//! [`RecoveredBlock::try_new`] and its siblings check that the two lists line up, which is all that
-//! can be checked without re-doing the recovery. The unchecked forms they wrap are crate-internal,
-//! because a mismatched senders list is a crate bug rather than bad input.
-//!
-//! [`RecoveredBlock::into_tx_envs`] is where the pairing is spent: it consumes the block and yields
-//! one [`TxEnv`] per transaction, which is what the executor reads.
-//!
-//! What the type does *not* prove: [`RecoveredBlock::try_new`] and its siblings compare only the
-//! two lengths, so a caller can pair a block with senders of its own choosing. The type is a
-//! *pairing*, not evidence that recovery was performed — only [`recover_block`] and
-//! [`recover_block_with_public_keys`] produce senders derived from the signatures.
+//! The public `try_new` constructors only verify that sender and transaction counts match; they do
+//! not prove that recovery occurred. Unchecked constructors are crate-private.
 //!
 //! [`recover_block`]: crate::block::recover_block
 //! [`recover_block_with_public_keys`]: crate::block::recover_block_with_public_keys
@@ -76,7 +64,7 @@ impl RecoveredBlock {
     ///
     /// The hash is adopted as given: this checks the sender count, not the hash.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockRecoveryError`] if there is not exactly one sender per transaction.
     pub fn try_new(
         block: Block,
@@ -89,7 +77,7 @@ impl RecoveredBlock {
 
     /// Pairs a block and its senders lazily, after checking that the two lists line up.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockRecoveryError`] if there is not exactly one sender per transaction.
     pub fn try_new_unhashed(block: Block, senders: Vec<H160>) -> Result<Self, BlockRecoveryError> {
         check_sender_count(&block.body.transactions, &senders)?;
@@ -98,7 +86,7 @@ impl RecoveredBlock {
 
     /// Pairs an already sealed block and its senders, after checking that the two lists line up.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockRecoveryError`] if there is not exactly one sender per transaction.
     pub fn try_new_sealed(
         block: SealedBlock,
@@ -177,7 +165,7 @@ impl RecoveredBlock {
     ///
     /// Order is preserved: entry `i` is transaction `i` paired with its own sender.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockRecoveryError::SenderCountMismatch`] if the two lists do not line up. Unreachable for
     /// any value built through the public constructors, which all check it, or by
     /// [`recover_block`](super::recover_block), which derives one sender per transaction from the

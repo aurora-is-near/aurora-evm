@@ -1,4 +1,6 @@
-//! Contains constants and helper functions for [EIP-7892](https://github.com/ethereum/EIPs/tree/master/EIPS/eip-7892.md)
+//! [EIP-7892] blob-parameter-only fork values and schedules.
+//!
+//! [EIP-7892]: https://eips.ethereum.org/EIPS/eip-7892
 
 use crate::eips::eip7840::BlobParams;
 

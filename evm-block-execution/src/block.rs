@@ -1,30 +1,18 @@
-//! Block types: the header, the body, and the sealed / recovered forms execution consumes.
-//!
-//! The chain of types mirrors how a block is progressively refined on its way into execution:
+//! Block types and their progression toward execution:
 //!
 //! 1. [`Header`] — the canonical header; its RLP encoding defines the block hash.
 //! 2. [`BlockBody`] — the transactions and withdrawals the header commits to.
 //! 3. [`Block`] — header + body.
-//! 4. [`SealedBlock`] — a block whose hash is cached ([`SealedHeader`] does the caching, lazily).
-//! 5. [`RecoveredBlock`] — a sealed block paired with the sender of every transaction, which
-//!    [`recover_block_with_public_keys`] establishes.
+//! 4. [`SealedBlock`] — a block with a lazily cached hash.
+//! 5. [`RecoveredBlock`] — a sealed block paired with each transaction's recovered sender.
 //!
-//! Each type dereferences to the one it wraps, so a `RecoveredBlock` reads its header fields
-//! directly (`block.state_root`) and its hash through [`SealedBlock::hash`].
-//!
-//! # Senders
-//!
-//! A block body carries transactions in their consensus form
-//! ([`SignedTxEnvelope`]): a signature, and no sender. The
-//! sender is established by [`recover_block`], or by [`recover_block_with_public_keys`] when the
-//! caller has the keys and wants them checked against the ones recovery yields. The result is a
-//! [`RecoveredBlock`]; the executor's transaction form,
-//! [`TxEnv`](crate::transaction::TxEnv), is that pairing of payload and sender.
+//! [`SignedTxEnvelope`] contains a signature but no sender. [`recover_block`] derives senders from
+//! those signatures; [`recover_block_with_public_keys`] additionally checks caller-supplied keys.
+//! The resulting pairing is later consumed into [`TxEnv`](crate::transaction::TxEnv) values.
 //!
 //! Only post-merge blocks are modelled, so ommers are absent from [`BlockBody`] entirely: the list
-//! is always empty and `ommers_hash` is the constant
-//! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), which is checkable on the
-//! header alone.
+//! is empty and `ommers_hash` must be
+//! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH).
 
 mod body;
 mod codec;

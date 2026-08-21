@@ -1,42 +1,18 @@
-//! [`BlockExecutor`] — the transaction phase of executing a block.
+//! Ethereum's transaction phase of block execution.
 //!
-//! # What it is, and what it is not
+//! [`BlockExecutor`] sits above the [`aurora_evm`] interpreter. It owns one block's environment,
+//! transactions, precompiles and materialized state, and creates an EVM executor for each
+//! transaction. Consuming the executor keeps a failed block's partial state inaccessible.
 //!
-//! This is the layer *above* the EVM, not the EVM. The interpreter is [`aurora_evm`]'s, and it is
-//! built fresh for every transaction — a [`MemoryBackend`], a [`MemoryStackState`] and a
-//! [`StackExecutor`]. What lives here is the Ethereum block logic around those: which transactions
-//! are admissible in this block, what each one costs, who is paid, and what the block accumulated.
+//! Before this phase, the block pipeline validates consensus structure and recovers senders. The
+//! remaining pre-execution system calls, withdrawals, requests, roots and post-execution header
+//! checks are not implemented here yet.
 //!
-//! It is one block's executor, not a reusable service: it is constructed with that block's
-//! environment, transactions and world state, and [`BlockExecutor::execute_transactions`] consumes
-//! it. State is kept in an owned map, so a block that fails part-way leaves no half-executed value
-//! behind for anyone to read.
+//! For each transaction this module:
 //!
-//! # The phase this covers
-//!
-//! The block pipeline is wider than this type. Ahead of it: the header's fork fields, the body
-//! commitments the header claims, and the sender of every transaction
-//! ([`recover_block`](crate::block::recover_block)). Behind it: the state root and the
-//! post-execution header comparison.
-//!
-//! Deliberately **not** here yet, and named so the gap is not mistaken for a decision that they
-//! belong elsewhere: the EIP-2935 and EIP-4788 pre-execution system calls, EIP-4895 withdrawals,
-//! EIP-7685 requests, and the post-state / receipts / bloom roots. They are part of executing a
-//! block, so they belong to this type once they exist — not to a layer above it.
-//!
-//! # Per transaction, in order
-//!
-//! 1. **Validation against state** — nonce equality, EIP-3607 (sender not a contract), EIP-3860
-//!    (init-code size), the per-transaction [`EvmContext`] checks and required funds (reserved at the
-//!    *maximum* fee), remaining block gas, and the per-transaction / per-block blob limits from the
-//!    active [`BlobParams`]. An invalid transaction fails the whole block, and no state is mutated:
-//!    a block is valid or it is not, so there is nothing to salvage from a partial run.
-//! 2. **Execution and fee settlement** — the gas fee is reserved up front (`effective * gas_limit`
-//!    plus the blob fee, **without** `value`), the call or create runs (the value transfer happens
-//!    there), then the coinbase receives the priority tip, the caller is refunded the unused gas, and
-//!    the base fee and the blob fee are burned. This mirrors the proven `evm-tests` model.
-//! 3. **Accounting and receipt** — the block's running totals are advanced and a typed [`Receipt`] is
-//!    built from the outcome.
+//! 1. validates the sender state, intrinsic cost, funds, block gas and active blob limits;
+//! 2. executes the call or creation and settles the gas, blob and priority fees;
+//! 3. advances block totals and creates a typed [`Receipt`].
 
 use crate::block::BlockEnv;
 use crate::chain_spec::ChainSpec;
@@ -61,31 +37,18 @@ use std::collections::BTreeMap;
 /// EIP-3860 maximum init-code size (`2 * MAX_CODE_SIZE`, where `MAX_CODE_SIZE = 24576`).
 const MAX_INITCODE_SIZE: usize = 2 * 0x6000;
 
-/// One block's transaction phase: its environment, its chain configuration, its world state and the
-/// transactions to run against them.
-///
-/// Everything the phase needs is supplied at construction and owned from then on, so nothing has to
-/// be applied to it afterwards and nothing can be observed part-way. See the module docs for which
-/// stages of block execution this covers and which are still absent.
+/// Executes the transaction phase of one block against an owned materialized state.
 pub struct BlockExecutor {
     block: BlockEnv,
     chain: ChainSpec,
     precompiles: Precompiles,
-    /// The [`BlobParams`] active for this block, resolved once from the chain's schedule.
-    ///
-    /// Held here rather than in [`BlockEnv`] so that the environment is complete the moment it is
-    /// built: a `BlockEnv` that still needed a schedule applied to it would have a valid-looking but
-    /// unusable intermediate state, and only this constructor could fix it.
+    /// The [`BlobParams`] resolved once from the chain schedule for this block.
     blob_params: Option<BlobParams>,
     state: BTreeMap<H160, MemoryAccount>,
     transactions: Vec<TxEnv>,
 }
 
-/// What the transaction phase produced: the receipts in block order, the block's gas and blob-gas
-/// totals, and the world state as the last transaction left it.
-///
-/// Not a block result — the state root, the receipts root and the bloom are derived from this by the
-/// post-execution stage, and the header comparison happens there.
+/// Output of the transaction phase, before roots and header commitments are checked.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionExecutionResult {
     /// Per-transaction receipts, in block order.
@@ -109,11 +72,7 @@ pub struct TxExecutionOutcome {
     pub logs: Vec<Log>,
 }
 
-/// The block's running totals, as of the transactions already executed.
-///
-/// One value rather than two `u64` arguments: they are the same width and always travel together, so
-/// a swapped pair would compile and then quietly mis-enforce both limits it feeds — the block gas
-/// limit against the blob count, and the per-block blob limit against the gas.
+/// Running gas and blob totals for transactions already executed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct BlockExecutionCounters {
     /// Gas consumed by the transactions executed so far.
@@ -134,13 +93,11 @@ struct ValidatedTransaction {
 }
 
 impl BlockExecutor {
-    /// Builds the executor for one block, resolving the active [`BlobParams`] from the chain's blob
-    /// schedule by the block timestamp — once, here, so that nothing downstream has to carry the
-    /// schedule or resolve it again.
+    /// Builds an executor and resolves the block's active [`BlobParams`] once.
     ///
     /// The schedule was already validated when it was built, so it is not re-validated.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockExecutionError::InvalidBlockTimestamp`] if the block timestamp does not fit in `u64`.
     pub fn new(
         chain: ChainSpec,
@@ -166,7 +123,7 @@ impl BlockExecutor {
     /// Consumes `self`: the world state lives in a local owned map for the whole loop, so a block
     /// that fails validation or execution leaves no half-mutated value behind to be read.
     ///
-    /// ## Errors
+    /// # Errors
     /// The first invalid or fatally-failing transaction aborts the block with a
     /// [`BlockExecutionError`]; nothing after it runs.
     pub fn execute_transactions(
@@ -223,13 +180,9 @@ impl BlockExecutor {
         })
     }
 
-    /// Everything a transaction must satisfy against *this block's* state and configuration, before
-    /// any of it is executed.
+    /// Validates a transaction against the current block, chain and sender state.
     ///
-    /// Reads the block, the chain and the world state through `&self`; the two arguments are what
-    /// changes from one transaction to the next.
-    ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockExecutionError`] naming the rule the transaction breaks.
     fn validate_transaction_for_block(
         &self,
@@ -342,13 +295,9 @@ impl BlockExecutor {
         })
     }
 
-    /// Executes one already-validated transaction and settles its fees.
+    /// Executes one validated transaction and settles its fees.
     ///
-    /// Takes the world state, the precompiles, the fork and the block's fee parameters through
-    /// `&mut self`; `vicinity` is the per-block environment the loop carries, rewritten with this
-    /// transaction's fields on the way in.
-    ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockExecutionError`] if the executor halts fatally or the fee arithmetic overflows.
     fn execute_validated_tx(
         &mut self,

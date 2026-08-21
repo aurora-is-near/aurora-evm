@@ -56,18 +56,57 @@ impl SignedTxEnvelope {
     /// This is the form the transactions trie and the transaction hash are built from.
     #[must_use]
     pub fn encode_2718(&self) -> Vec<u8> {
-        let (type_byte, list) = match self {
+        let mut stream = rlp::RlpStream::new();
+        self.encode_2718_in(&mut stream).to_vec()
+    }
+
+    /// Writes the EIP-2718 encoding into a dedicated scratch stream and returns the written slice.
+    ///
+    /// Kept crate-private because `stream` is cleared and must be reserved for this operation. Reusing
+    /// it across a block retains the backing allocation. If it was created over an existing buffer,
+    /// the returned slice excludes that prefix and covers only this envelope.
+    ///
+    /// # Panics
+    /// Panics if a transaction encoder violates its fixed RLP-list arity. In debug builds, also
+    /// panics if `stream` already contains an unfinished list instead of a reusable scratch value.
+    pub(crate) fn encode_2718_in<'stream>(
+        &self,
+        stream: &'stream mut rlp::RlpStream,
+    ) -> &'stream [u8] {
+        // `clear()` would silently discard an enclosing list; catch misuse of the scratch contract
+        // while developing, without charging the zkVM release path.
+        debug_assert!(
+            stream.is_finished(),
+            "the EIP-2718 scratch stream must not contain an unfinished list"
+        );
+        stream.clear();
+        let base = stream.as_raw().len();
+        match self {
             // A legacy transaction carries no type byte: it *is* the RLP list.
-            Self::Legacy(tx) => return rlp::encode(tx).to_vec(),
-            Self::Eip2930(tx) => (eip2930::TYPE_BYTE, rlp::encode(tx)),
-            Self::Eip1559(tx) => (eip1559::TYPE_BYTE, rlp::encode(tx)),
-            Self::Eip4844(tx) => (eip4844::TYPE_BYTE, rlp::encode(tx)),
-            Self::Eip7702(tx) => (eip7702::TYPE_BYTE, rlp::encode(tx)),
-        };
-        let mut bytes = Vec::with_capacity(list.len() + 1);
-        bytes.push(type_byte);
-        bytes.extend_from_slice(&list);
-        bytes
+            Self::Legacy(tx) => {
+                stream.append(tx);
+            }
+            Self::Eip2930(tx) => {
+                stream.append_raw(&[eip2930::TYPE_BYTE], 0);
+                stream.append(tx);
+            }
+            Self::Eip1559(tx) => {
+                stream.append_raw(&[eip1559::TYPE_BYTE], 0);
+                stream.append(tx);
+            }
+            Self::Eip4844(tx) => {
+                stream.append_raw(&[eip4844::TYPE_BYTE], 0);
+                stream.append(tx);
+            }
+            Self::Eip7702(tx) => {
+                stream.append_raw(&[eip7702::TYPE_BYTE], 0);
+                stream.append(tx);
+            }
+        }
+        // `as_raw()` bypasses `RlpStream::out()` and its completion check, so keep a mismatched
+        // bounded field count fail-closed in release builds too.
+        assert!(stream.is_finished(), "EIP-2718 encoding left an open list");
+        &stream.as_raw()[base..]
     }
 
     /// Decodes an EIP-2718 encoded transaction.
@@ -124,8 +163,9 @@ impl SignedTxEnvelope {
     ///
     /// The form a body is built from, and the reason it takes a stream rather than returning bytes: a
     /// legacy transaction is written directly, with nothing allocated in between, and a typed one needs
-    /// its field list somewhere before it can be wrapped in a byte string. `scratch` is initialised only
-    /// for that typed case, then cleared and reused for every following typed transaction in the body.
+    /// its complete envelope somewhere before it can be wrapped in a byte string. `scratch` is
+    /// initialised only for that typed case, then cleared and reused for every following typed
+    /// transaction in the body.
     pub(crate) fn append_block_item(
         &self,
         stream: &mut rlp::RlpStream,
@@ -136,38 +176,12 @@ impl SignedTxEnvelope {
             stream.append(tx);
             return;
         }
-        let tx_rlp_stream = scratch.get_or_insert_with(rlp::RlpStream::new);
-        tx_rlp_stream.clear();
-        let type_byte = match self {
-            Self::Eip2930(tx) => {
-                tx_rlp_stream.append(tx);
-                eip2930::TYPE_BYTE
-            }
-            Self::Eip1559(tx) => {
-                tx_rlp_stream.append(tx);
-                eip1559::TYPE_BYTE
-            }
-            Self::Eip4844(tx) => {
-                tx_rlp_stream.append(tx);
-                eip4844::TYPE_BYTE
-            }
-            Self::Eip7702(tx) => {
-                tx_rlp_stream.append(tx);
-                eip7702::TYPE_BYTE
-            }
-            // Returned above; repeated because the match must be total.
-            Self::Legacy(tx) => {
-                stream.append(tx);
-                return;
-            }
-        };
-        // The 2718 envelope is `type_byte ‖ list`, and the body carries it as one byte string. The
-        // chained iterator has an exact size hint, so `RlpStream` writes the string header and the two
-        // pieces directly into `stream` without collecting an intermediate envelope or length buffer.
-        let tx_payload_rlp = tx_rlp_stream.as_raw();
-
-        let tx_envelope = core::iter::once(type_byte).chain(tx_payload_rlp.iter().copied());
-        stream.append_iter(tx_envelope);
+        let envelope_stream = scratch.get_or_insert_with(rlp::RlpStream::new);
+        let envelope = self.encode_2718_in(envelope_stream);
+        // A typed envelope is already contiguous in the scratch buffer. `append_iter` writes the RLP
+        // string header and payload directly into the surrounding block stream without collecting an
+        // intermediate envelope or length buffer.
+        stream.append_iter(envelope.iter().copied());
     }
 
     /// Decodes one item of a block body's transaction list, accepting a bare RLP list or a
@@ -263,9 +277,18 @@ impl SignedTxEnvelope {
     ///
     /// [`Self::signature_hash`] with the allocation hoisted out of the call, for a caller walking a
     /// block's transactions.
+    ///
+    /// # Panics
+    /// Panics if an internal signing-preimage encoder leaves its unbounded RLP list unfinished.
     #[must_use]
     pub(crate) fn signature_hash_in(&self, stream: &mut rlp::RlpStream) -> H256 {
         self.append_signing_preimage(stream);
+        // `as_raw()` skips `RlpStream::out()`'s completion check; fail closed before sender recovery
+        // can hash a signing preimage whose unbounded list was not finalized.
+        assert!(
+            stream.is_finished(),
+            "transaction signing preimage left an open list"
+        );
         keccak256(stream.as_raw())
     }
 
@@ -282,7 +305,8 @@ impl SignedTxEnvelope {
     /// because nothing in this crate asks for it twice.
     #[must_use]
     pub fn tx_hash(&self) -> H256 {
-        keccak256(&self.encode_2718())
+        let mut stream = rlp::RlpStream::new();
+        keccak256(self.encode_2718_in(&mut stream))
     }
 
     /// The EIP-7702 authorization tuples, empty for every other type.
@@ -432,6 +456,59 @@ mod tests {
                 envelope.clone().into_tx_env(H160::zero()).tx_type,
                 tx_type,
                 "{tx_type:?}"
+            );
+        }
+    }
+
+    /// A block-level caller may alternate transaction types and sizes without stale bytes from the
+    /// previous envelope surviving `clear()`.
+    #[test]
+    fn one_scratch_stream_encodes_a_whole_transaction_sequence() {
+        let transactions: Vec<_> = vectors()
+            .into_iter()
+            .map(|(tx_type, raw)| {
+                let envelope = SignedTxEnvelope::decode_2718(&raw).unwrap();
+                (tx_type, raw, envelope)
+            })
+            .collect();
+        let mut scratch = rlp::RlpStream::new();
+
+        // The forward pass grows the scratch across the fixtures; the reverse pass then makes shorter
+        // envelopes follow the largest one, exercising truncation without releasing that capacity.
+        for (tx_type, expected, envelope) in transactions.iter().chain(transactions.iter().rev()) {
+            assert_eq!(
+                envelope.encode_2718_in(&mut scratch),
+                expected,
+                "{tx_type:?}"
+            );
+        }
+    }
+
+    /// A stream may preserve an existing prefix while exposing only the envelope written after it.
+    #[test]
+    fn scratch_with_a_nonzero_start_position_returns_only_the_envelope() {
+        let prefix = rlp::encode(&"prefix");
+        let expected_prefix = prefix.to_vec();
+        let mut scratch = rlp::RlpStream::new_with_buffer(prefix);
+
+        for (tx_type, expected, envelope) in vectors().into_iter().map(|(tx_type, raw)| {
+            let envelope = SignedTxEnvelope::decode_2718(&raw).unwrap();
+            (tx_type, raw, envelope)
+        }) {
+            assert_eq!(
+                envelope.encode_2718_in(&mut scratch),
+                expected,
+                "{tx_type:?}"
+            );
+            assert_eq!(
+                &scratch.as_raw()[..expected_prefix.len()],
+                expected_prefix,
+                "{tx_type:?} prefix"
+            );
+            assert_eq!(
+                scratch.as_raw().len(),
+                expected_prefix.len() + expected.len(),
+                "{tx_type:?} total length"
             );
         }
     }

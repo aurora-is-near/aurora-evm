@@ -1,27 +1,17 @@
-//! [EIP-7685] execution-layer requests and their block-header commitment.
+//! [EIP-7685] execution-layer requests and their header commitment.
 //!
-//! From Prague onward a block carries *requests* — messages produced by execution and consumed
-//! by the consensus layer. Each request is a byte string `request_type || request_data`; the
-//! currently defined types (see [`request_type`]):
+//! Each request is `request_type || request_data`. The currently defined types are:
 //!
 //! - `0x00` — validator deposits, parsed from deposit-contract logs (EIP-6110);
 //! - `0x01` — validator withdrawal requests, returned by the EIP-7002 system contract;
 //! - `0x02` — validator consolidation requests, returned by the EIP-7251 system contract.
 //!
-//! The block header commits to them with a flat hash rather than a trie:
+//!
+//! The header commits to non-empty requests with a flat hash rather than a trie:
 //! `requests_hash = sha256(sha256(req_0) ++ sha256(req_1) ++ ...)`, where non-empty requests are
 //! ordered by type and each `req_i` includes its type byte. With no requests the value is
-//! `sha256("")` ([`EMPTY_REQUESTS_HASH`](crate::constants::EMPTY_REQUESTS_HASH)); pre-Prague
-//! headers have no such field.
-//!
-//! # Place in the execution pipeline
-//!
-//! Requests are gathered in the **post-execution** stage, after the transaction loop: deposits
-//! from the receipt logs, then the outputs of the two request-draining system calls. They are
-//! stored in [`BlockExecutionResult`](crate::execution_types::execution::BlockExecutionResult), and
-//! the computed
-//! [`Requests::requests_hash`] is compared against the header value during post-execution header
-//! validation.
+//! [`EMPTY_REQUESTS_HASH`](crate::constants::EMPTY_REQUESTS_HASH). Requests are gathered after
+//! transaction execution and checked against the Prague-and-later header field.
 //!
 //! [EIP-7685]: https://eips.ethereum.org/EIPS/eip-7685
 

@@ -134,18 +134,10 @@ impl SignedTxLegacy {
 }
 
 impl TxLegacy {
-    /// This transaction's contribution to the execution environment, **consuming** it.
+    /// Consumes the transaction into its execution fields for the recovered `caller`.
     ///
-    /// Consuming rather than borrowing so that the owned fields — the call data, the access list and
-    /// its storage keys — *move* instead of being copied. The executor takes them by value in the end,
-    /// so a borrowing conversion would copy them once here and then hand the copy on; nothing reads the
-    /// transaction after this point.
-    ///
-    /// `caller` is an argument because it is not a transaction field: it is what verifying the
-    /// signature established.
-    ///
-    /// Every field is destructured by name. That is deliberate — adding a field to this type breaks
-    /// this function, so a new consensus field cannot silently fail to reach execution.
+    /// Owned data moves without cloning. Named destructuring makes a newly added consensus field a
+    /// compile-time update point for this projection.
     #[must_use]
     pub fn into_tx_env(self, caller: H160) -> TxEnv {
         let Self {

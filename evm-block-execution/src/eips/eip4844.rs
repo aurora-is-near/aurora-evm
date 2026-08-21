@@ -2,11 +2,9 @@
 //!
 //! # Arithmetic
 //!
-//! [`fake_exponential`] and everything built on it are **checked and fallible**.
-//! `excess_blob_gas` reaches this code from a block
-//! header, which in a stateless validator is untrusted input; an adversarial value near `u64::MAX`
-//! would make an unchecked Taylor loop either spin for billions of iterations or wrap silently.
-//! Returning `None` bounds both.
+//! [`fake_exponential`] and its callers use checked, fallible arithmetic. `excess_blob_gas` comes
+//! from an untrusted header; an unchecked Taylor loop could overflow or run for an impractical
+//! number of iterations. Returning `None` bounds both failure modes.
 //!
 //! [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 

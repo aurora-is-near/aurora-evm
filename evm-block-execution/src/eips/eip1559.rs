@@ -1,12 +1,7 @@
 //! [EIP-1559] base-fee constants and the base-fee / gas-limit transition rules.
 //!
-//! # What this module deliberately leaves out
-//!
-//! # Arithmetic
-//!
 //! The base-fee formula multiplies a fee by a gas amount, so it is computed in `u128` and narrowed
-//! back with a checked conversion rather than a truncating cast, so the boundary has a stated outcome
-//! instead of a silent one.
+//! with a checked conversion instead of truncating at the `u64` API boundary.
 //!
 //! [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 
@@ -36,7 +31,7 @@ pub const DEFAULT_ELASTICITY_MULTIPLIER: u64 = 2;
 
 /// The two parameters that control how the base fee moves between blocks.
 ///
-/// `u64` rather than the`u128`: the real values are `8` and `2`, and the narrower type
+/// `u64` rather than `u128`: the real values are `8` and `2`, and the narrower type
 /// removes a cast at every use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BaseFeeParams {

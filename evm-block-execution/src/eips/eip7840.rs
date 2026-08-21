@@ -1,13 +1,8 @@
 //! The blob-parameter set a block is executed under — [EIP-7840].
 //!
-//! `update_fraction` and `min_blob_fee` as `u128` and computes the blob fee in
-//! an infallible `const fn`. Here they are `u64` — every real value is far below `2^24`, and the
-//! narrower type removes a cast at each construction site — and every function that can overflow
-//! returns `Option` instead. `excess_blob_gas` arrives from a block header, which for a stateless
-//! validator is untrusted input; see the arithmetic note in
-//! the [`eip4844`] module.
-//!
-//! The fee itself stays `u128`: at high excess it genuinely exceeds `u64`.
+//! Parameters stored as `u64` match their practical range and avoid casts at call sites. Blob fees
+//! remain `u128`, and calculations that can overflow return `Option` because `excess_blob_gas`
+//! arrives from an untrusted header. See the arithmetic notes in [`eip4844`].
 //!
 //! [EIP-7840]: https://github.com/ethereum/EIPs/tree/master/EIPS/eip-7840.md
 
@@ -48,7 +43,7 @@ pub struct BlobParams {
 }
 
 impl BlobParams {
-    /// Returns [`BlobParams`] configuration activated with Cancun hardfork.
+    /// Returns the Ethereum mainnet parameters activated at Cancun.
     #[must_use]
     pub const fn cancun() -> Self {
         Self {
@@ -61,7 +56,7 @@ impl BlobParams {
         }
     }
 
-    /// Returns [`BlobParams`] configuration activated with Prague hardfork.
+    /// Returns the Ethereum mainnet parameters activated at Prague.
     #[must_use]
     pub const fn prague() -> Self {
         Self {
@@ -74,7 +69,7 @@ impl BlobParams {
         }
     }
 
-    /// Returns [`BlobParams`] configuration activated with Osaka hardfork.
+    /// Returns the Ethereum mainnet parameters activated at Osaka.
     #[must_use]
     pub const fn osaka() -> Self {
         Self {
@@ -87,7 +82,7 @@ impl BlobParams {
         }
     }
 
-    /// [`BlobParams`] for the [EIP-7892](https://eips.ethereum.org/EIPS/eip-7892) Blob parameter only hardfork BPO1.
+    /// Returns the EIP-7892 BPO1 parameters.
     #[must_use]
     pub const fn bpo1() -> Self {
         Self {
@@ -98,7 +93,7 @@ impl BlobParams {
         }
     }
 
-    /// [`BlobParams`] for the [EIP-7892](https://eips.ethereum.org/EIPS/eip-7892) Blob parameter only hardfork BPO2
+    /// Returns the EIP-7892 BPO2 parameters.
     #[must_use]
     pub const fn bpo2() -> Self {
         Self {
@@ -109,14 +104,14 @@ impl BlobParams {
         }
     }
 
-    /// Set max blobs per transaction on [`BlobParams`].
+    /// Overrides the per-transaction blob limit.
     #[must_use]
     pub const fn with_max_blobs_per_tx(mut self, max_blobs_per_tx: u64) -> Self {
         self.max_blobs_per_tx = max_blobs_per_tx;
         self
     }
 
-    /// Set blob base cost on [`BlobParams`].
+    /// Overrides the EIP-7918 blob base cost.
     #[must_use]
     pub const fn with_blob_base_cost(mut self, blob_base_cost: u64) -> Self {
         self.blob_base_cost = blob_base_cost;

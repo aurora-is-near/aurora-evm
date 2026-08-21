@@ -1,13 +1,8 @@
-//! Stateless validation of a single block.
+//! Stateless validation of a consensus block against an execution witness.
 //!
-//! The caller hands over three things, and nothing else:
-//!
-//! 1. the [`Block`] to validate, in consensus form (signed transactions, no senders), whose header
-//!    must commit to the body it arrived with;
-//! 2. one public key per transaction, checked against the key recovery yields for it (see
-//!    [`recover_block_with_public_keys`]);
-//! 3. an [`ExecutionWitness`] holding the trie nodes, contract codes and ancestor headers the
-//!    block's execution touches.
+//! The entry point takes a signed [`Block`], one public key per transaction and an
+//! [`ExecutionWitness`]. Sender recovery is implemented; witness-backed execution and the remaining
+//! block checks are still marked as `TODO` in the recovered path.
 
 use crate::block::{
     Block, RecoveredBlock, SenderRecoveryError, UncompressedPublicKey,
@@ -98,8 +93,14 @@ impl core::error::Error for StatelessValidationError {
 ///
 /// The public keys must be in transaction order, one per transaction.
 ///
-/// ## Errors
-/// supplied for it, or if the key count does not match the transaction count.
+/// # Errors
+/// Returns [`StatelessValidationError::SenderRecovery`] if the key count is wrong or a supplied key
+/// does not match its transaction. The recovered path will return the other variants once its
+/// validation stages are implemented.
+///
+/// # Panics
+/// Currently panics after successful sender recovery because witness-backed execution is not yet
+/// implemented.
 pub fn stateless_validation(
     block: Block,
     public_keys: &[UncompressedPublicKey],

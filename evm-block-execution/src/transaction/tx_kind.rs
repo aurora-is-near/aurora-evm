@@ -1,13 +1,14 @@
+//! Transaction destination: a call target or contract creation.
+
 use primitive_types::H160;
 
-/// The `to` field of a transaction. Either a target address, or empty for a
-/// contract creation.
+/// The transaction `to` field: an address for a call, or empty for creation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum TxKind {
     /// A transaction that creates a contract.
     #[default]
     Create,
-    /// A transaction that calls a contract or transfer.
+    /// A call or value transfer to an address.
     Call(H160),
 }
 

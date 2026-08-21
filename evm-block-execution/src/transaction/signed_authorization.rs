@@ -1,31 +1,13 @@
-//! A signed [EIP-7702] authorization tuple.
+//! Consensus representation of a signed [EIP-7702] authorization.
 //!
-//! This is the consensus form of an authorization: the six fields
-//! `[chain_id, address, nonce, y_parity, r, s]` that are RLP-encoded inside a set-code
-//! transaction's `authorization_list`, and therefore part of what that transaction's sender signs.
+//! The encoded tuple is `[chain_id, address, nonce, y_parity, r, s]`. It is distinct from the
+//! executor's [`Authorization`], which contains a
+//! recovered authority and a validity flag. Projection recovers that form from this signed input.
 //!
-//! It is distinct from [`Authorization`](aurora_evm::executor::stack::Authorization), the form the
-//! executor consumes: that one holds the *recovered* `authority` and a validity flag, which are
-//! products of checking a signed tuple, not inputs to it. This module performs that recovery when
-//! the consensus transaction is projected into the executor's environment; the canonical
-//! projection never accepts the recovered form alongside the signed tuple.
-//!
-//! # `y_parity` is not a parity here
-//!
-//! EIP-7702 bounds the field only at `< 2**8`, and its behaviour section says a tuple whose
-//! `ecrecover` fails is *skipped* while the transaction carrying it stays valid. So `y_parity = 27`
-//! is a well-formed tuple that simply yields no authority, and rejecting it at decode time rejects a
-//! canonical block. It is held as a [`u8`] for that reason, and the parity question is asked in
-//! exactly one place, [`SignedAuthorization::signature`].
-//!
-//! The byte must also survive re-encoding **verbatim**: the authorization list is inside the
-//! carrying transaction's signing preimage, so normalising the parity would change that
-//! transaction's signature hash and therefore its sender.
-//!
-//! The six field types are exactly EIP-7702's six bounds: `u64` rejects a `nonce >= 2**64`, [`H160`]
-//! requires 20 bytes, [`u8`] rejects a `y_parity >= 2**8`, and [`U256`] rejects a `chain_id`, `r` or
-//! `s` at `>= 2**256`. `rlp` accepts only the minimal form of an integer, so each value has exactly
-//! one encoding.
+//! EIP-7702 only requires `y_parity < 2**8`. Values other than 0 and 1 are validly encoded tuples
+//! whose recovery fails and which execution skips; rejecting or normalizing them would change the
+//! carrying transaction's signing preimage. [`SignedAuthorization::signature`] interprets the byte
+//! at recovery time.
 //!
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
@@ -69,21 +51,16 @@ impl SignedAuthorization {
         }
     }
 
-    /// The authority this tuple authorises, as the executor needs it.
+    /// Recovers the executor representation of this authorization.
     ///
-    /// **Never returns `None`, and that is the whole point.** EIP-7702 charges intrinsic gas per
-    /// *tuple*, valid or not, so a tuple that fails a check must still occupy its place in the list —
-    /// dropping it would undercharge the transaction and change the state root. A failure is therefore
-    /// `is_valid: false` with a zero authority, not an absence.
+    /// Invalid tuples remain in the list as `is_valid: false`, because EIP-7702 charges intrinsic gas
+    /// for every tuple. This checks only chain id, signature normalization and recovery; state-based
+    /// nonce and delegation checks remain with the executor. `rlp_stream` is cleared and reused for
+    /// the signing preimage.
     ///
-    /// Only the checks that need no state are made here: EIP-2 `s` normalisation, `chain_id` being
-    /// zero or the transaction's own, a `y_parity` that is a parity, and the recovery itself. The
-    /// nonce against the authority's account and the delegation rules need the world state and belong
-    /// to the executor, which reads `is_valid` and applies the rest.
-    ///
-    /// `rlp_stream` is the projection's RLP buffer, cleared before use and reused across a whole list.
-    /// Both `MAGIC` and the three-field list are written into it, so recovery allocates no separate
-    /// preimage per tuple.
+    /// # Panics
+    /// Panics if the internal three-field signing-preimage encoder does not finish its bounded RLP
+    /// list. This signals a programming error, not an invalid authorization tuple.
     #[must_use]
     pub(crate) fn recover_authority(
         &self,
@@ -112,6 +89,12 @@ impl SignedAuthorization {
         rlp_stream.append(&self.chain_id);
         rlp_stream.append(&self.address);
         rlp_stream.append(&self.nonce);
+        // `as_raw()` does not perform `RlpStream::out()`'s completion check; fail closed before a
+        // malformed internal preimage can select the wrong authority.
+        assert!(
+            rlp_stream.is_finished(),
+            "EIP-7702 authorization signing preimage left an open list"
+        );
         let message = libsecp256k1::Message::parse(&keccak256(rlp_stream.as_raw()).0);
         let Ok(parsed) = libsecp256k1::Signature::parse_standard_slice(&signature.rs_bytes())
         else {

@@ -1,17 +1,18 @@
+//! EIP-2930 access-list types and execution projection.
+
 use core::ops::Deref;
 use primitive_types::{H160, H256};
 
-/// A list of addresses and storage keys that the transaction plans to access.
-/// Accesses outside the list are possible, but become more expensive.
+/// An account and its storage keys to warm before execution.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct AccessListItem {
-    /// Account addresses that would be loaded at the start of execution
+    /// Account address to warm.
     pub address: H160,
-    /// Keys of storage that would be loaded at the start of execution
+    /// Storage keys to warm for the account.
     pub storage_keys: Vec<H256>,
 }
 
-/// `AccessList` as defined in EIP-2930
+/// An EIP-2930 access list.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct AccessList(pub Vec<AccessListItem>);
 
@@ -36,13 +37,13 @@ impl Deref for AccessList {
 }
 
 impl AccessList {
-    /// Converts the list into a Vec tuple
+    /// Clones the list into the tuple form expected by Aurora EVM.
     #[must_use]
     pub fn flattened(&self) -> Vec<(H160, Vec<H256>)> {
         self.flatten().collect()
     }
 
-    /// Consumes the type and converts the list into a vec
+    /// Converts the list into the tuple form expected by Aurora EVM.
     #[must_use]
     pub fn into_flattened(self) -> Vec<(H160, Vec<H256>)> {
         self.into_flatten().collect()

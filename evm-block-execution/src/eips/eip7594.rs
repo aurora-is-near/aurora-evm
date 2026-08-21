@@ -1,6 +1,6 @@
-//! Types and constants for `PeerDAS`.
+//! [EIP-7594] `PeerDAS` size and transaction-limit constants.
 //!
-//! See also [EIP-7594](https://eips.ethereum.org/EIPS/eip-7594): `PeerDAS` — peer data availability sampling
+//! [EIP-7594]: https://eips.ethereum.org/EIPS/eip-7594
 
 use crate::eips::eip4844::{FIELD_ELEMENT_BYTES_USIZE, FIELD_ELEMENTS_PER_BLOB_USIZE};
 

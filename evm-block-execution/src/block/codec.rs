@@ -1,58 +1,25 @@
-//! The RLP codec for [`Block`] and [`BlockBody`] — the block's byte layout, in one place.
+//! RLP encoding and strict decoding for [`Block`] and [`BlockBody`].
 //!
-//! # The canonical shape
-//!
-//! A block is **not** `[header, body]`: the body's items are flattened into the block's own list,
-//! so a block is
+//! The body is flattened into the block rather than nested:
 //!
 //! ```text
-//! [header, transactions, ommers, withdrawals?]
+//! block = [header, transactions, ommers, withdrawals?]
+//! body  = [transactions, ommers, withdrawals?]
 //! ```
 //!
-//! and a standalone body is the same list without the header:
-//!
-//! ```text
-//! [transactions, ommers, withdrawals?]
-//! ```
-//!
-//! `withdrawals` is *trailing-optional*: present from Shanghai on, absent before it, and never
-//! encoded as a placeholder. Absent and empty are therefore different encodings — `None` and
-//! `Some(vec![])` must survive a round trip, or `withdrawals_root` would be derived from the
-//! wrong pre-image.
-//!
-//! `ommers` has no counterpart in [`BlockBody`], which does not model ommers at all: this crate
-//! executes post-merge blocks, where the list is always empty. The encoder writes the empty list,
-//! and the decoder *requires* it — a pre-merge block is rejected rather than silently stripped of
-//! its ommers, which would change the block hash.
-//!
-//! # Transactions are not encoded as they are hashed
+//! Withdrawals are trailing-optional, so absence and an empty list remain distinct. Ommers are always
+//! encoded as an empty list and any non-empty list is rejected because only post-merge blocks are
+//! supported.
 //!
 //! Inside the transaction list a legacy transaction is a bare RLP list, while a typed one is its
-//! EIP-2718 envelope wrapped in an RLP **byte string** — otherwise a `0x02…` envelope would not be
-//! a legal item of an RLP list. The bare envelope is what the transactions trie and the
-//! transaction hash are built from, so the two forms must not be confused. The block encoder writes
-//! the item form directly, and [`SignedTxEnvelope::decode_block_item`] enforces the inverse mapping.
+//! EIP-2718 envelope wrapped in an RLP byte string. Trie values and transaction hashes use the bare
+//! envelope instead; [`SignedTxEnvelope::decode_block_item`] keeps those forms distinct and rejects
+//! wrapped or explicitly typed legacy transactions.
 //!
-//! # `Encodable` yes, `Decodable` no
-//!
-//! [`Block`] and [`BlockBody`] implement `rlp::Encodable`, and that is the whole encoder.
-//! Encoding a transaction is total: a [`SignedTxEnvelope`] holds exactly
-//! the fields its own type has, so there is nothing that can contradict itself and nothing to fail on.
-//!
-//! Decoding cannot be a trait impl. `rlp::Decodable::decode` may only fail with
-//! [`rlp::DecoderError`], whose `Custom(&'static str)` carries a fixed string — it cannot say *which*
-//! transaction failed, how many ommers a pre-merge block brought, or by how much a buffer overran.
-//! [`BlockDecodeError`] carries all three, so decoding stays a method and the asymmetry with the
-//! encode side is deliberate.
-//!
-//! Two inputs are refused that a lenient decoder would let through: a legacy transaction carrying an
-//! explicit `0x00` type byte, and a legacy transaction wrapped in an RLP byte string as though it were
-//! typed. Both are alternative encodings of a block that already has a canonical one, and admitting
-//! either would mean the same block has two encodings — which is what the strict decoding here exists
-//! to prevent.
-//!
-//! The EIP-4844 *network* form, carrying blobs, commitments and proofs, is not modelled at all. It exists
-//! for transaction gossip; a block carries only versioned hashes, so a validator never sees one.
+//! Encoding implements `rlp::Encodable` because the typed representation is total. Decoding remains
+//! a method so [`BlockDecodeError`] can preserve transaction indices, unsupported ommers and exact
+//! buffer-length failures. The EIP-4844 network wrapper is not accepted: blocks contain only the
+//! transaction payload with versioned hashes.
 
 use crate::block::{Block, BlockBody, Header};
 use crate::rlp_strict;
@@ -156,7 +123,7 @@ impl Block {
     /// decoded this way can re-encode to different bytes than it arrived as. [`Self::decode_exact`] is
     /// the public form, and it is this one plus the check that the block covers its buffer.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockDecodeError`] if the list has the wrong length, the header or a transaction does not
     /// decode, or the ommers list is not empty.
     pub(crate) fn decode_rlp(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
@@ -173,7 +140,7 @@ impl Block {
     /// decoder would silently drop whatever follows the block and then re-encode to something the
     /// input never was.
     ///
-    /// ## Errors
+    /// # Errors
     /// [`BlockDecodeError::TrailingBytes`] if `bytes` holds more than the block;
     /// [`rlp::DecoderError::RlpIsTooShort`] if the block declares a payload `bytes` does not hold —
     /// the opposite fault, and named as such rather than folded into `TrailingBytes`;

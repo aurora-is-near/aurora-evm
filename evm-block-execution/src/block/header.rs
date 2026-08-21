@@ -27,8 +27,7 @@ const ALL_FIELDS: usize = 23;
 pub struct Header {
     /// Keccak-256 hash of the parent block's header.
     pub parent_hash: H256,
-    /// Keccak-256 hash of the ommers list ([`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH)
-    /// post-merge).
+    /// Keccak-256 hash of the ommers list ([`EMPTY_OMMER_ROOT_HASH`] post-merge).
     pub ommers_hash: H256,
     /// Address that receives the block's priority fees (the coinbase).
     pub beneficiary: H160,
@@ -39,9 +38,7 @@ pub struct Header {
     pub transactions_root: H256,
     /// Keccak-256 hash of the root of the trie of this block's receipts.
     pub receipts_root: H256,
-    /// The Bloom filter composed from indexable information (logger address and log topics)
-    /// contained in each log entry from the receipt of each transaction in the transactions list;
-    /// formally Hb.
+    /// Bloom filter over every transaction log's address and topics.
     pub logs_bloom: Bloom,
     /// Proof-of-work difficulty; zero post-merge.
     pub difficulty: U256,
@@ -57,9 +54,7 @@ pub struct Header {
     pub extra_data: Vec<u8>,
     /// Proof-of-work mix hash; post-merge this carries the beacon chain's `prevrandao`.
     pub mix_hash: H256,
-    /// Proof-of-work nonce; all-zero post-merge. A fixed 8-byte string, never a scalar.
-    /// Value which, combined with the mixhash, proves that a sufficient amount of
-    /// computation has been carried out on this block
+    /// Proof-of-work nonce; an all-zero fixed-width byte string post-merge.
     pub nonce: [u8; 8],
     /// EIP-1559 base fee per gas, burned rather than paid to the beneficiary (London+).
     pub base_fee_per_gas: Option<u64>,
@@ -70,13 +65,7 @@ pub struct Header {
     pub blob_gas_used: Option<u64>,
     /// Running total of blob gas consumed above target before this block (EIP-4844, Cancun+).
     pub excess_blob_gas: Option<u64>,
-    /// The hash of the parent beacon block's root is included in execution blocks, as proposed by
-    /// EIP-4788 (Cancun+).
-    ///
-    /// This enables trust-minimized access to consensus state, supporting staking pools, bridges,
-    /// and more.
-    ///
-    /// The beacon roots contract handles root storage, enhancing Ethereum's functionalities.
+    /// Parent beacon block root exposed to execution by EIP-4788 (Cancun+).
     pub parent_beacon_block_root: Option<H256>,
     /// Keccak-256 hash of the block's EIP-7685 request list (Prague+).
     pub requests_hash: Option<H256>,
@@ -126,7 +115,7 @@ impl Header {
     /// Computes the block hash: `keccak256(rlp(header))`.
     ///
     /// Named `slow` because it re-encodes the header on every call; prefer
-    /// [`SealedHeader`](SealedHeader), which caches the result.
+    /// [`SealedHeader`], which caches the result.
     #[must_use]
     pub fn hash_slow(&self) -> H256 {
         keccak256(&rlp::encode(self))
@@ -168,39 +157,39 @@ impl Header {
         SealedHeader::new_unchecked(self, hash)
     }
 
-    /// Check if the ommers hash equals to empty hash list.
+    /// Whether `ommers_hash` commits to an empty ommers list.
     #[must_use]
     pub fn ommers_hash_is_empty(&self) -> bool {
         self.ommers_hash == EMPTY_OMMER_ROOT_HASH
     }
 
-    /// Check if the transaction root equals to empty root.
+    /// Whether the transactions trie is empty.
     #[must_use]
     pub fn transaction_root_is_empty(&self) -> bool {
         self.transactions_root == EMPTY_ROOT_HASH
     }
 
-    /// Returns the blob fee for _this_ block according to the EIP-4844 spec.
+    /// Returns this block's EIP-4844 blob fee.
     ///
-    /// Returns `None` if `excess_blob_gas` is None
+    /// Returns `None` if `excess_blob_gas` is absent or fee arithmetic overflows.
     #[must_use]
     pub fn blob_fee(&self, blob_params: BlobParams) -> Option<u128> {
         blob_params.calc_blob_fee(self.excess_blob_gas?)
     }
 
-    /// Returns the blob fee for the next block according to the EIP-4844 spec.
+    /// Returns the next block's EIP-4844 blob fee.
     ///
-    /// Returns `None` if `excess_blob_gas` is None.
+    /// Returns `None` if a required header field is absent or fee arithmetic overflows.
     ///
-    /// See also [`Self::next_block_excess_blob_gas`]
+    /// See [`Self::next_block_excess_blob_gas`].
     #[must_use]
     pub fn next_block_blob_fee(&self, blob_params: BlobParams) -> Option<u128> {
         blob_params.calc_blob_fee(self.next_block_excess_blob_gas(blob_params)?)
     }
 
-    /// Calculate base fee for next block according to the EIP-1559 spec.
+    /// Calculates the next block's EIP-1559 base fee.
     ///
-    /// Returns a `None` if no base fee is set, no EIP-1559 support
+    /// Returns `None` if `base_fee_per_gas` is absent or the calculation fails.
     #[must_use]
     pub fn next_block_base_fee(&self, base_fee_params: BaseFeeParams) -> Option<u64> {
         calc_next_block_base_fee(
@@ -211,8 +200,7 @@ impl Header {
         )
     }
 
-    /// Calculate excess blob gas for the next block according to the EIP-4844
-    /// spec.
+    /// Calculates the next block's excess blob gas.
     ///
     /// Returns `None` if `excess_blob_gas`, `blob_gas_used`, or `base_fee_per_gas` is not set.
     #[must_use]
@@ -224,39 +212,31 @@ impl Header {
         )
     }
 
-    /// Calculate a heuristic for the in-memory size of the [Header].
+    /// Estimates the header's in-memory size as `size_of::<Header>() + extra_data.len()`.
     #[must_use]
     pub const fn size(&self) -> usize {
         size_of::<Self>() + self.extra_data.len()
     }
 
-    /// True if the shanghai hardfork is active.
-    ///
-    /// This function checks that the withdrawals root field is present.
+    /// Whether the header carries the Shanghai field.
     #[must_use]
     pub const fn shanghai_active(&self) -> bool {
         self.withdrawals_root.is_some()
     }
 
-    /// True if the Cancun hardfork is active.
-    ///
-    /// This function checks that the blob gas used field is present.
+    /// Whether the header carries the first Cancun field.
     #[must_use]
     pub const fn cancun_active(&self) -> bool {
         self.blob_gas_used.is_some()
     }
 
-    /// True if the Prague hardfork is active.
-    ///
-    /// This function checks that the requests hash is present.
+    /// Whether the header carries the Prague field.
     #[must_use]
     pub const fn prague_active(&self) -> bool {
         self.requests_hash.is_some()
     }
 
-    /// True if the Amsterdam hardfork is active.
-    ///
-    /// This function checks that the block access list hash is present.
+    /// Whether the header carries the proposed Amsterdam field.
     #[must_use]
     pub const fn amsterdam_active(&self) -> bool {
         self.block_access_list_hash.is_some()
@@ -264,14 +244,8 @@ impl Header {
 
     /// The first trailing field present while the one before it is absent, if any.
     ///
-    /// The trailing fields are **positional** — the RLP carries no names, only a length, so item 15 is
-    /// `base_fee_per_gas` and nothing else can be. A header with a gap therefore has no consensus
-    /// encoding: writing it shifts every later field one place earlier, and reading those bytes back
-    /// yields a *different* header. Since forks activate in order, real chains only ever produce a
-    /// prefix, and decoding cannot produce anything else.
-    ///
-    /// The fork predicates above read the same shape — [`Self::shanghai_active`] answers from
-    /// `withdrawals_root` alone — so a gap makes them disagree with one another too.
+    /// Optional RLP fields are positional, so a gap has no consensus encoding: writing the later
+    /// field shifts its meaning, while decoding can only produce a prefix.
     #[must_use]
     fn first_trailing_field_gap(&self) -> Option<HeaderField> {
         let present = [
@@ -301,11 +275,9 @@ impl Header {
 
     /// The header's consensus RLP, or the reason it has none.
     ///
-    /// The fallible counterpart of the [`rlp::Encodable`] impl, and the form to use for a header
-    /// assembled field by field: every field is `pub`, so a gap in the trailing fields is
-    /// constructible, and encoding a gap yields *another* header's bytes rather than a failure the
-    /// `Encodable` trait is able to report. A header that came from decoding needs neither — it is a
-    /// prefix by construction.
+    /// Use this fallible form for a header assembled field by field: public optional fields can form
+    /// a gap that the total [`rlp::Encodable`] trait cannot report. Decoded headers are prefixes by
+    /// construction.
     ///
     /// # Errors
     /// [`InvalidHeader::TrailingFieldGap`] naming the first field present while an earlier one is
@@ -320,18 +292,8 @@ impl Header {
 
 /// Reads the 8-byte proof-of-work nonce from position `index` of an RLP list.
 ///
-/// Borrowed rather than through `val_at::<Vec<u8>>`: the width is checked on the slice the decoder
-/// already holds, so a wrong-width value — as large as the input the block arrived in — is refused
-/// without being copied first.
-///
-/// Through `decoder().decode_value` and never through [`rlp::Rlp::data`]: only the former enforces
-/// canonical RLP. `data()` hands back whatever payload an item's header declares, so it accepts the
-/// non-minimal `0x81 0x01` and returns a *list's* payload as though it were a string. Both leniencies
-/// are pinned by tests in [`rlp_strict`](crate::rlp_strict).
-///
-/// [`Header`]'s [`rlp::Decodable`] impl can return only [`rlp::DecoderError`]. `Custom` preserves a
-/// field-specific width verdict (`invalid nonce length`); the generic `RlpIsTooShort` and
-/// `RlpIsTooBig` variants would lose that context, while a typed header error cannot cross the trait.
+/// `decode_value` enforces canonical string encoding and checks the borrowed payload before copying;
+/// `Custom` preserves a field-specific width error within [`rlp::Decodable`].
 fn decode_nonce_at(rlp: &rlp::Rlp<'_>, index: usize) -> Result<[u8; 8], rlp::DecoderError> {
     rlp.at(index)?.decoder().decode_value(|bytes| {
         bytes
@@ -340,13 +302,9 @@ fn decode_nonce_at(rlp: &rlp::Rlp<'_>, index: usize) -> Result<[u8; 8], rlp::Dec
     })
 }
 
-/// Total, and only for a header whose trailing fields form a prefix.
+/// Total RLP encoding for a header whose optional tail forms a prefix.
 ///
-/// Nothing here can fail, so the trait fits: the mandatory fields are all fixed-width or
-/// length-prefixed, and the trailing ones are written only when present. What the trait *cannot*
-/// express is the one way a header has no encoding — a gap in those trailing fields, which this would
-/// write as a shorter list that reads back as different fields. That is a returned error rather than an
-/// assertion here, on [`Header::encode_rlp`].
+/// Use [`Header::encode_rlp`] when that invariant has not already been established.
 impl rlp::Encodable for Header {
     fn rlp_append(&self, stream: &mut rlp::RlpStream) {
         // Unbounded: the number of items depends on which post-Frontier fields are present.
