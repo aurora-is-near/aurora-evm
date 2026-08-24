@@ -27,9 +27,11 @@ pub enum TxDecodeError {
     InvalidLegacyV(u128),
     /// A typed transaction's `y_parity` was neither `0` nor `1`.
     InvalidYParity(u8),
-    /// A body item that is a byte string did not wrap an EIP-2718 envelope: a legacy transaction
-    /// must appear as a bare RLP list, so wrapping one would give the block two encodings.
-    WrappedLegacy,
+    /// A block-body byte string starts with a legacy RLP-list prefix (`0xc0..=0xfe`) instead of an
+    /// EIP-2718 transaction type. The byte-string form is reserved for typed envelopes; a legacy
+    /// transaction must be the bare list. Accepting a wrapped valid legacy list would give the same
+    /// transaction two block encodings.
+    LegacyInTypedBlockItem,
     /// The `to` field was neither empty nor a 20-byte address.
     InvalidDestination,
     /// The transaction is a creation, which its type forbids.
@@ -57,9 +59,9 @@ impl core::fmt::Display for TxDecodeError {
             Self::Rlp(error) => write!(f, "malformed transaction RLP: {error}"),
             Self::InvalidLegacyV(v) => write!(f, "legacy signature `v` {v} is out of range"),
             Self::InvalidYParity(parity) => write!(f, "`y_parity` {parity} is not 0 or 1"),
-            Self::WrappedLegacy => write!(
+            Self::LegacyInTypedBlockItem => write!(
                 f,
-                "a legacy transaction must not be wrapped in an RLP byte string"
+                "block-body byte string starts with a legacy RLP list; expected an EIP-2718 typed envelope"
             ),
             Self::InvalidDestination => write!(f, "`to` is neither empty nor a 20-byte address"),
             Self::CreateNotSupported(tx_type) => {

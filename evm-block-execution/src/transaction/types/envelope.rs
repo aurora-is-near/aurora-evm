@@ -198,7 +198,7 @@ impl SignedTxEnvelope {
     /// silently dropped for a typed transaction while a legacy one rejected them.
     ///
     /// # Errors
-    /// [`TxDecodeError`] as [`Self::decode_2718`], plus [`TxDecodeError::WrappedLegacy`] if a
+    /// [`TxDecodeError`] as [`Self::decode_2718`], plus [`TxDecodeError::LegacyInTypedBlockItem`] if a
     /// byte-string item wraps a bare legacy RLP list rather than an EIP-2718 envelope, and
     /// [`TxDecodeError::Rlp`] if the item is neither an RLP list nor a byte string, or does not cover
     /// `rlp` exactly — the two ways it can miss are named apart, `RlpIsTooShort` for an item declaring
@@ -216,7 +216,7 @@ impl SignedTxEnvelope {
         let envelope = rlp.data()?;
         let (&first, _) = envelope.split_first().ok_or(TxDecodeError::Empty)?;
         if matches!(first, 0xc0..=0xfe) {
-            return Err(TxDecodeError::WrappedLegacy);
+            return Err(TxDecodeError::LegacyInTypedBlockItem);
         }
         Self::decode_2718(envelope)
     }
@@ -541,7 +541,7 @@ mod tests {
         let wrapped = stream.out().to_vec();
         assert_eq!(
             SignedTxEnvelope::decode_block_item(&rlp::Rlp::new(&wrapped)).unwrap_err(),
-            TxDecodeError::WrappedLegacy
+            TxDecodeError::LegacyInTypedBlockItem
         );
     }
 
