@@ -767,7 +767,7 @@ mod tests {
             "{error}"
         );
         assert!(
-            format!("{error}").contains("must not be wrapped"),
+            format!("{error}").contains("starts with a legacy RLP list"),
             "{error}"
         );
     }
