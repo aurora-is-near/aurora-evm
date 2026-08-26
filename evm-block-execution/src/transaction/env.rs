@@ -18,10 +18,9 @@
 //! reconstructible here. Consensus execution must construct this type from a recovered signed
 //! transaction rather than accept it as untrusted input.
 
-use crate::transaction::{AccessList, TxKind, TxType};
+use crate::transaction::{TxKind, TxType};
 use aurora_evm::executor::stack::Authorization;
-use primitive_types::H160;
-use primitive_types::U256;
+use primitive_types::{H160, H256, U256};
 
 /// One transaction's execution environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,10 +66,10 @@ pub struct TxEnv {
     /// Priority-fee cap for dynamic-fee types; `None` for legacy and EIP-2930.
     pub max_priority_fee_per_gas: Option<U256>,
 
-    /// Addresses and storage slots pre-warmed for this transaction.
+    /// Addresses and storage slots pre-warmed for this transaction, in Aurora EVM's tuple form.
     ///
     /// Present from EIP-2930 onward. A non-empty list on a legacy transaction is rejected.
-    pub access_list: AccessList,
+    pub access_list: Vec<(H160, Vec<H256>)>,
 
     /// KZG versioned hashes of the blobs this transaction references, each a 32-byte value.
     ///

@@ -4,7 +4,7 @@ use super::codec::{TxDecodeError, append_destination, decode_destination, expect
 
 use crate::transaction::env::TxEnv;
 use crate::transaction::signature::TxSignature;
-use crate::transaction::{AccessList, TxKind, TxType};
+use crate::transaction::{TxKind, TxType};
 use primitive_types::{H160, U256};
 
 const COMMON_FIELDS: usize = 6;
@@ -97,7 +97,7 @@ impl TxLegacy {
             gas_price: Some(gas_price),
             max_fee_per_gas: None,
             max_priority_fee_per_gas: None,
-            access_list: AccessList(Vec::new()),
+            access_list: Vec::new(),
             blob_versioned_hashes: Vec::new(),
             max_fee_per_blob_gas: 0,
             authorization_list: Vec::new(),

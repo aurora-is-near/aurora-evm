@@ -79,7 +79,6 @@ struct BlockExecutionCounters {
 /// A validated transaction with values reused during execution.
 struct ValidatedTransaction {
     tx: TxEnv,
-    access_list: Vec<(H160, Vec<H256>)>,
     gas_price: U256,
     effective_gas_price: U256,
     data_fee: Option<U256>,
@@ -228,8 +227,7 @@ impl BlockExecutor {
         }
 
         // 6. Full per-transaction context validation (including intrinsic / floor gas) and
-        //    required-funds (reserved by the *maximum* fee). The access list is flattened exactly once
-        //    here and reused for both the intrinsic-gas check inside `validate_tx` and execution.
+        //    required-funds (reserved by the *maximum* fee).
         let ctx = EvmContext::new(
             self.chain.chain_id,
             &self.block,
@@ -237,8 +235,7 @@ impl BlockExecutor {
             &self.chain.spec,
             None,
         );
-        let access_list = tx.access_list.flattened();
-        ctx.validate_tx(&access_list)?;
+        ctx.validate_tx()?;
         ctx.validate_required_funds(sender_balance)?;
 
         // 7. The transaction's gas limit must fit in the block's remaining gas. `block_gas_limit` is a
@@ -275,7 +272,6 @@ impl BlockExecutor {
 
         Ok(ValidatedTransaction {
             tx,
-            access_list,
             gas_price,
             effective_gas_price,
             data_fee,
@@ -294,20 +290,20 @@ impl BlockExecutor {
     ) -> Result<TxExecutionOutcome, BlockExecutionError> {
         let ValidatedTransaction {
             tx,
-            access_list,
             effective_gas_price,
             data_fee,
             gas_price,
             ..
         } = validated_tx;
         // Destructured rather than read field by field, so the owned parts the executor consumes
-        // (`data`, the blob hashes, the authorizations) move out instead of being cloned.
+        // (`data`, the access list, blob hashes and authorizations) move out instead of being cloned.
         let TxEnv {
             caller,
             value,
             gas_limit,
             tx_kind,
             data,
+            access_list,
             blob_versioned_hashes,
             authorization_list,
             ..
@@ -536,7 +532,7 @@ mod tests {
     use crate::errors::{BlockExecutionError, InvalidTransaction};
     use crate::evm_context::InvalidEvmContext;
     use crate::spec::Spec;
-    use crate::transaction::{AccessList, AccessListItem, TxEnv, TxKind, TxType};
+    use crate::transaction::{TxEnv, TxKind, TxType};
     use aurora_evm::backend::MemoryAccount;
     use primitive_types::{H160, H256, U256};
     use std::collections::BTreeMap;
@@ -607,7 +603,7 @@ mod tests {
             gas_price: None,
             max_fee_per_gas: None,
             max_priority_fee_per_gas: None,
-            access_list: AccessList(vec![]),
+            access_list: vec![],
             blob_versioned_hashes: vec![],
             max_fee_per_blob_gas: 0,
         }
@@ -1561,10 +1557,7 @@ mod tests {
         state.insert(to, account(0, 0, vec![0x60, 0x01, 0x54, 0x50, 0x00]));
 
         let mut with_list = legacy_transfer(caller, to, U256::zero(), 0, 10);
-        with_list.access_list = AccessList(vec![AccessListItem {
-            address: to,
-            storage_keys: vec![H256::from_low_u64_be(1)],
-        }]);
+        with_list.access_list = vec![(to, vec![H256::from_low_u64_be(1)])];
         let error = run(
             Spec::London,
             0,
@@ -1593,10 +1586,7 @@ mod tests {
         let mut state = BTreeMap::new();
         state.insert(caller, account(10_000_000, 0, vec![]));
         state.insert(to, account(0, 0, vec![0x60, 0x01, 0x54, 0x50, 0x00]));
-        let list = AccessList(vec![AccessListItem {
-            address: to,
-            storage_keys: vec![H256::from_low_u64_be(1)],
-        }]);
+        let list = vec![(to, vec![H256::from_low_u64_be(1)])];
 
         for tx_type in [TxType::Eip2930, TxType::Eip1559] {
             let mut payload = payload(tx_type, to, 0);

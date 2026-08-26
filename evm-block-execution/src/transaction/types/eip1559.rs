@@ -91,7 +91,7 @@ impl TxEip1559 {
             gas_price: None,
             max_fee_per_gas: Some(max_fee_per_gas),
             max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
-            access_list,
+            access_list: access_list.into_flattened(),
             blob_versioned_hashes: Vec::new(),
             max_fee_per_blob_gas: 0,
             authorization_list: Vec::new(),
@@ -221,7 +221,7 @@ mod tests {
             max_priority_fee_per_gas,
             Some(typed.tx.max_priority_fee_per_gas)
         );
-        assert_eq!(access_list, typed.tx.access_list);
+        assert_eq!(access_list, typed.tx.access_list.flattened());
         // The fee shape this type does not have is absent, not defaulted to a value.
         assert_eq!(gas_price, None);
         assert!(blob_versioned_hashes.is_empty());

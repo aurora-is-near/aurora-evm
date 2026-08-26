@@ -48,7 +48,7 @@ impl AccessList {
     pub fn into_flatten(self) -> impl Iterator<Item = (H160, Vec<H256>)> {
         self.0
             .into_iter()
-            .map(|item| (item.address, item.storage_keys.into_iter().collect()))
+            .map(|item| (item.address, item.storage_keys))
     }
 
     /// Clones the list into the tuple form expected by Aurora EVM.

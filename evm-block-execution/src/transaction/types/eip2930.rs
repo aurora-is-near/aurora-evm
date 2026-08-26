@@ -88,7 +88,7 @@ impl TxEip2930 {
             gas_price: Some(gas_price),
             max_fee_per_gas: None,
             max_priority_fee_per_gas: None,
-            access_list,
+            access_list: access_list.into_flattened(),
             blob_versioned_hashes: Vec::new(),
             max_fee_per_blob_gas: 0,
             authorization_list: Vec::new(),
@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(nonce, typed.tx.nonce);
         assert_eq!(chain_id, Some(typed.tx.chain_id));
         assert_eq!(gas_price, Some(typed.tx.gas_price));
-        assert_eq!(access_list, typed.tx.access_list);
+        assert_eq!(access_list, typed.tx.access_list.flattened());
         // A 2930 transaction has no dynamic fees, and the projection says so rather than inventing
         // a value no signature covered.
         assert_eq!(max_fee_per_gas, None);

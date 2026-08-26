@@ -15,7 +15,7 @@ use crate::transaction::{TxEnv, TxType};
 use aurora_evm::Config;
 use aurora_evm::gasometer::Gasometer;
 use core::fmt;
-use primitive_types::{H160, H256, U256};
+use primitive_types::{H256, U256};
 
 /// Blob gas a transaction consumes for `blob_count` blobs.
 ///
@@ -197,15 +197,9 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
 
     /// Validates the transaction's header-dependent, type-specific and intrinsic-gas rules.
     ///
-    /// The access list is passed in already flattened so the block layer can reuse the same list
-    /// for execution without flattening it twice.
-    ///
     /// # Errors
     /// Returns [`InvalidEvmContext`] for the first invalid header or transaction rule.
-    pub fn validate_tx(
-        &self,
-        access_list: &[(H160, Vec<H256>)],
-    ) -> Result<&Self, InvalidEvmContext> {
+    pub fn validate_tx(&self) -> Result<&Self, InvalidEvmContext> {
         if self.spec >= Spec::Merge && self.block.block_randomness.is_none() {
             return Err(InvalidEvmContext::InvalidHeader(
                 InvalidHeader::PrevrandaoNotSet,
@@ -303,9 +297,9 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        // Intrinsic / floor gas (EIP-7623), using the caller-flattened access list. Sender-state,
+        // Intrinsic / floor gas (EIP-7623), using the execution-ready access list. Sender-state,
         // required-funds and block-total checks remain with the block executor.
-        self.validate_and_get_initial_tx_gas(access_list)?;
+        self.validate_and_get_initial_tx_gas()?;
 
         Ok(self)
     }
@@ -510,12 +504,11 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     /// Returns [`InvalidEvmContext`] if either required gas amount exceeds the transaction limit.
     pub fn validate_and_get_initial_tx_gas(
         &self,
-        access_list: &[(H160, Vec<H256>)],
     ) -> Result<IntrinsicAndFloorGas, InvalidEvmContext> {
         let authorization_list_len = self.tx.authorization_list.len();
         let (intrinsic_gas, floor_gas) = Gasometer::calculate_intrinsic_gas_and_gas_floor(
             &self.tx.data,
-            access_list,
+            &self.tx.access_list,
             authorization_list_len,
             &self.gas_config,
             self.tx.tx_kind.is_create(),

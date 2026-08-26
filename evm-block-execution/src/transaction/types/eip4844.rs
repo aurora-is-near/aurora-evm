@@ -109,7 +109,7 @@ impl TxEip4844 {
             gas_price: None,
             max_fee_per_gas: Some(max_fee_per_gas),
             max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
-            access_list,
+            access_list: access_list.into_flattened(),
             // `H256` cannot move into `U256` without conversion; the per-transaction blob limit keeps
             // this list small.
             blob_versioned_hashes: blob_versioned_hashes
@@ -271,7 +271,7 @@ mod tests {
             max_priority_fee_per_gas,
             Some(typed.tx.max_priority_fee_per_gas)
         );
-        assert_eq!(access_list, typed.tx.access_list);
+        assert_eq!(access_list, typed.tx.access_list.flattened());
         assert_eq!(max_fee_per_blob_gas, typed.tx.max_fee_per_blob_gas);
         // Widened from `H256` to `U256`, and the leading zeros must survive it.
         assert_eq!(blob_versioned_hashes, vec![U256::from(1u64) << 248]);
