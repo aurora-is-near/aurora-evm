@@ -13,8 +13,12 @@ use primitive_types::{H160, U256};
 
 /// The EIP-1559 type byte.
 pub const TYPE_BYTE: u8 = 0x02;
+const TRANSACTION_FIELDS: usize = 9;
+const SIGNATURE_FIELDS: usize = 3;
+const SIGNED_TRANSACTION_FIELDS: usize = TRANSACTION_FIELDS + SIGNATURE_FIELDS;
+const SIGNATURE_INDEX: usize = TRANSACTION_FIELDS;
 
-/// An EIP-1559 transaction's own fields: a fee cap and a tip in place of `gas_price`.
+/// A normalized EIP-1559 transaction with separate fee cap and priority fee.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxEip1559 {
     /// Chain this transaction is valid on.
@@ -38,7 +42,7 @@ pub struct TxEip1559 {
 }
 
 impl TxEip1559 {
-    /// The nine transaction fields shared by the signed envelope and the encoding for signing.
+    /// Appends the fields shared by the signed and signing encodings.
     fn append_fields(&self, stream: &mut rlp::RlpStream) {
         stream.append(&self.chain_id);
         stream.append(&self.nonce);
@@ -53,72 +57,17 @@ impl TxEip1559 {
 
     /// Encodes this transaction for signing into `stream`, clearing it first.
     ///
-    /// An unbounded list derives its arity from the fields written, avoiding a duplicated manual
-    /// count before the encoding is hashed through `as_raw`.
+    /// # Panics
+    /// Panics if the field encoder exceeds the protocol arity.
     pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         stream.append_raw(&[TYPE_BYTE], 0);
-        stream.begin_unbounded_list();
+        stream.begin_list(TRANSACTION_FIELDS);
         self.append_fields(stream);
-        stream.finalize_unbounded_list();
     }
 
-    /// The consensus encoding hashed to produce this transaction's signature hash.
-    #[must_use]
-    pub fn encoded_for_signing(&self) -> Vec<u8> {
-        let mut stream = rlp::RlpStream::new();
-        self.encode_for_signing_in(&mut stream);
-        stream.out().to_vec()
-    }
-}
-
-/// A signed EIP-1559 transaction.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignedTxEip1559 {
-    /// The signed fields.
-    pub tx: TxEip1559,
-    /// The sender's signature.
-    pub signature: TxSignature,
-}
-
-impl rlp::Encodable for SignedTxEip1559 {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(12);
-        self.tx.append_fields(stream);
-        append_signature(stream, &self.signature);
-    }
-}
-
-impl SignedTxEip1559 {
-    /// Decodes the twelve-item list that follows the type byte.
-    ///
-    /// # Errors
-    /// [`TxDecodeError`] if the list is not twelve strictly-tiling items, `to` is malformed, or
-    /// `y_parity` is not 0 or 1.
-    pub fn decode_strict(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
-        expect_items(rlp, 12)?;
-        Ok(Self {
-            tx: TxEip1559 {
-                chain_id: rlp.val_at(0)?,
-                nonce: rlp.val_at(1)?,
-                max_priority_fee_per_gas: rlp.val_at(2)?,
-                max_fee_per_gas: rlp.val_at(3)?,
-                gas_limit: rlp.val_at(4)?,
-                to: decode_destination(rlp, 5)?,
-                value: rlp.val_at(6)?,
-                data: rlp.val_at(7)?,
-                access_list: decode_access_list(rlp, 8)?,
-            },
-            signature: decode_signature(rlp, 9)?,
-        })
-    }
-}
-
-impl TxEip1559 {
-    /// Consumes the transaction into its execution fields for the recovered `caller`.
-    ///
-    /// Owned data moves without cloning. Named destructuring makes a newly added consensus field a
-    /// compile-time update point for this projection.
+    /// Converts into the execution environment for `caller`, moving owned data.
+    /// Named destructuring makes new consensus fields compile-time update points.
     #[must_use]
     pub fn into_tx_env(self, caller: H160) -> TxEnv {
         let Self {
@@ -153,9 +102,51 @@ impl TxEip1559 {
     }
 }
 
+/// A signed EIP-1559 transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedTxEip1559 {
+    /// The signed fields.
+    pub tx: TxEip1559,
+    /// The sender's signature.
+    pub signature: TxSignature,
+}
+
+impl SignedTxEip1559 {
+    /// Decodes the signed field list that follows the type byte.
+    ///
+    /// # Errors
+    /// [`TxDecodeError`] if the list has the wrong shape, `to` is malformed, or
+    /// `y_parity` is not 0 or 1.
+    pub fn decode_strict(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
+        expect_items(rlp, SIGNED_TRANSACTION_FIELDS)?;
+        Ok(Self {
+            tx: TxEip1559 {
+                chain_id: rlp.val_at(0)?,
+                nonce: rlp.val_at(1)?,
+                max_priority_fee_per_gas: rlp.val_at(2)?,
+                max_fee_per_gas: rlp.val_at(3)?,
+                gas_limit: rlp.val_at(4)?,
+                to: decode_destination(rlp, 5)?,
+                value: rlp.val_at(6)?,
+                data: rlp.val_at(7)?,
+                access_list: decode_access_list(rlp, 8)?,
+            },
+            signature: decode_signature(rlp, SIGNATURE_INDEX)?,
+        })
+    }
+}
+
+impl rlp::Encodable for SignedTxEip1559 {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(SIGNED_TRANSACTION_FIELDS);
+        self.tx.append_fields(stream);
+        append_signature(stream, &self.signature);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SignedTxEip1559, TYPE_BYTE};
+    use super::{SignedTxEip1559, TRANSACTION_FIELDS, TYPE_BYTE, TxEip1559};
     use crate::transaction::TxEnv;
     use crate::transaction::{TxKind, TxType};
     use hex_literal::hex;
@@ -170,12 +161,21 @@ mod tests {
         SignedTxEip1559::decode_strict(&rlp::Rlp::new(&RAW[1..])).unwrap()
     }
 
+    fn encoded_for_signing(tx: &TxEip1559) -> Vec<u8> {
+        let mut stream = rlp::RlpStream::new();
+        tx.encode_for_signing_in(&mut stream);
+        stream.out().to_vec()
+    }
+
     #[test]
     fn the_encoding_for_signing_omits_the_signature() {
-        let typed = SignedTxEip1559::decode_strict(&rlp::Rlp::new(&RAW[1..])).unwrap();
-        let encoded = typed.tx.encoded_for_signing();
+        let typed = decoded();
+        let encoded = encoded_for_signing(&typed.tx);
         assert_eq!(encoded[0], TYPE_BYTE);
-        assert_eq!(rlp::Rlp::new(&encoded[1..]).item_count().unwrap(), 9);
+        assert_eq!(
+            rlp::Rlp::new(&encoded[1..]).item_count().unwrap(),
+            TRANSACTION_FIELDS
+        );
     }
 
     /// Unlike the blob and set-code types, this one has a creation form.
@@ -190,9 +190,7 @@ mod tests {
         );
     }
 
-    /// The projection into the execution payload: this type's own fields carried across, and every
-    /// field it does not have written as its absent value. There is no impl back, so this is the only
-    /// direction there is to check.
+    /// Projection preserves this type's fields and canonical absences for unsupported fields.
     #[test]
     fn the_projection_carries_its_own_fields_and_nothing_else() {
         let typed = decoded();

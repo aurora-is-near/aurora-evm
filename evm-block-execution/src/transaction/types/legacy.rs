@@ -111,7 +111,7 @@ impl TxLegacy {
 
 /// A legacy transaction with its signature parity and `r, s` components.
 ///
-/// The encoded `v` is reconstructed from the parity and optional chain id.
+/// Reconstructing `v` from the parity and chain id keeps both signing and signed encodings total.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedTxLegacy {
     /// The signed fields.

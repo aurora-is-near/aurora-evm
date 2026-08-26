@@ -37,6 +37,20 @@ impl Deref for AccessList {
 }
 
 impl AccessList {
+    /// Returns an iterator over the list's addresses and storage keys.
+    pub fn flatten(&self) -> impl Iterator<Item = (H160, Vec<H256>)> + '_ {
+        self.0
+            .iter()
+            .map(|item| (item.address, item.storage_keys.clone()))
+    }
+
+    /// Consumes the type and returns an iterator over the list's addresses and storage keys.
+    pub fn into_flatten(self) -> impl Iterator<Item = (H160, Vec<H256>)> {
+        self.0
+            .into_iter()
+            .map(|item| (item.address, item.storage_keys.into_iter().collect()))
+    }
+
     /// Clones the list into the tuple form expected by Aurora EVM.
     #[must_use]
     pub fn flattened(&self) -> Vec<(H160, Vec<H256>)> {
@@ -47,19 +61,5 @@ impl AccessList {
     #[must_use]
     pub fn into_flattened(self) -> Vec<(H160, Vec<H256>)> {
         self.into_flatten().collect()
-    }
-
-    /// Consumes the type and returns an iterator over the list's addresses and storage keys.
-    pub fn into_flatten(self) -> impl Iterator<Item = (H160, Vec<H256>)> {
-        self.0
-            .into_iter()
-            .map(|item| (item.address, item.storage_keys.into_iter().collect()))
-    }
-
-    /// Returns an iterator over the list's addresses and storage keys.
-    pub fn flatten(&self) -> impl Iterator<Item = (H160, Vec<H256>)> + '_ {
-        self.0
-            .iter()
-            .map(|item| (item.address, item.storage_keys.clone()))
     }
 }

@@ -15,11 +15,16 @@ use primitive_types::{H160, U256};
 
 /// The EIP-7702 type byte.
 pub const TYPE_BYTE: u8 = 0x04;
+const TRANSACTION_FIELDS: usize = 10;
+const SIGNATURE_FIELDS: usize = 3;
+const SIGNED_TRANSACTION_FIELDS: usize = TRANSACTION_FIELDS + SIGNATURE_FIELDS;
+const SIGNATURE_INDEX: usize = TRANSACTION_FIELDS;
+const ACCESS_LIST_INDEX: usize = 8;
+const AUTHORIZATION_LIST_INDEX: usize = 9;
 
-/// A set-code transaction's own fields.
+/// A normalized EIP-7702 set-code transaction.
 ///
-/// `to` is an `H160` for the same reason as in [`TxEip4844`](super::TxEip4844): the type has no
-/// creation form, so a creation is better made unrepresentable than rejected.
+/// Its `H160` destination makes contract creation unrepresentable.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxEip7702 {
     /// Chain this transaction is valid on.
@@ -40,13 +45,12 @@ pub struct TxEip7702 {
     pub data: Vec<u8>,
     /// Addresses and storage slots pre-warmed for this transaction.
     pub access_list: AccessList,
-    /// Delegations this transaction authorizes. Each is signed by its own authority, independently
-    /// of the transaction's sender, and an unrecoverable one is skipped rather than fatal.
+    /// Delegations signed independently by their authorities. Invalid entries are ineffective.
     pub authorization_list: Vec<SignedAuthorization>,
 }
 
 impl TxEip7702 {
-    /// The ten transaction fields shared by the signed envelope and the encoding for signing.
+    /// Appends the fields shared by the signed and signing encodings.
     fn append_fields(&self, stream: &mut rlp::RlpStream) {
         stream.append(&self.chain_id);
         stream.append(&self.nonce);
@@ -62,78 +66,19 @@ impl TxEip7702 {
 
     /// Encodes this transaction for signing into `stream`, clearing it first.
     ///
-    /// An unbounded list derives its arity from the fields written, avoiding a duplicated manual
-    /// count before the encoding is hashed through `as_raw`.
+    /// # Panics
+    /// Panics if the field encoder exceeds the protocol arity.
     pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         stream.append_raw(&[TYPE_BYTE], 0);
-        stream.begin_unbounded_list();
+        stream.begin_list(TRANSACTION_FIELDS);
         self.append_fields(stream);
-        stream.finalize_unbounded_list();
     }
 
-    /// The consensus encoding hashed to produce this transaction's signature hash.
-    #[must_use]
-    pub fn encoded_for_signing(&self) -> Vec<u8> {
-        let mut stream = rlp::RlpStream::new();
-        self.encode_for_signing_in(&mut stream);
-        stream.out().to_vec()
-    }
-}
-
-/// A signed set-code transaction.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignedTxEip7702 {
-    /// The signed fields.
-    pub tx: TxEip7702,
-    /// The sender's signature. Distinct from the signatures inside `authorization_list`.
-    pub signature: TxSignature,
-}
-
-impl rlp::Encodable for SignedTxEip7702 {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(13);
-        self.tx.append_fields(stream);
-        append_signature(stream, &self.signature);
-    }
-}
-
-impl SignedTxEip7702 {
-    /// Decodes the thirteen-item list that follows the type byte.
-    ///
-    /// # Errors
-    /// [`TxDecodeError`] if the list is not thirteen strictly-tiling items, the transaction is a
-    /// creation, an authorization tuple is malformed, or the transaction sender's `y_parity` is not
-    /// 0 or 1. A tuple's own `y_parity` may be any `u8`; values above 1 make that tuple ineffective.
-    pub fn decode_strict(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
-        expect_items(rlp, 13)?;
-        Ok(Self {
-            tx: TxEip7702 {
-                chain_id: rlp.val_at(0)?,
-                nonce: rlp.val_at(1)?,
-                max_priority_fee_per_gas: rlp.val_at(2)?,
-                max_fee_per_gas: rlp.val_at(3)?,
-                gas_limit: rlp.val_at(4)?,
-                to: decode_required_destination(rlp, 5, TxType::Eip7702)?,
-                value: rlp.val_at(6)?,
-                data: rlp.val_at(7)?,
-                access_list: decode_access_list(rlp, 8)?,
-                authorization_list: rlp_strict::checked_list_at(rlp, 9)?,
-            },
-            signature: decode_signature(rlp, 10)?,
-        })
-    }
-}
-
-impl TxEip7702 {
     /// The authorities this transaction's tuples authorize, one entry per tuple.
     ///
-    /// One RLP buffer is built here and reused for every tuple: each preimage is three small fields,
-    /// so a fresh buffer per tuple would cost more than hashing it does. `recover_authority` clears the
-    /// buffer before writing, so the tuples cannot bleed into one another's preimage.
-    ///
-    /// The list is never shortened. A tuple that fails a check is present with `is_valid: false`,
-    /// because intrinsic gas is charged per tuple whether it authorizes anyone or not.
+    /// One RLP buffer is reused across tuples. Failed tuples remain as `is_valid: false` because
+    /// intrinsic gas is charged per tuple.
     #[must_use]
     pub fn recovered_authorizations(&self) -> Vec<Authorization> {
         let mut stream = rlp::RlpStream::new();
@@ -143,15 +88,11 @@ impl TxEip7702 {
             .collect()
     }
 
-    /// Consumes the transaction into its execution fields for the recovered `caller`.
-    ///
-    /// Owned data moves without cloning. Named destructuring makes a newly added consensus field a
-    /// compile-time update point for this projection.
+    /// Converts into the execution environment for `caller`, moving owned data.
+    /// Named destructuring makes new consensus fields compile-time update points.
     #[must_use]
     pub fn into_tx_env(self, caller: H160) -> TxEnv {
-        // Recovered *before* the fields move, because recovery borrows the tuples and a borrow cannot
-        // outlive the move. Doing it the other way round is what forces a clone of `data` and the
-        // access list.
+        // Recovery borrows the tuples, so do it before moving the transaction fields.
         let authorization_list = self.recovered_authorizations();
 
         let Self {
@@ -187,9 +128,55 @@ impl TxEip7702 {
     }
 }
 
+/// A signed set-code transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedTxEip7702 {
+    /// The signed fields.
+    pub tx: TxEip7702,
+    /// The sender's signature. Distinct from the signatures inside `authorization_list`.
+    pub signature: TxSignature,
+}
+
+impl SignedTxEip7702 {
+    /// Decodes the signed field list that follows the type byte.
+    ///
+    /// # Errors
+    /// [`TxDecodeError`] if the list has the wrong shape, the transaction is a
+    /// creation, an authorization tuple is malformed, or the transaction sender's `y_parity` is not
+    /// 0 or 1. A tuple's own `y_parity` may be any `u8`; values above 1 make that tuple ineffective.
+    pub fn decode_strict(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
+        expect_items(rlp, SIGNED_TRANSACTION_FIELDS)?;
+        Ok(Self {
+            tx: TxEip7702 {
+                chain_id: rlp.val_at(0)?,
+                nonce: rlp.val_at(1)?,
+                max_priority_fee_per_gas: rlp.val_at(2)?,
+                max_fee_per_gas: rlp.val_at(3)?,
+                gas_limit: rlp.val_at(4)?,
+                to: decode_required_destination(rlp, 5, TxType::Eip7702)?,
+                value: rlp.val_at(6)?,
+                data: rlp.val_at(7)?,
+                access_list: decode_access_list(rlp, ACCESS_LIST_INDEX)?,
+                authorization_list: rlp_strict::checked_list_at(rlp, AUTHORIZATION_LIST_INDEX)?,
+            },
+            signature: decode_signature(rlp, SIGNATURE_INDEX)?,
+        })
+    }
+}
+
+impl rlp::Encodable for SignedTxEip7702 {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(SIGNED_TRANSACTION_FIELDS);
+        self.tx.append_fields(stream);
+        append_signature(stream, &self.signature);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SignedTxEip7702, TYPE_BYTE};
+    use super::{
+        AUTHORIZATION_LIST_INDEX, SignedTxEip7702, TRANSACTION_FIELDS, TYPE_BYTE, TxEip7702,
+    };
     use crate::transaction::TxEnv;
     use crate::transaction::{SignedAuthorization, TxKind, TxType};
     use hex_literal::hex;
@@ -211,19 +198,29 @@ mod tests {
         SignedTxEip7702::decode_strict(&rlp::Rlp::new(&RAW[1..])).unwrap()
     }
 
+    fn encoded_for_signing(tx: &TxEip7702) -> Vec<u8> {
+        let mut stream = rlp::RlpStream::new();
+        tx.encode_for_signing_in(&mut stream);
+        stream.out().to_vec()
+    }
+
     #[test]
     fn the_encoding_for_signing_omits_the_senders_signature_but_keeps_the_authorizations() {
         let typed = decoded();
-        let encoded = typed.tx.encoded_for_signing();
+        let encoded = encoded_for_signing(&typed.tx);
         assert_eq!(encoded[0], TYPE_BYTE);
         let rlp = rlp::Rlp::new(&encoded[1..]);
-        assert_eq!(rlp.item_count().unwrap(), 10);
-        assert_eq!(rlp.at(9).unwrap().item_count().unwrap(), 1);
+        assert_eq!(rlp.item_count().unwrap(), TRANSACTION_FIELDS);
+        assert_eq!(
+            rlp.at(AUTHORIZATION_LIST_INDEX)
+                .unwrap()
+                .item_count()
+                .unwrap(),
+            1
+        );
     }
 
-    /// The projection into the execution payload: this type's own fields carried across, and every
-    /// field it does not have written as its absent value. There is no impl back, so this is the only
-    /// direction there is to check.
+    /// Projection preserves this type's fields and canonical absences for unsupported fields.
     #[test]
     fn the_projection_carries_its_own_fields_and_nothing_else() {
         let typed = decoded();
@@ -262,8 +259,7 @@ mod tests {
         assert!(blob_versioned_hashes.is_empty());
         assert_eq!(max_fee_per_blob_gas, 0);
         assert_eq!(caller, H160::zero());
-        // The *signed* tuples stay on the consensus form; the environment carries the **recovered**
-        // authorities, derived here, one per tuple.
+        // The consensus tuples project one-to-one into recovered authorities.
         assert_eq!(
             authorization_list.len(),
             typed.tx.authorization_list.len(),
@@ -275,11 +271,7 @@ mod tests {
         }
     }
 
-    /// The list is never shortened, whatever a tuple turns out to be.
-    ///
-    /// Intrinsic gas is charged per tuple, so a tuple that authorizes nobody must still occupy its
-    /// place — dropping it would undercharge the transaction and change the state root. A failure is
-    /// `is_valid: false`, not an absence.
+    /// Failed tuples remain in place because intrinsic gas is charged per tuple.
     #[test]
     fn recovery_keeps_one_entry_per_tuple_however_it_fails() {
         let tx = decoded().tx;
@@ -292,8 +284,7 @@ mod tests {
             "authority independently recovered from the published tuple"
         );
 
-        // Four independent ways for a tuple to authorize nobody, plus one that works — every one of
-        // them still yields exactly one entry.
+        // Four independent failures plus one valid tuple; every input still yields one entry.
         let mut tx = tx;
         let sound = tx.authorization_list[0];
         let broken = vec![
@@ -340,9 +331,7 @@ mod tests {
         assert!(recovered[1..].iter().all(|entry| !entry.is_valid));
     }
 
-    /// One buffer serves the whole list, so the preimages must not bleed into one another: two
-    /// identical tuples must recover to the same authority, and a list of them must agree with
-    /// recovering each on its own.
+    /// Reusing one RLP buffer must match recovering each tuple independently.
     #[test]
     fn a_shared_rlp_buffer_does_not_leak_between_tuples() {
         let mut tx = decoded().tx;

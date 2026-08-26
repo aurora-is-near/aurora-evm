@@ -608,7 +608,7 @@ mod tests {
         );
         assert_eq!(
             list.at(1).unwrap().data().unwrap(),
-            transactions[1].encode_2718().as_slice()
+            transactions[1].encoded_2718().as_slice()
         );
     }
     /// A long-string header claiming 65535 bytes with nothing behind it: `payload_info` fails on it,

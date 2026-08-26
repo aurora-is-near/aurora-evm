@@ -1,15 +1,11 @@
 //! Consensus transaction types and their RLP encodings.
 //!
-//! Each concrete type contains exactly the fields that its EIP defines. Invalid combinations are
-//! therefore unrepresentable—for example, [`TxEip4844`] and [`TxEip7702`] use `H160` rather than
-//! `TxKind` because those transaction types cannot create contracts. This also makes both envelope
-//! encoding and encoding for signing total over all representable values. Internal assertions guard
-//! only encoder list completion and arity, which no transaction value can violate.
+//! Each concrete type contains only its EIP's fields, making invalid combinations unrepresentable
+//! and both signed and signing encodings total. For example, [`TxEip4844`] and [`TxEip7702`] use
+//! `H160` because they cannot create contracts.
 //!
-//! Decoding produces a signed consensus type, which can be consumed into the union-shaped
-//! [`TxEnv`](crate::transaction::TxEnv) used by execution. There is intentionally no reverse
-//! conversion: fields absent from the consensus type are filled with their canonical absent values
-//! during projection.
+//! Signed consensus types consume into [`TxEnv`](crate::transaction::TxEnv), filling unsupported
+//! fields with canonical absent values. There is no reverse conversion.
 //!
 //! # Field order
 //!

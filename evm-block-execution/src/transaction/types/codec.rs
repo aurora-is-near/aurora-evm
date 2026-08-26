@@ -1,9 +1,7 @@
 //! Shared RLP primitives for concrete transaction types.
 //!
-//! The helpers centralize field-count checks, destinations, access lists, signatures and fixed-width
-//! blob hashes. Decoding keeps RLP payloads borrowed where possible and routes every nested list
-//! through [`crate::rlp_strict`]; semantic errors that `rlp::DecoderError` cannot express are reported
-//! as [`TxDecodeError`].
+//! Helpers keep payloads borrowed where possible, validate nested lists through [`rlp_strict`], and
+//! report transaction-specific failures through [`TxDecodeError`].
 
 use crate::rlp_strict;
 use crate::transaction::signature::TxSignature;
@@ -27,10 +25,8 @@ pub enum TxDecodeError {
     InvalidLegacyV(u128),
     /// A typed transaction's `y_parity` was neither `0` nor `1`.
     InvalidYParity(u8),
-    /// A block-body byte string starts with a legacy RLP-list prefix (`0xc0..=0xfe`) instead of an
-    /// EIP-2718 transaction type. The byte-string form is reserved for typed envelopes; a legacy
-    /// transaction must be the bare list. Accepting a wrapped valid legacy list would give the same
-    /// transaction two block encodings.
+    /// A block-body byte string contains a legacy list (`0xc0..=0xfe`), which must remain bare to
+    /// preserve a unique block encoding.
     LegacyInTypedBlockItem,
     /// The `to` field was neither empty nor a 20-byte address.
     InvalidDestination,
@@ -74,7 +70,7 @@ impl core::fmt::Display for TxDecodeError {
 
 impl core::error::Error for TxDecodeError {}
 
-/// Requires the item count an encoding of this type must have.
+/// Requires a strictly tiled list with `expected` items.
 pub(super) fn expect_items(rlp: &rlp::Rlp<'_>, expected: usize) -> Result<(), TxDecodeError> {
     if rlp_strict::checked_len(rlp)? == expected {
         Ok(())
@@ -85,8 +81,7 @@ pub(super) fn expect_items(rlp: &rlp::Rlp<'_>, expected: usize) -> Result<(), Tx
 
 /// Decodes `to`: an address, or a contract creation when the field is empty.
 ///
-/// The RLP payload stays borrowed while its width is checked, so an invalid `to` as large as the
-/// input is rejected without first allocating and copying it.
+/// Width is checked on the borrowed payload before any address copy.
 pub(super) fn decode_destination(
     rlp: &rlp::Rlp<'_>,
     index: usize,
@@ -128,7 +123,7 @@ pub(super) fn decode_access_list(
 ) -> Result<AccessList, TxDecodeError> {
     let list = rlp.at(index)?;
     rlp_strict::checked_len(&list)?;
-    // Validate up front, but do not preallocate from an untrusted RLP item count (with `Vec::with_capacity`).
+    // Validate first, but do not reserve from an untrusted item count.
     let mut items = Vec::new();
     for item in &list {
         if rlp_strict::checked_len(&item)? != 2 {
@@ -186,10 +181,7 @@ pub(super) fn decode_u128(rlp: &rlp::Rlp<'_>, index: usize) -> Result<u128, TxDe
     Ok(value.low_u128())
 }
 
-/// Widens blob versioned hashes back to fixed 32-byte strings.
-///
-/// The flat form holds them as `U256`, so encoding them as integers would strip the leading zeros of
-/// any hash whose first byte is zero.
+/// Appends blob versioned hashes as fixed-width strings, preserving leading zeros.
 pub(super) fn append_blob_hashes(stream: &mut rlp::RlpStream, hashes: &[H256]) {
     stream.begin_list(hashes.len());
     for hash in hashes {
@@ -204,10 +196,7 @@ mod tests {
     use hex_literal::hex;
     use primitive_types::H160;
 
-    /// Decodes `raw` as a `to` field, by making it the only item of a one-item list.
-    ///
-    /// Asking about the field in isolation rather than through a whole transaction, because the width
-    /// verdict is the field's own and every transaction type routes into the same helper.
+    /// Decodes `raw` as the sole `to` field of a list.
     fn destination_of(raw: &[u8]) -> Result<TxKind, TxDecodeError> {
         let mut stream = rlp::RlpStream::new_list(1);
         stream.append_raw(raw, 1);
@@ -215,9 +204,7 @@ mod tests {
         decode_destination(&rlp::Rlp::new(&bytes), 0)
     }
 
-    /// `to` is empty for a creation and exactly twenty bytes for a call, and the width is what
-    /// decides which — so a wrong width must be refused rather than padded or truncated into an
-    /// address the sender never signed.
+    /// `to` is empty for creation or exactly twenty bytes for a call.
     #[test]
     fn a_destination_is_empty_or_exactly_twenty_bytes() {
         assert_eq!(destination_of(&hex!("80")).unwrap(), TxKind::Create);
@@ -237,12 +224,7 @@ mod tests {
         }
     }
 
-    /// A malformed or non-canonical `to` is an RLP fault, not a width verdict.
-    ///
-    /// Keeping the two apart matters because `InvalidDestination` means "a well-formed string of the
-    /// wrong width": reporting a decoder fault under that name would present a malformed input as a
-    /// consensus judgement about an address. Both cases here are ones `Rlp::data()` would have
-    /// accepted silently.
+    /// Malformed or non-canonical RLP remains distinct from a well-formed value of the wrong width.
     #[test]
     fn a_malformed_destination_is_an_rlp_fault_not_an_invalid_address() {
         assert_eq!(
@@ -257,8 +239,7 @@ mod tests {
         );
     }
 
-    /// The types that have no creation form reject an empty `to` at decode time, so the case is gone
-    /// from their payloads rather than checked later.
+    /// Types without a creation form reject an empty `to` while decoding.
     #[test]
     fn a_type_without_a_creation_form_rejects_an_empty_destination() {
         let mut stream = rlp::RlpStream::new_list(1);

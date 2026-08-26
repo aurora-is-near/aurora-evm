@@ -472,7 +472,7 @@ mod tests {
         for vector in vectors() {
             let transaction = SignedTxEnvelope::decode_2718(vector.raw).unwrap();
             assert_eq!(
-                transaction.encode_2718(),
+                transaction.encoded_2718(),
                 vector.raw.to_vec(),
                 "{}: the transaction bytes, and therefore the block hash, are unchanged",
                 vector.name

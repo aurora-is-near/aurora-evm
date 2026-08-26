@@ -1,9 +1,7 @@
-//! The [EIP-2718] envelope: the transaction types as one value, and the type-byte dispatch
-//! between bytes and the typed form.
+//! The [EIP-2718] signed envelope and its type-byte dispatch.
 //!
-//! Encoding is **total** here — every variant holds exactly the fields its type has, so there is
-//! nothing left to check. Decoding is the only fallible direction, and it is where every consensus
-//! rule about the byte form lives.
+//! Each variant contains a complete concrete type, making encoding total; decoding enforces the
+//! consensus byte form.
 //!
 //! [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 
@@ -50,21 +48,18 @@ impl SignedTxEnvelope {
         }
     }
 
-    /// The EIP-2718 encoding: the type byte followed by the field list, or a bare RLP list for a
-    /// legacy transaction.
-    ///
-    /// This is the form the transactions trie and the transaction hash are built from.
+    /// The EIP-2718 bytes committed to by the transactions trie and transaction hash.
+    /// Typed transactions carry a type byte; legacy transactions are bare RLP lists.
     #[must_use]
-    pub fn encode_2718(&self) -> Vec<u8> {
+    pub fn encoded_2718(&self) -> Vec<u8> {
         let mut stream = rlp::RlpStream::new();
         self.encode_2718_in(&mut stream).to_vec()
     }
 
     /// Writes the EIP-2718 encoding into a dedicated scratch stream and returns the written slice.
     ///
-    /// Kept crate-private because `stream` is cleared and must be reserved for this operation. Reusing
-    /// it across a block retains the backing allocation. If it was created over an existing buffer,
-    /// the returned slice excludes that prefix and covers only this envelope.
+    /// `stream` is cleared but retains its allocation. The returned slice excludes any prefix owned
+    /// by the stream's backing buffer.
     ///
     /// # Panics
     /// Panics if a transaction encoder violates its fixed RLP-list arity. In debug builds, also
@@ -112,11 +107,8 @@ impl SignedTxEnvelope {
     /// Decodes an EIP-2718 encoded transaction.
     ///
     /// # Errors
-    /// [`TxDecodeError`] if the input is empty, carries an unknown or reserved type byte, starts with
-    /// neither a type byte nor a legacy-list prefix, is not well-formed RLP for its type, encodes a
-    /// creation for a type that forbids one, or does not cover its buffer exactly — `RlpIsTooShort`
-    /// when it declares more than it carries, `RlpIsTooBig` when bytes follow it, and
-    /// `RlpInvalidLength` when the declared length overflows a `usize`.
+    /// [`TxDecodeError`] for an invalid prefix, malformed or non-exact RLP, or a type-specific
+    /// consensus violation.
     pub fn decode_2718(bytes: &[u8]) -> Result<Self, TxDecodeError> {
         let (&first, payload) = bytes.split_first().ok_or(TxDecodeError::Empty)?;
 
@@ -161,11 +153,8 @@ impl SignedTxEnvelope {
 
     /// Writes this transaction's block-body form straight into `stream`.
     ///
-    /// The form a body is built from, and the reason it takes a stream rather than returning bytes: a
-    /// legacy transaction is written directly, with nothing allocated in between, and a typed one needs
-    /// its complete envelope somewhere before it can be wrapped in a byte string. `scratch` is
-    /// initialised only for that typed case, then cleared and reused for every following typed
-    /// transaction in the body.
+    /// Legacy transactions are bare lists. Typed envelopes are built in reusable `scratch` and
+    /// wrapped as RLP byte strings.
     pub(crate) fn append_block_item(
         &self,
         stream: &mut rlp::RlpStream,
@@ -187,22 +176,12 @@ impl SignedTxEnvelope {
     /// Decodes one item of a block body's transaction list, accepting a bare RLP list or a
     /// string-wrapped EIP-2718 envelope.
     ///
-    /// The two forms are **exclusive**: a bare list is legacy, a byte string is typed. A legacy
-    /// transaction wrapped in a byte string decodes to the same transaction as the bare form, so
-    /// accepting it would give one block two valid encodings.
-    ///
-    /// `rlp` must cover exactly one item, and that is enforced here rather than assumed of the
-    /// caller. Inside the block decoder it holds already — `Rlp::at` trims each item to its own
-    /// bytes — but this is a public entry point, and unwrapping a byte string reads only the string's
-    /// payload, so without the check a caller passing `item ‖ trailing` would have the trailing bytes
-    /// silently dropped for a typed transaction while a legacy one rejected them.
+    /// The forms are exclusive and `rlp` must cover exactly one item, preserving a unique block
+    /// encoding.
     ///
     /// # Errors
-    /// [`TxDecodeError`] as [`Self::decode_2718`], plus [`TxDecodeError::LegacyInTypedBlockItem`] if a
-    /// byte-string item wraps a bare legacy RLP list rather than an EIP-2718 envelope, and
-    /// [`TxDecodeError::Rlp`] if the item is neither an RLP list nor a byte string, or does not cover
-    /// `rlp` exactly — the two ways it can miss are named apart, `RlpIsTooShort` for an item declaring
-    /// more bytes than the buffer holds and `RlpIsTooBig` for bytes past its end.
+    /// [`TxDecodeError`] as in [`Self::decode_2718`], or if the block item has the wrong wrapper or
+    /// does not cover its input exactly.
     pub fn decode_block_item(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
         let raw = rlp.as_raw();
         check_covers_exactly(raw)?;
@@ -235,8 +214,7 @@ impl SignedTxEnvelope {
 
     /// The signature, mutably.
     ///
-    /// Changing it changes the sender the transaction recovers to, and nothing here is cached, so the
-    /// new signature takes effect immediately — there is no hash to invalidate.
+    /// No derived hash or sender is cached, so changes take effect immediately.
     pub const fn signature_mut(&mut self) -> &mut TxSignature {
         match self {
             Self::Legacy(tx) => &mut tx.signature,
@@ -249,8 +227,7 @@ impl SignedTxEnvelope {
 
     /// The consensus encoding hashed to produce this transaction's signature hash.
     ///
-    /// Total. The encoding differs from the envelope in its signature tail, and for a legacy
-    /// transaction also in its length: six fields or nine, chosen by its chain id.
+    /// It omits the signature tail; legacy uses six or nine fields according to its chain id.
     #[must_use]
     pub fn encoded_for_signing(&self) -> Vec<u8> {
         let mut stream = rlp::RlpStream::new();
@@ -260,9 +237,7 @@ impl SignedTxEnvelope {
 
     /// Encodes this transaction for signing into `stream`, clearing it first.
     ///
-    /// The form to use over a whole block: one stream serves every transaction and retains its backing
-    /// capacity. A typed transaction writes its type byte and field list into that same storage,
-    /// rather than materializing the list and then copying it into a second prefixed buffer.
+    /// Reusing one stream across a block retains its backing allocation.
     pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         match self {
             Self::Legacy(tx) => tx.tx.encode_for_signing_in(stream),
@@ -273,10 +248,7 @@ impl SignedTxEnvelope {
         }
     }
 
-    /// The hash the sender signed, using `stream` as the buffer.
-    ///
-    /// [`Self::signature_hash`] with the allocation hoisted out of the call, for a caller walking a
-    /// block's transactions.
+    /// The hash the sender signed, using reusable `stream` as scratch space.
     ///
     /// # Panics
     /// Panics if an internal encoder leaves the transaction's signing list unfinished.
@@ -300,9 +272,7 @@ impl SignedTxEnvelope {
 
     /// The transaction hash: `keccak256` of the EIP-2718 envelope.
     ///
-    /// The identifier, not consensus data — no field of a block commits to it, and the transactions
-    /// trie commits to the encoding under an index key. Computed on demand rather than cached,
-    /// because nothing in this crate asks for it twice.
+    /// Computed on demand; the block commits to the indexed envelope bytes, not this identifier.
     #[must_use]
     pub fn tx_hash(&self) -> H256 {
         let mut stream = rlp::RlpStream::new();
@@ -321,16 +291,8 @@ impl SignedTxEnvelope {
         }
     }
 
-    /// The execution environment for this transaction, **consuming** it.
-    ///
-    /// The last use of the consensus form. Everything it was needed for — the transactions root, the
-    /// signature hash, the sender — has already happened by the time this is called, so its owned
-    /// fields move into the environment instead of being copied.
-    ///
-    /// `caller` is what verifying the signature established. The EIP-7702 authorities are recovered
-    /// here rather than passed in: they are a function of the tuples the transaction carries, so
-    /// deriving them keeps the list one-to-one with those tuples, which is what intrinsic gas is
-    /// charged against.
+    /// Consumes the consensus form into the execution environment for recovered `caller`.
+    /// EIP-7702 authorities are derived here, one per signed tuple.
     #[must_use]
     pub fn into_tx_env(self, caller: H160) -> TxEnv {
         match self {
@@ -345,12 +307,8 @@ impl SignedTxEnvelope {
 
 /// Requires the leading RLP item to cover `bytes` exactly.
 ///
-/// RLP is self-delimiting, so a decoder that only reads the leading item would accept padded
-/// transaction bytes and re-encode them differently — one transaction with two encodings.
-///
-/// Exactness is asked for as equality, and the two ways it can fail are opposite faults with their
-/// own names: a declared payload the buffer does not hold is `RlpIsTooShort`, bytes past the end of
-/// the item are `RlpIsTooBig`.
+/// Truncation yields `RlpIsTooShort`; trailing bytes yield `RlpIsTooBig`. Rejecting both preserves a
+/// unique transaction encoding.
 fn check_covers_exactly(bytes: &[u8]) -> Result<(), TxDecodeError> {
     let consumed = rlp_strict::declared_item_len(bytes)?;
     match consumed.cmp(&bytes.len()) {
@@ -448,7 +406,7 @@ mod tests {
         for (tx_type, raw) in vectors() {
             let envelope = SignedTxEnvelope::decode_2718(&raw).unwrap();
             assert_eq!(envelope.tx_type(), tx_type, "{tx_type:?}");
-            assert_eq!(envelope.encode_2718(), raw, "{tx_type:?} typed re-encode");
+            assert_eq!(envelope.encoded_2718(), raw, "{tx_type:?} typed re-encode");
 
             // The projection is one-way, so what is checked is that it reports the type it came from
             // — there is no conversion back whose fidelity could be asserted instead.
@@ -764,6 +722,6 @@ mod tests {
             )),
             "EIP-155 legacy signature hash"
         );
-        assert_eq!(eip155.encode_2718(), LEGACY_EIP155);
+        assert_eq!(eip155.encoded_2718(), LEGACY_EIP155);
     }
 }
