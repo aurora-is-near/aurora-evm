@@ -62,8 +62,8 @@ impl SignedTxEnvelope {
     /// by the stream's backing buffer.
     ///
     /// # Panics
-    /// Panics if a transaction encoder violates its fixed RLP-list arity. In debug builds, also
-    /// panics if `stream` already contains an unfinished list instead of a reusable scratch value.
+    /// Panics if an internal encoder leaves an RLP list unfinished. In debug builds, also panics if
+    /// `stream` already contains an unfinished list instead of a reusable scratch value.
     pub(crate) fn encode_2718_in<'stream>(
         &self,
         stream: &'stream mut rlp::RlpStream,
@@ -98,8 +98,8 @@ impl SignedTxEnvelope {
                 stream.append(tx);
             }
         }
-        // `as_raw()` bypasses `RlpStream::out()` and its completion check, so keep a mismatched
-        // bounded field count fail-closed in release builds too.
+        // `as_raw()` bypasses `RlpStream::out()` and its completion check, so an unfinished list
+        // must still fail closed in release builds.
         assert!(stream.is_finished(), "EIP-2718 encoding left an open list");
         &stream.as_raw()[base..]
     }

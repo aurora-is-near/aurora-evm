@@ -115,7 +115,8 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     /// Calculates the **maximum** [EIP-4844] blob `data_fee`, at the transaction's
     /// `max_fee_per_blob_gas`. This is the amount reserved up front against the sender's balance;
     /// the amount actually charged and burned is [`Self::calc_data_fee`], computed at the block's
-    /// current blob gas price (which is always `<=` the max). `None` for non-blob transactions.
+    /// current blob gas price (which is `<=` the max after validation). `None` for non-blob
+    /// transactions.
     ///
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[inline]
@@ -302,8 +303,8 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        // Intrinsic / floor gas (EIP-7623), using the caller-flattened access list. This is the
-        // final context-level check, so `validate_tx` is a complete transaction validation.
+        // Intrinsic / floor gas (EIP-7623), using the caller-flattened access list. Sender-state,
+        // required-funds and block-total checks remain with the block executor.
         self.validate_and_get_initial_tx_gas(access_list)?;
 
         Ok(self)
@@ -414,13 +415,12 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     /// # Errors
     /// Returns [`InvalidEvmContext`] for an invalid blob fee, destination or versioned hash.
     pub fn validate_blobs(&self) -> Result<(), InvalidEvmContext> {
-        // NOTE: we already validate that `blob_excess_gas_and_price` is set in `validate_tx` method, so it is safe to unwrap here.
         let blob_gas_price = self
             .block
             .blob_excess_gas_and_price
             .unwrap_or_default()
             .blob_gas_price;
-        // Ensure that the user was willing to at least pay the current blob gasprice
+        // Ensure that the sender was willing to pay the current blob gas price.
         if blob_gas_price > self.tx.max_fee_per_blob_gas {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::BlobGasPriceGreaterThanMax,

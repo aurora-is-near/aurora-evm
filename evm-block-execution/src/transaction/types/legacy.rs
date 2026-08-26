@@ -54,11 +54,7 @@ impl TxLegacy {
     }
 
     /// Encodes the six-field pre-EIP-155 signing form, or the nine-field EIP-155 form ending in
-    /// `[chain_id, 0, 0]`, into `stream`, clearing it first. The bounded list independently checks
-    /// the protocol arity.
-    ///
-    /// # Panics
-    /// Panics if the internal encoder writes more fields than the selected protocol form permits.
+    /// `[chain_id, 0, 0]`, into `stream`, clearing it first.
     pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         let field_count = if self.chain_id.is_some() {

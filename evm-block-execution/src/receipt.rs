@@ -90,8 +90,8 @@ impl Receipt {
             stream.append_raw(&[type_byte], 0);
         }
         self.append_body(stream);
-        // `as_raw()` bypasses `RlpStream::out()` and its completion check, so a future field-count
-        // mistake must fail closed before it can change the receipts root.
+        // `as_raw()` bypasses `RlpStream::out()` and its completion check, so an unfinished body
+        // must fail closed before it can change the receipts root.
         assert!(stream.is_finished(), "receipt encoding left an open list");
         &stream.as_raw()[base..]
     }

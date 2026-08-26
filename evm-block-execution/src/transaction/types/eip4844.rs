@@ -72,9 +72,6 @@ impl TxEip4844 {
     }
 
     /// Encodes this transaction for signing into `stream`, clearing it first.
-    ///
-    /// # Panics
-    /// Panics if the field encoder exceeds the protocol arity.
     pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         stream.append_raw(&[TYPE_BYTE], 0);

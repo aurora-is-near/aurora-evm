@@ -647,8 +647,8 @@ mod tests {
         );
     }
 
-    /// `encode_rlp` must accept exactly the prefixes, on all 256 shapes and not just the 9 real ones,
-    /// and must name the first field that breaks one.
+    /// `encode_rlp` must accept exactly the nine positional prefixes across all 256 shapes and name
+    /// the first field that breaks one.
     #[test]
     fn encode_rlp_accepts_exactly_the_prefixes() {
         const FIELDS: [HeaderField; 8] = [
@@ -685,7 +685,7 @@ mod tests {
                 ),
             }
         }
-        // One shape per fork boundary from Frontier to the last field, and no others.
+        // One positional prefix per tail length, and no other shape.
         assert_eq!(prefixes, 9);
     }
 

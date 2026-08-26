@@ -227,7 +227,8 @@ mod tests {
 
     #[test]
     fn cached_hash_is_returned_verbatim() {
-        // `new` adopts the caller's hash without recomputing it, so a stale hash is returned as is.
+        // `new_unchecked` adopts the caller's hash without recomputing it, so a stale hash is
+        // returned as is.
         let stale = H256::repeat_byte(0xff);
         let sealed = SealedHeader::new_unchecked(header(), stale);
         assert_eq!(sealed.hash(), stale);

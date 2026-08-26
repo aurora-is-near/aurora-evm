@@ -54,9 +54,6 @@ impl TxEip2930 {
     }
 
     /// Encodes this transaction for signing into `stream`, clearing it first.
-    ///
-    /// # Panics
-    /// Panics if the field encoder exceeds the protocol arity.
     pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         stream.append_raw(&[TYPE_BYTE], 0);
@@ -97,7 +94,7 @@ impl TxEip2930 {
             authorization_list: Vec::new(),
         }
     }
-// }
+}
 
 /// A signed EIP-2930 transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]

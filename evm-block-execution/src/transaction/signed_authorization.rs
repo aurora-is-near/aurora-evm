@@ -89,8 +89,8 @@ impl SignedAuthorization {
         rlp_stream.append(&self.chain_id);
         rlp_stream.append(&self.address);
         rlp_stream.append(&self.nonce);
-        // `as_raw()` does not perform `RlpStream::out()`'s completion check; fail closed before a
-        // malformed internal preimage can select the wrong authority.
+        // `as_raw()` does not perform `RlpStream::out()`'s completion check; fail closed before an
+        // unfinished internal preimage can select the wrong authority.
         assert!(
             rlp_stream.is_finished(),
             "EIP-7702 authorization signing preimage left an open list"

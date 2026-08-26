@@ -1,18 +1,13 @@
 //! Ethereum's transaction phase of block execution.
 //!
-//! [`BlockExecutor`] sits above the [`aurora_evm`] interpreter. It owns one block's environment,
-//! transactions, precompiles and materialized state, and creates an EVM executor for each
-//! transaction. Consuming the executor keeps a failed block's partial state inaccessible.
+//! [`BlockExecutor`] owns a block's execution inputs and creates an [`aurora_evm`] executor for each
+//! transaction. Consuming it keeps a failed block's partial state inaccessible.
 //!
-//! Before this phase, the block pipeline validates consensus structure and recovers senders. The
-//! remaining pre-execution system calls, withdrawals, requests, roots and post-execution header
-//! checks are not implemented here yet.
+//! Consensus structure and senders must already be validated. System calls, withdrawals, requests,
+//! roots and post-execution header checks are not implemented here yet.
 //!
-//! For each transaction this module:
-//!
-//! 1. validates the sender state, intrinsic cost, funds, block gas and active blob limits;
-//! 2. executes the call or creation and settles the gas, blob and priority fees;
-//! 3. advances block totals and creates a typed [`Receipt`].
+//! Each transaction is validated, executed and fee-settled before its typed [`Receipt`] advances
+//! the block totals.
 
 use crate::block::BlockEnv;
 use crate::chain_spec::ChainSpec;
@@ -81,8 +76,7 @@ struct BlockExecutionCounters {
     blob_count: u64,
 }
 
-/// A transaction that passed validation flow, carrying the values the
-/// execution stage would otherwise recompute (fees, flattened access list, blob count).
+/// A validated transaction with values reused during execution.
 struct ValidatedTransaction {
     tx: TxEnv,
     access_list: Vec<(H160, Vec<H256>)>,
@@ -93,9 +87,8 @@ struct ValidatedTransaction {
 }
 
 impl BlockExecutor {
-    /// Builds an executor and resolves the block's active [`BlobParams`] once.
-    ///
-    /// The schedule was already validated when it was built, so it is not re-validated.
+    /// Builds an executor and resolves the block's active [`BlobParams`] from the trusted chain
+    /// configuration.
     ///
     /// # Errors
     /// [`BlockExecutionError::InvalidBlockTimestamp`] if the block timestamp does not fit in `u64`.
@@ -117,15 +110,13 @@ impl BlockExecutor {
         })
     }
 
-    /// Runs every transaction in order and returns the receipts, the gas and blob totals, and the
-    /// post-execution state.
+    /// Executes every transaction in order and returns receipts, totals and post-state.
     ///
-    /// Consumes `self`: the world state lives in a local owned map for the whole loop, so a block
-    /// that fails validation or execution leaves no half-mutated value behind to be read.
+    /// Consuming `self` prevents observing the partial state of a failed block.
     ///
     /// # Errors
-    /// The first invalid or fatally-failing transaction aborts the block with a
-    /// [`BlockExecutionError`]; nothing after it runs.
+    /// Returns [`BlockExecutionError`] for the first invalid or fatally failing transaction and
+    /// aborts the block.
     pub fn execute_transactions(
         mut self,
     ) -> Result<TransactionExecutionResult, BlockExecutionError> {
@@ -154,11 +145,11 @@ impl BlockExecutor {
                 .execute_validated_tx(&mut block_vicinity, validated_tx)
                 .map_err(|source| BlockExecutionError::at_transaction(index, source))?;
 
-            // Checked, because its bound leans on the executor never reporting more gas than the
-            // limit it was given — a property of `aurora-evm`, not of a check in this file.
+            // Validation and the executor's gas-limit contract bound this sum for valid input;
+            // saturation keeps a broken upstream invariant from wrapping the block total.
             counters.gas_used = counters.gas_used.saturating_add(outcome.gas_used);
-            // Unchecked, because step 8 has already computed this exact sum from these exact operands
-            // and refused the transaction if it overflowed. A second check here could not fire.
+            // The trusted schedule keeps `max_blob_count` below `u64::MAX`; validation has bounded
+            // this sum by that maximum before execution.
             counters.blob_count += tx_blob_count;
 
             // `Fatal` was already turned into an error inside `execute_validated_tx`; here `reason`
@@ -221,9 +212,8 @@ impl BlockExecutor {
         }
 
         // 5. Cheap per-transaction blob-count gate BEFORE the O(N) version-hash loop inside
-        //    `validate_tx` (defense-in-depth on adversarial input). Gated on *resolved* blob params,
-        //    which `BlockExecutor::new` sets exactly from Cancun on. A pre-Cancun blob transaction therefore
-        //    skips this gate and is rejected by `validate_tx` itself (`Eip4844NotSupported`).
+        //    `validate_tx` (defense-in-depth on adversarial input). The active limit exists only when
+        //    blob parameters resolve; a blob transaction without them is rejected below.
 
         // adversarially large input is a block failure, not a panic
         let blob_count = u64::try_from(tx.blob_versioned_hashes.len()).unwrap_or(u64::MAX);
@@ -263,11 +253,9 @@ impl BlockExecutor {
 
         // 8. Per-block blob limit against the active `BlobParams`.
         //
-        //    Absent parameters mean the fork has no blob market, which step 6 has already rejected for a
-        //    blob-carrying transaction (`Eip4844NotSupported`), so this cannot fire. It is written as a
-        //    rejection rather than as `if let Some(..)` on purpose: should the earlier guard ever move or
-        //    weaken, this fails **closed** — the per-block blob limit is never silently skipped. The
-        //    verdict is the same one step 6 would have given, so the two can never disagree.
+        //    A blob transaction without resolved parameters is rejected rather than silently
+        //    skipping the block limit. This covers both pre-Cancun input and an incomplete trusted
+        //    Cancun-and-later configuration.
         if blob_count > 0 {
             let params = self.blob_params.ok_or(BlockExecutionError::InvalidContext(
                 InvalidEvmContext::InvalidTransaction(InvalidTransaction::Eip4844NotSupported),
@@ -298,7 +286,7 @@ impl BlockExecutor {
     /// Executes one validated transaction and settles its fees.
     ///
     /// # Errors
-    /// [`BlockExecutionError`] if the executor halts fatally or the fee arithmetic overflows.
+    /// [`BlockExecutionError`] if fee reservation fails or the executor exits fatally.
     fn execute_validated_tx(
         &mut self,
         vicinity: &mut MemoryVicinity,
@@ -325,6 +313,7 @@ impl BlockExecutor {
             ..
         } = tx;
 
+        // Apply changes to the vicinity.
         TxVicinity {
             gas_price,
             effective_gas_price,
@@ -333,6 +322,7 @@ impl BlockExecutor {
         }
         .apply(vicinity);
 
+        // Gathering execution variables for convenience.
         let exec = TxExec {
             caller,
             value,
@@ -363,11 +353,10 @@ impl BlockExecutor {
     }
 }
 
-/// Resolves the block's blob parameters after narrowing its untrusted timestamp without truncation.
+/// Resolves blob parameters after narrowing the [`U256`] block timestamp without truncation.
 ///
-/// `BlockEnv` uses the EVM-native [`U256`] timestamp, while chain schedules use `u64`. A direct
-/// `as_u64` conversion would either truncate or panic (depending on the API used) for an adversarial
-/// value above `u64::MAX`, so the execution boundary performs one checked conversion instead.
+/// # Errors
+/// [`BlockExecutionError::InvalidBlockTimestamp`] if the timestamp does not fit in `u64`.
 fn resolve_blob_params(
     chain: &ChainSpec,
     block: &BlockEnv,
@@ -377,8 +366,7 @@ fn resolve_blob_params(
     Ok(chain.blob_params_at_timestamp(timestamp))
 }
 
-/// Whether `code` is an EIP-7702 delegation designation (`0xef0100 || address`), which lets an
-/// account with code still originate transactions from Prague onward.
+/// Whether Prague permits the sender's EIP-7702 delegation code (`0xef0100 || address`).
 fn is_delegated_sender(code: &[u8], spec: Spec) -> bool {
     spec >= Spec::Prague && Authorization::is_delegated(code)
 }
@@ -414,7 +402,7 @@ fn caller_refund(reserve_fee: U256, actual_fee: U256, data_fee: Option<U256>) ->
         .saturating_sub(data_fee.unwrap_or_default())
 }
 
-/// Runs one validated transaction against `backend`: reserve, run call/create, settle fees, apply the diff.
+/// Reserves fees, executes one validated transaction, settles fees and applies its state diff.
 fn exec_tx_with_backend(
     backend: &mut MemoryBackend<'_>,
     exec: TxExec,
@@ -482,15 +470,10 @@ fn exec_tx_with_backend(
     })
 }
 
-/// The [`MemoryVicinity`] fields that belong to a *transaction* rather than to the block.
+/// Per-transaction [`MemoryVicinity`] fields overwritten before every execution.
 ///
-/// The vicinity is built once per block ([`block_vicinity`]) and reused, so every one of these has to
-/// be overwritten before each transaction: a field left alone keeps the *previous* transaction's
-/// value. Collecting them in one struct is what makes that checkable — [`Self::apply`] destructures
-/// exhaustively, so adding a field here without assigning it there does not compile, and dropping an
-/// assignment leaves an unused binding, which `warnings = deny` rejects. That is the mistake this
-/// struct exists to prevent: `blob_hashes` was once dropped from the assignments it replaces, which
-/// left `BLOBHASH` reading a block-level list.
+/// Grouping and exhaustively applying them prevents values, notably blob hashes, leaking from the
+/// previous transaction.
 struct TxVicinity {
     /// Price the caller offered (`gas_price`, or `max_fee_per_gas` for the dynamic-fee types).
     gas_price: U256,
@@ -928,9 +911,7 @@ mod tests {
         ));
     }
 
-    /// EIP-155 replay protection is unconditional: there is no configuration in which a transaction
-    /// signed for another chain is accepted, because the chain a block belongs to is a `u64` and not
-    /// an `Option`. A typed transaction must also carry its own `chain_id` — it has no unsigned form.
+    /// Typed transactions require the configured chain id; legacy may use the pre-EIP-155 form.
     #[test]
     fn a_foreign_or_absent_chain_id_is_always_rejected() {
         let caller = addr(0xca);
@@ -1143,8 +1124,8 @@ mod tests {
 
     #[test]
     fn a_blob_tx_uses_the_fork_default_when_nothing_is_scheduled() {
-        // A blob schedule always carries a per-fork default from Cancun on, so "no blob parameters"
-        // is not a reachable state: an empty scheduled list falls back to the fork default.
+        // An active Cancun-or-later fork falls back to its per-fork default when no BPO entry is
+        // scheduled.
         let caller = addr(0xca);
         let mut state = BTreeMap::new();
         state.insert(caller, account(u64::MAX, 0, vec![]));
@@ -1162,13 +1143,8 @@ mod tests {
         );
     }
 
-    /// The redundant guard in step 8 fails **closed**.
-    ///
-    /// A Cancun chain always resolves blob parameters, so `BlockExecutor::new` cannot produce this
-    /// state — the executor is therefore assembled field by field, which is the only way to reach the
-    /// branch. The contract still has to hold: absent parameters must reject the block rather than
-    /// skip the per-block blob limit. The verdict matches the one step 6 gives for the same input, so
-    /// the two guards can never disagree.
+    /// Missing blob parameters fail closed even when the executor is assembled outside its
+    /// constructor.
     #[test]
     fn a_blob_tx_without_resolved_params_fails_closed() {
         let caller = addr(0xca);
@@ -1178,8 +1154,8 @@ mod tests {
         blk.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::default());
         let chain = chain_spec(Spec::Cancun, empty_blob_schedule());
 
-        // Cancun, so the per-type validation in step 6 lets the blob transaction through, yet the
-        // parameters are absent — a pairing the constructor refuses to make.
+        // Cancun context validation accepts the transaction, but the missing schedule parameters
+        // must still make the block-level limit fail closed.
         let executor = BlockExecutor {
             precompiles: Precompiles::new(&chain.spec),
             blob_params: None,
@@ -1303,8 +1279,7 @@ mod tests {
         }
     }
 
-    /// Tagging is idempotent: an error that already names a position keeps it, so wrapping twice
-    /// cannot bury the real cause under a second layer.
+    /// Re-tagging an indexed error preserves its original transaction position.
     #[test]
     fn tagging_an_already_tagged_error_keeps_the_inner_position() {
         let inner = BlockExecutionError::at_transaction(3, BlockExecutionError::SenderHasCode);

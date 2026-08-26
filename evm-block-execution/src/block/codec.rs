@@ -16,10 +16,11 @@
 //! envelope instead; [`SignedTxEnvelope::decode_block_item`] keeps those forms distinct and rejects
 //! wrapped or explicitly typed legacy transactions.
 //!
-//! Encoding implements `rlp::Encodable` because the typed representation is total. Decoding remains
-//! a method so [`BlockDecodeError`] can preserve transaction indices, unsupported ommers and exact
-//! buffer-length failures. The EIP-4844 network wrapper is not accepted: blocks contain only the
-//! transaction payload with versioned hashes.
+//! Canonical blocks implement `rlp::Encodable`. Because a manually assembled [`Header`] can contain
+//! a gap in its optional tail, callers must check it through [`Header::encode_rlp`] before relying on
+//! the trait encoding. Decoding remains a method so [`BlockDecodeError`] can preserve transaction
+//! indices, unsupported ommers and exact buffer-length failures. The EIP-4844 network wrapper is not
+//! accepted: blocks contain only the transaction payload with versioned hashes.
 
 use crate::block::{Block, BlockBody, Header};
 use crate::rlp_strict;
