@@ -7,10 +7,23 @@ use crate::transaction::signature::TxSignature;
 use crate::transaction::{AccessList, TxKind, TxType};
 use primitive_types::{H160, U256};
 
-/// The fields of a legacy transaction.
+const COMMON_FIELDS: usize = 6;
+const TRAILING_FIELDS: usize = 3;
+const SIGNED_TRANSACTION_FIELDS: usize = COMMON_FIELDS + TRAILING_FIELDS;
+const PRE_EIP155_SIGNING_FIELDS: usize = COMMON_FIELDS;
+const EIP155_SIGNING_FIELDS: usize = SIGNED_TRANSACTION_FIELDS;
+const V_INDEX: usize = COMMON_FIELDS;
+const R_INDEX: usize = V_INDEX + 1;
+const S_INDEX: usize = R_INDEX + 1;
+const PRE_EIP155_V_EVEN: u128 = 27;
+const PRE_EIP155_V_ODD: u128 = 28;
+const EIP155_V_BASE: u128 = 35;
+
+/// A normalized legacy transaction.
 ///
-/// `chain_id` selects the pre-EIP-155 or EIP-155 signing preimage. The encoded `v` is derived from it
-/// and the signature parity rather than stored.
+/// The first six fields are the legacy wire fields. `chain_id` is recovered from the encoded `v` and
+/// selects the pre-EIP-155 or EIP-155 encoding for signing; encoding folds it back into `v` with the
+/// signature parity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxLegacy {
     /// Chain this transaction is bound to, or `None` for a pre-EIP-155 signature valid anywhere.
@@ -31,7 +44,7 @@ pub struct TxLegacy {
 
 impl TxLegacy {
     /// The six fields every legacy encoding opens with.
-    fn append_fields(&self, stream: &mut rlp::RlpStream) {
+    fn append_base_fields(&self, stream: &mut rlp::RlpStream) {
         stream.append(&self.nonce);
         stream.append(&self.gas_price);
         stream.append(&self.gas_limit);
@@ -40,18 +53,26 @@ impl TxLegacy {
         stream.append(&self.data);
     }
 
-    /// Writes the six-field pre-EIP-155 preimage, or the nine-field EIP-155 form ending in
-    /// `[chain_id, 0, 0]`. The reusable stream derives the arity from the optional tail.
-    pub(crate) fn append_signing_preimage(&self, stream: &mut rlp::RlpStream) {
+    /// Encodes the six-field pre-EIP-155 signing form, or the nine-field EIP-155 form ending in
+    /// `[chain_id, 0, 0]`, into `stream`, clearing it first. The bounded list independently checks
+    /// the protocol arity.
+    ///
+    /// # Panics
+    /// Panics if the internal encoder writes more fields than the selected protocol form permits.
+    pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
-        stream.begin_unbounded_list();
-        self.append_fields(stream);
+        let field_count = if self.chain_id.is_some() {
+            EIP155_SIGNING_FIELDS
+        } else {
+            PRE_EIP155_SIGNING_FIELDS
+        };
+        stream.begin_list(field_count);
+        self.append_base_fields(stream);
         if let Some(chain_id) = self.chain_id {
             stream.append(&chain_id);
             stream.append(&0u8);
             stream.append(&0u8);
         }
-        stream.finalize_unbounded_list();
     }
 
     /// Converts into the execution environment for the recovered `caller`, moving owned data.
@@ -100,11 +121,35 @@ pub struct SignedTxLegacy {
 }
 
 impl SignedTxLegacy {
-    /// Returns `27 + parity` before EIP-155, or `35 + 2 * chain_id + parity` after it.
-    /// `u128` covers every `u64` chain id without changing the minimal RLP encoding.
+    /// Returns `27 + parity`, or `35 + 2 * chain_id + parity` for EIP-155.
+    /// The `u128` result covers every `u64` chain id without overflow.
+    #[inline]
     #[must_use]
     pub fn v(&self) -> u128 {
-        self.signature.legacy_v(self.tx.chain_id)
+        let parity = u128::from(self.signature.y_parity);
+        self.tx.chain_id.map_or_else(
+            || PRE_EIP155_V_EVEN + parity,
+            |chain_id| EIP155_V_BASE + u128::from(chain_id) * 2 + parity,
+        )
+    }
+
+    /// Splits a legacy wire `v` into signature parity and its optional EIP-155 chain id.
+    ///
+    /// # Errors
+    /// [`TxDecodeError::InvalidLegacyV`] if `v` encodes neither form or its chain id exceeds `u64`.
+    #[inline]
+    fn decode_v(v: u128) -> Result<(bool, Option<u64>), TxDecodeError> {
+        match v {
+            PRE_EIP155_V_EVEN => Ok((false, None)),
+            PRE_EIP155_V_ODD => Ok((true, None)),
+            EIP155_V_BASE.. => {
+                let offset = v - EIP155_V_BASE;
+                let chain_id =
+                    u64::try_from(offset / 2).map_err(|_| TxDecodeError::InvalidLegacyV(v))?;
+                Ok((offset % 2 == 1, Some(chain_id)))
+            }
+            _ => Err(TxDecodeError::InvalidLegacyV(v)),
+        }
     }
 
     /// Decodes the nine-item list.
@@ -113,10 +158,9 @@ impl SignedTxLegacy {
     /// [`TxDecodeError`] if the list is not nine strictly-tiling items, `to` is malformed, or `v`
     /// encodes neither a pre-EIP-155 parity nor a chain id.
     pub fn decode_strict(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
-        expect_items(rlp, 9)?;
-        let v: u128 = rlp.val_at(6)?;
-        let (y_parity, chain_id) =
-            TxSignature::from_legacy_v(v).ok_or(TxDecodeError::InvalidLegacyV(v))?;
+        expect_items(rlp, SIGNED_TRANSACTION_FIELDS)?;
+        let v: u128 = rlp.val_at(V_INDEX)?;
+        let (y_parity, chain_id) = Self::decode_v(v)?;
         Ok(Self {
             tx: TxLegacy {
                 chain_id,
@@ -127,15 +171,15 @@ impl SignedTxLegacy {
                 value: rlp.val_at(4)?,
                 data: rlp.val_at(5)?,
             },
-            signature: TxSignature::new(y_parity, rlp.val_at(7)?, rlp.val_at(8)?),
+            signature: TxSignature::new(y_parity, rlp.val_at(R_INDEX)?, rlp.val_at(S_INDEX)?),
         })
     }
 }
 
 impl rlp::Encodable for SignedTxLegacy {
     fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(9);
-        self.tx.append_fields(stream);
+        stream.begin_list(SIGNED_TRANSACTION_FIELDS);
+        self.tx.append_base_fields(stream);
         stream.append(&self.v());
         stream.append(&self.signature.r);
         stream.append(&self.signature.s);
@@ -144,16 +188,20 @@ impl rlp::Encodable for SignedTxLegacy {
 
 #[cfg(test)]
 mod tests {
-    use super::{SignedTxLegacy, TxLegacy};
+    use super::{
+        EIP155_SIGNING_FIELDS, EIP155_V_BASE, PRE_EIP155_SIGNING_FIELDS, SIGNED_TRANSACTION_FIELDS,
+        SignedTxLegacy, TxLegacy, V_INDEX,
+    };
     use crate::transaction::TxEnv;
+    use crate::transaction::types::TxDecodeError;
     use crate::transaction::{TxKind, TxSignature, TxType};
     use hex_literal::hex;
     use primitive_types::H160;
     use primitive_types::U256;
 
-    pub fn signing_preimage(tx: &TxLegacy) -> Vec<u8> {
+    fn encoded_for_signing(tx: &TxLegacy) -> Vec<u8> {
         let mut stream = rlp::RlpStream::new();
-        tx.append_signing_preimage(&mut stream);
+        tx.encode_for_signing_in(&mut stream);
         stream.out().to_vec()
     }
 
@@ -169,6 +217,41 @@ mod tests {
 
     fn decoded(raw: &[u8]) -> SignedTxLegacy {
         SignedTxLegacy::decode_strict(&rlp::Rlp::new(raw)).unwrap()
+    }
+
+    fn with_v(v: u128) -> Vec<u8> {
+        let mut stream = rlp::RlpStream::new_list(SIGNED_TRANSACTION_FIELDS);
+        let rlp = rlp::Rlp::new(PRE_155);
+        for index in 0..SIGNED_TRANSACTION_FIELDS {
+            if index == V_INDEX {
+                stream.append(&v);
+            } else {
+                stream.append_raw(rlp.at(index).unwrap().as_raw(), 1);
+            }
+        }
+        stream.out().to_vec()
+    }
+
+    #[test]
+    fn pre_eip155_v_values_encode_and_decode() {
+        let mut typed = decoded(PRE_155);
+        typed.tx.chain_id = None;
+        for (v, y_parity) in [(27, false), (28, true)] {
+            typed.signature.y_parity = y_parity;
+            assert_eq!(typed.v(), v);
+            assert_eq!(SignedTxLegacy::decode_v(v), Ok((y_parity, None)));
+        }
+    }
+
+    #[test]
+    fn invalid_pre_eip155_v_ranges_are_rejected() {
+        for v in (0u128..=26).chain(29..=34) {
+            assert_eq!(
+                SignedTxLegacy::decode_v(v),
+                Err(TxDecodeError::InvalidLegacyV(v)),
+                "v = {v}"
+            );
+        }
     }
 
     #[test]
@@ -196,7 +279,7 @@ mod tests {
             let typed = decoded(raw);
             let v = typed.v();
             assert_eq!(
-                rlp::Rlp::new(raw).val_at::<u128>(6).unwrap(),
+                rlp::Rlp::new(raw).val_at::<u128>(V_INDEX).unwrap(),
                 v,
                 "{v} must match the encoded `v`"
             );
@@ -206,29 +289,49 @@ mod tests {
         }
     }
 
-    /// `chain_id` selects the six- or nine-field signing preimage.
+    /// `chain_id` selects the six- or nine-field encoding for signing.
     #[test]
-    fn the_signing_preimage_depends_on_the_chain_id() {
+    fn the_encoding_for_signing_depends_on_the_chain_id() {
         let mut tx = decoded(PRE_155).tx;
-        let unprotected = signing_preimage(&tx);
+        let unprotected = encoded_for_signing(&tx);
         tx.chain_id = Some(1);
-        let protected = signing_preimage(&tx);
-        assert_eq!(rlp::Rlp::new(&unprotected).item_count().unwrap(), 6);
-        assert_eq!(rlp::Rlp::new(&protected).item_count().unwrap(), 9);
+        let protected = encoded_for_signing(&tx);
+        assert_eq!(
+            rlp::Rlp::new(&unprotected).item_count().unwrap(),
+            PRE_EIP155_SIGNING_FIELDS
+        );
+        assert_eq!(
+            rlp::Rlp::new(&protected).item_count().unwrap(),
+            EIP155_SIGNING_FIELDS
+        );
         assert_ne!(unprotected, protected);
     }
 
     /// Every `u64` chain id has a representable `u128` `v` and round-trips.
     #[test]
-    fn the_widest_chain_id_still_encodes_and_round_trips() {
-        for chain_id in [1u64, u64::MAX / 2, u64::MAX - 1, u64::MAX] {
+    fn eip155_v_encodes_and_decodes_across_the_u64_range() {
+        for chain_id in [
+            0u64,
+            1,
+            137,
+            0xFFFF,
+            1_000_000,
+            u64::MAX / 2,
+            u64::MAX - 1,
+            u64::MAX,
+        ] {
             for y_parity in [false, true] {
                 let mut typed = decoded(PRE_155);
                 typed.tx.chain_id = Some(chain_id);
                 typed.signature = TxSignature::new(y_parity, typed.signature.r, typed.signature.s);
 
-                let expected = 35 + u128::from(chain_id) * 2 + u128::from(y_parity);
+                let expected = EIP155_V_BASE + u128::from(chain_id) * 2 + u128::from(y_parity);
                 assert_eq!(typed.v(), expected, "chain {chain_id}, parity {y_parity}");
+                assert_eq!(
+                    SignedTxLegacy::decode_v(expected),
+                    Ok((y_parity, Some(chain_id))),
+                    "chain {chain_id}, parity {y_parity}"
+                );
 
                 let encoded = rlp::encode(&typed).to_vec();
                 assert_eq!(
@@ -243,16 +346,7 @@ mod tests {
     /// `v = u64::MAX` remains valid and round-trips exactly.
     #[test]
     fn the_widest_u64_v_decodes_and_reencodes() {
-        let mut stream = rlp::RlpStream::new_list(9);
-        let rlp = rlp::Rlp::new(PRE_155);
-        for index in 0..9usize {
-            if index == 6 {
-                stream.append(&u128::from(u64::MAX));
-            } else {
-                stream.append_raw(rlp.at(index).unwrap().as_raw(), 1);
-            }
-        }
-        let bytes = stream.out().to_vec();
+        let bytes = with_v(u128::from(u64::MAX));
         let typed = SignedTxLegacy::decode_strict(&rlp::Rlp::new(&bytes)).unwrap();
         assert_eq!(typed.tx.chain_id, Some((u64::MAX - 35) / 2));
         assert!(!typed.signature.y_parity);
@@ -263,16 +357,17 @@ mod tests {
     /// A `v` encoding a chain id wider than `u64` is rejected rather than truncated.
     #[test]
     fn a_chain_id_wider_than_a_u64_is_refused() {
-        let mut stream = rlp::RlpStream::new_list(9);
-        let rlp = rlp::Rlp::new(PRE_155);
-        for index in 0..9usize {
-            if index == 6 {
-                stream.append(&(35u128 + (u128::from(u64::MAX) + 1) * 2));
-            } else {
-                stream.append_raw(rlp.at(index).unwrap().as_raw(), 1);
-            }
+        let first_too_wide = EIP155_V_BASE + (u128::from(u64::MAX) + 1) * 2;
+        for v in [first_too_wide, first_too_wide + 1, u128::MAX] {
+            assert_eq!(
+                SignedTxLegacy::decode_v(v),
+                Err(TxDecodeError::InvalidLegacyV(v))
+            );
         }
-        assert!(SignedTxLegacy::decode_strict(&rlp::Rlp::new(&stream.out())).is_err());
+        assert_eq!(
+            SignedTxLegacy::decode_strict(&rlp::Rlp::new(&with_v(first_too_wide))),
+            Err(TxDecodeError::InvalidLegacyV(first_too_wide))
+        );
     }
 
     #[test]
@@ -297,28 +392,27 @@ mod tests {
 
     #[test]
     fn decoding_rejects_a_v_that_encodes_no_parity() {
-        let mut stream = rlp::RlpStream::new_list(9);
-        let rlp = rlp::Rlp::new(PRE_155);
-        for index in 0..9usize {
-            if index == 6 {
-                stream.append(&26u64); // below 27 and below 35: neither form
-            } else {
-                stream.append_raw(rlp.at(index).unwrap().as_raw(), 1);
-            }
-        }
-        assert!(SignedTxLegacy::decode_strict(&rlp::Rlp::new(&stream.out())).is_err());
+        assert_eq!(
+            SignedTxLegacy::decode_strict(&rlp::Rlp::new(&with_v(26))),
+            Err(TxDecodeError::InvalidLegacyV(26))
+        );
     }
 
     #[test]
-    fn decoding_requires_exactly_nine_strictly_tiling_items() {
-        // Eight items.
-        let mut short = rlp::RlpStream::new_list(8);
-        for _ in 0..8 {
-            short.append(&0u8);
+    fn decoding_requires_the_signed_field_count_and_strict_tiling() {
+        for count in [SIGNED_TRANSACTION_FIELDS - 1, SIGNED_TRANSACTION_FIELDS + 1] {
+            let mut stream = rlp::RlpStream::new_list(count);
+            for _ in 0..count {
+                stream.append(&0u8);
+            }
+            assert_eq!(
+                SignedTxLegacy::decode_strict(&rlp::Rlp::new(&stream.out())),
+                Err(TxDecodeError::Rlp(rlp::DecoderError::RlpIncorrectListLen))
+            );
         }
-        assert!(SignedTxLegacy::decode_strict(&rlp::Rlp::new(&short.out())).is_err());
 
-        // Nine items plus three bytes no item accounts for, with the list header grown to match.
+        // The correct item count plus three bytes no item accounts for, with the list header grown
+        // to match.
         let mut spliced = PRE_155.to_vec();
         let payload = rlp::PayloadInfo::from(PRE_155).unwrap();
         spliced.extend_from_slice(&[0xb9, 0xff, 0xff]);

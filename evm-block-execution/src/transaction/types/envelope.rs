@@ -247,29 +247,29 @@ impl SignedTxEnvelope {
         }
     }
 
-    /// The bytes the sender signed: the transaction encoded without its signature.
+    /// The consensus encoding hashed to produce this transaction's signature hash.
     ///
-    /// Total. The preimage differs from the envelope in its tail, and for a legacy transaction also
-    /// in its length — six fields or nine, chosen by the chain id the type carries.
+    /// Total. The encoding differs from the envelope in its signature tail, and for a legacy
+    /// transaction also in its length: six fields or nine, chosen by its chain id.
     #[must_use]
-    pub fn signing_preimage(&self) -> Vec<u8> {
+    pub fn encoded_for_signing(&self) -> Vec<u8> {
         let mut stream = rlp::RlpStream::new();
-        self.append_signing_preimage(&mut stream);
+        self.encode_for_signing_in(&mut stream);
         stream.out().to_vec()
     }
 
-    /// Writes the signing preimage into `stream`, clearing it first.
+    /// Encodes this transaction for signing into `stream`, clearing it first.
     ///
     /// The form to use over a whole block: one stream serves every transaction and retains its backing
-    /// capacity. A typed preimage writes its type byte and field list into that same storage, rather
-    /// than materialising the list and then copying it into a second prefixed buffer.
-    pub(crate) fn append_signing_preimage(&self, stream: &mut rlp::RlpStream) {
+    /// capacity. A typed transaction writes its type byte and field list into that same storage,
+    /// rather than materializing the list and then copying it into a second prefixed buffer.
+    pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         match self {
-            Self::Legacy(tx) => tx.tx.append_signing_preimage(stream),
-            Self::Eip2930(tx) => tx.tx.append_signing_preimage(stream),
-            Self::Eip1559(tx) => tx.tx.append_signing_preimage(stream),
-            Self::Eip4844(tx) => tx.tx.append_signing_preimage(stream),
-            Self::Eip7702(tx) => tx.tx.append_signing_preimage(stream),
+            Self::Legacy(tx) => tx.tx.encode_for_signing_in(stream),
+            Self::Eip2930(tx) => tx.tx.encode_for_signing_in(stream),
+            Self::Eip1559(tx) => tx.tx.encode_for_signing_in(stream),
+            Self::Eip4844(tx) => tx.tx.encode_for_signing_in(stream),
+            Self::Eip7702(tx) => tx.tx.encode_for_signing_in(stream),
         }
     }
 
@@ -279,15 +279,15 @@ impl SignedTxEnvelope {
     /// block's transactions.
     ///
     /// # Panics
-    /// Panics if an internal signing-preimage encoder leaves its unbounded RLP list unfinished.
+    /// Panics if an internal encoder leaves the transaction's signing list unfinished.
     #[must_use]
     pub(crate) fn signature_hash_in(&self, stream: &mut rlp::RlpStream) -> H256 {
-        self.append_signing_preimage(stream);
+        self.encode_for_signing_in(stream);
         // `as_raw()` skips `RlpStream::out()`'s completion check; fail closed before sender recovery
-        // can hash a signing preimage whose unbounded list was not finalized.
+        // can hash an incomplete encoding.
         assert!(
             stream.is_finished(),
-            "transaction signing preimage left an open list"
+            "transaction encoding for signing left an open list"
         );
         keccak256(stream.as_raw())
     }
@@ -295,7 +295,7 @@ impl SignedTxEnvelope {
     /// The hash the sender signed, from which the sender is recovered.
     #[must_use]
     pub fn signature_hash(&self) -> H256 {
-        keccak256(&self.signing_preimage())
+        keccak256(&self.encoded_for_signing())
     }
 
     /// The transaction hash: `keccak256` of the EIP-2718 envelope.
@@ -689,8 +689,8 @@ mod tests {
         );
     }
 
-    /// A real EIP-155 legacy transaction (`v = 37`), the one form `vectors()` does not cover: the
-    /// nine-field signing preimage. Its hash is what distinguishes it from the pre-155 form.
+    /// A real EIP-155 legacy transaction (`v = 37`), the one form `vectors()` does not cover: its
+    /// nine-field encoding for signing. Its hash is what distinguishes it from the pre-155 form.
     const LEGACY_EIP155: &[u8] = &hex!(
         "f9015482078b8505d21dba0083022ef1947a250d5630b4cf539739df2c5dacb4c659f2488d880c46549a521b13d8b8e47ff36ab50000000000000000000000000000000000000000000066ab5a608bd00a23f2fe000000000000000000000000000000000000000000000000000000000000008000000000000000000000000048c04ed5691981c42154c6167398f95e8f38a7ff00000000000000000000000000000000000000000000000000000000632ceac70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000006c6ee5e31d828de241282b9606c8e98ea48526e225a0c9077369501641a92ef7399ff81c21639ed4fd8fc69cb793cfa1dbfab342e10aa0615facb2f1bcf3274a354cfe384a38d0cc008a11c2dd23a69111bc6930ba27a8"
     );
@@ -698,9 +698,9 @@ mod tests {
     /// Independent consensus vectors for the two hashes.
     ///
     /// The round-trip test proves the *envelope bytes*; these prove the two hashes derived from them,
-    /// and they are the only checks here that would catch a preimage which re-encodes correctly and
-    /// still hashes wrong. The signing preimage in particular cannot be validated by re-encoding at
-    /// all — it differs from the envelope in its tail, and for a legacy transaction in its length.
+    /// and they are the only checks here that would catch a signing encoding which re-encodes
+    /// correctly and still hashes wrong. That encoding cannot be validated by re-encoding the
+    /// envelope: it differs in its tail, and for a legacy transaction in its length.
     ///
     /// Every hash was cross-checked by recovering the signer and comparing it with the fixture's
     /// `sender`. `tx_hash` is absent where the fixture did not publish one.
@@ -755,7 +755,7 @@ mod tests {
             }
         }
 
-        // The nine-field legacy preimage, which no other vector exercises.
+        // The nine-field legacy encoding for signing, which no other vector exercises.
         let eip155 = SignedTxEnvelope::decode_2718(LEGACY_EIP155).unwrap();
         assert_eq!(
             eip155.signature_hash(),

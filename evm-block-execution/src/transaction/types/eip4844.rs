@@ -51,7 +51,7 @@ pub struct TxEip4844 {
 }
 
 impl TxEip4844 {
-    /// The eleven fields, shared by the signed encoding and the signing preimage.
+    /// The eleven transaction fields shared by the signed envelope and the encoding for signing.
     fn append_fields(&self, stream: &mut rlp::RlpStream) {
         stream.append(&self.chain_id);
         stream.append(&self.nonce);
@@ -66,11 +66,11 @@ impl TxEip4844 {
         append_blob_hashes(stream, &self.blob_versioned_hashes);
     }
 
-    /// Writes the type byte and signing fields into a reusable stream.
+    /// Encodes this transaction for signing into `stream`, clearing it first.
     ///
     /// An unbounded list derives its arity from the fields written, avoiding a duplicated manual
-    /// count before the preimage is hashed through `as_raw`.
-    pub(crate) fn append_signing_preimage(&self, stream: &mut rlp::RlpStream) {
+    /// count before the encoding is hashed through `as_raw`.
+    pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         stream.append_raw(&[TYPE_BYTE], 0);
         stream.begin_unbounded_list();
@@ -78,11 +78,11 @@ impl TxEip4844 {
         stream.finalize_unbounded_list();
     }
 
-    /// The signing preimage as its own buffer, for a one-off caller.
+    /// The consensus encoding hashed to produce this transaction's signature hash.
     #[must_use]
-    pub fn signing_preimage(&self) -> Vec<u8> {
+    pub fn encoded_for_signing(&self) -> Vec<u8> {
         let mut stream = rlp::RlpStream::new();
-        self.append_signing_preimage(&mut stream);
+        self.encode_for_signing_in(&mut stream);
         stream.out().to_vec()
     }
 }
@@ -216,10 +216,10 @@ mod tests {
     }
 
     #[test]
-    fn the_signing_preimage_omits_the_signature() {
-        let preimage = decoded().tx.signing_preimage();
-        assert_eq!(preimage[0], TYPE_BYTE);
-        assert_eq!(rlp::Rlp::new(&preimage[1..]).item_count().unwrap(), 11);
+    fn the_encoding_for_signing_omits_the_signature() {
+        let encoded = decoded().tx.encoded_for_signing();
+        assert_eq!(encoded[0], TYPE_BYTE);
+        assert_eq!(rlp::Rlp::new(&encoded[1..]).item_count().unwrap(), 11);
     }
 
     #[test]

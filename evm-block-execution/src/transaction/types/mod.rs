@@ -2,9 +2,9 @@
 //!
 //! Each concrete type contains exactly the fields that its EIP defines. Invalid combinations are
 //! therefore unrepresentable—for example, [`TxEip4844`] and [`TxEip7702`] use `H160` rather than
-//! `TxKind` because those transaction types cannot create contracts. This also makes envelope and
-//! signing-preimage encoding total over all representable values. Internal assertions guard only
-//! encoder list completion and arity, which no transaction value can violate.
+//! `TxKind` because those transaction types cannot create contracts. This also makes both envelope
+//! encoding and encoding for signing total over all representable values. Internal assertions guard
+//! only encoder list completion and arity, which no transaction value can violate.
 //!
 //! Decoding produces a signed consensus type, which can be consumed into the union-shaped
 //! [`TxEnv`](crate::transaction::TxEnv) used by execution. There is intentionally no reverse
@@ -13,7 +13,7 @@
 //!
 //! # Field order
 //!
-//! Each type's `append_fields` fixes the consensus-critical field order:
+//! Each type's field encoder fixes the consensus-critical field order:
 //!
 //! | Type | Fields (before the tail) |
 //! |---|---|
@@ -23,7 +23,7 @@
 //! | `0x03` | `0x02` fields, then `max_fee_per_blob_gas, blob_versioned_hashes` |
 //! | `0x04` | `0x02` fields, then `authorization_list` |
 //!
-//! The signing preimage ends after these fields (plus `chain_id, 0, 0` for legacy EIP-155); the
+//! The encoding for signing ends after these fields (plus `chain_id, 0, 0` for legacy EIP-155); the
 //! envelope appends `v, r, s` for legacy or `y_parity, r, s` for typed transactions. In dynamic-fee
 //! transactions, `max_priority_fee_per_gas` precedes `max_fee_per_gas`.
 //!

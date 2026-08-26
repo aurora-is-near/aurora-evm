@@ -59,7 +59,7 @@ impl UncompressedPublicKey {
 /// [`SenderRecoveryError`] if any transaction fails the EIP-2 `s` check or
 /// carries a signature no public key can be recovered from.
 pub fn recover_block(block: Block) -> Result<RecoveredBlock, SenderRecoveryError> {
-    // One RLP buffer for the whole block, reused for every transaction's signing preimage.
+    // One RLP buffer for the whole block, reused for every transaction's signing encoding.
     let mut stream = rlp::RlpStream::new();
     let senders = block
         .transactions()
@@ -96,7 +96,7 @@ pub fn recover_block_with_public_keys(
         });
     }
 
-    // One RLP stream for the whole block: every transaction's signing preimage is built and hashed
+    // One RLP stream for the whole block: every transaction is encoded for signing and hashed
     // in the same backing storage, whose capacity is retained between transactions.
     let mut stream = rlp::RlpStream::new();
     let senders = public_keys
