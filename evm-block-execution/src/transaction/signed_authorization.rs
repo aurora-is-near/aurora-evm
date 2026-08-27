@@ -53,10 +53,9 @@ impl SignedAuthorization {
 
     /// Recovers the executor representation of this authorization.
     ///
-    /// Invalid tuples remain in the list as `is_valid: false`, because EIP-7702 charges intrinsic gas
-    /// for every tuple. This checks only chain id, signature normalization and recovery; state-based
-    /// nonce and delegation checks remain with the executor. `rlp_stream` is cleared and reused for
-    /// the signing preimage.
+    /// Applies EIP-7702 steps 1 and 3. Invalid tuples remain as `is_valid: false`, because intrinsic
+    /// gas is charged for every tuple. The executor applies step 2 and steps 4–9 against state.
+    /// `rlp_stream` is cleared and reused for the signing preimage.
     ///
     /// # Panics
     /// Panics if the internal three-field signing-preimage encoder does not finish its bounded RLP
@@ -69,12 +68,14 @@ impl SignedAuthorization {
     ) -> Authorization {
         let invalid = Authorization::new(H160::zero(), self.address, self.nonce, false);
 
-        // `chain_id == 0` authorises on every chain; otherwise it must be this transaction's own.
+        // EIP-7702 step 1: zero authorises on every chain; otherwise the tuple must use this
+        // transaction's chain ID. EvmContext later binds that ID to the trusted chain config.
         if !self.chain_id.is_zero() && self.chain_id != U256::from(tx_chain_id) {
             return invalid;
         }
-        // `y_parity` outside `{0, 1}` yields no signature at all, which is a well-formed tuple that
-        // simply authorises nobody.
+        // EIP-7702 step 3: recover from MAGIC || rlp([chain_id, address, nonce]). A wire-valid
+        // y_parity outside {0, 1}, an EIP-2 high-s signature, or failed recovery invalidates only
+        // this tuple.
         let Some(signature) = self.signature() else {
             return invalid;
         };

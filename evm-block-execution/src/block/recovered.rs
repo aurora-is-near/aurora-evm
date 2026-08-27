@@ -1,11 +1,7 @@
 //! A sealed block paired with one sender per transaction.
 //!
-//! [`RecoveredBlock`] is consumed into the [`TxEnv`] values used by execution. The intended
-//! constructors are [`recover_block`] and [`recover_block_with_public_keys`], which derive senders
-//! from signatures.
-//!
-//! The public `try_new` constructors only verify that sender and transaction counts match; they do
-//! not prove that recovery occurred. Unchecked constructors are crate-private.
+//! Recovery functions derive senders from signatures. Public `try_new` constructors only verify the
+//! one-sender-per-transaction shape; crate-private constructors may skip even that check.
 //!
 //! [`recover_block`]: crate::block::recover_block
 //! [`recover_block_with_public_keys`]: crate::block::recover_block_with_public_keys
@@ -155,24 +151,13 @@ impl RecoveredBlock {
         (self.block, self.senders)
     }
 
-    /// Projects the whole block into the executor's transaction form, **consuming** it.
+    /// Consumes the block into execution transactions, preserving transaction-to-sender order.
     ///
-    /// The bridge from the consensus shape to the execution shape, and the reason both halves of the
-    /// pairing are owned: [`SignedTxEnvelope::into_tx_env`] takes its transaction by value, so the call
-    /// data, the access list and the authorization tuples *move* into the result. Borrowing the
-    /// transactions here would force a copy of each that the executor immediately takes ownership of
-    /// anyway. Nothing reads the block after this point, which is what makes that safe.
-    ///
-    /// Order is preserved: entry `i` is transaction `i` paired with its own sender.
+    /// Ownership lets call data, access lists and authorizations move into [`TxEnv`] without cloning.
     ///
     /// # Errors
-    /// [`BlockRecoveryError::SenderCountMismatch`] if the two lists do not line up. Unreachable for
-    /// any value built through the public constructors, which all check it, or by
-    /// [`recover_block`](super::recover_block), which derives one sender per transaction from the
-    /// transactions themselves — but it is checked rather than assumed, because the alternative is a
-    /// `zip` that pairs the shorter of the two and yields a *prefix* of the block. Executing part of a
-    /// block and reporting success is the worst outcome available here. The cost is one length
-    /// comparison per block.
+    /// [`BlockRecoveryError::SenderCountMismatch`] if the lists differ in length. The explicit check
+    /// prevents `zip` from silently projecting only a prefix of the block.
     pub fn into_tx_envs(self) -> Result<Vec<TxEnv>, BlockRecoveryError> {
         check_sender_count(self.transactions(), &self.senders)?;
         let (block, senders) = self.split();
@@ -308,8 +293,7 @@ mod tests {
         assert_eq!(split_senders, senders);
         assert_eq!(sealed.into_block(), source);
     }
-    /// The projection is the only place the pairing is spent, so it is where order has to be proven:
-    /// entry `i` must carry sender `i`, not merely some sender from the list.
+    /// Projection must preserve each transaction's matching sender.
     #[test]
     fn into_tx_envs_pairs_each_transaction_with_its_own_sender() {
         let senders = vec![H160::repeat_byte(0xaa), H160::repeat_byte(0xbb)];
@@ -323,8 +307,7 @@ mod tests {
         }
     }
 
-    /// The fields the consuming projection moves rather than copies must arrive intact, or the
-    /// executor would run a transaction that is not the one the block carried.
+    /// Owned transaction fields must survive the consuming projection unchanged.
     #[test]
     fn into_tx_envs_carries_the_transactions_own_fields() {
         let sender = H160::repeat_byte(0xaa);
@@ -349,9 +332,7 @@ mod tests {
         assert!(recovered.into_tx_envs().unwrap().is_empty());
     }
 
-    /// A mismatched pairing is refused rather than zipped down to a prefix: executing part of a block
-    /// and reporting success is worse than refusing it. Only the crate-internal unchecked
-    /// constructors can build one, which is why this reaches for one.
+    /// A mismatched unchecked value must fail instead of being truncated by `zip`.
     #[test]
     fn into_tx_envs_refuses_a_mismatched_pairing_instead_of_truncating() {
         let recovered = RecoveredBlock::new_unhashed_unchecked(block(2), Vec::new());
@@ -363,7 +344,7 @@ mod tests {
             }
         );
 
-        // The other direction too: `zip` truncates whichever list is longer.
+        // `zip` also truncates when senders outnumber transactions.
         let recovered = RecoveredBlock::new_unhashed_unchecked(
             block(1),
             vec![H160::repeat_byte(0xaa), H160::repeat_byte(0xbb)],
@@ -379,7 +360,7 @@ mod tests {
 
     #[test]
     fn try_new_sealed_rejects_more_senders_than_transactions() {
-        // The untested direction: `zip` truncates both ways, so both must be rejected.
+        // Public construction rejects the opposite mismatch too.
         let sealed = block(1).seal_slow();
         let senders = vec![H160::repeat_byte(0xaa), H160::repeat_byte(0xbb)];
         assert_eq!(

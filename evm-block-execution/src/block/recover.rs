@@ -1,13 +1,9 @@
 //! Recovering each transaction's sender from its signature.
 //!
-//! [`recover_block`] derives the public key selected by the signature's parity and converts it to an
-//! address. [`recover_block_with_public_keys`] additionally compares that recovered key with an
-//! untrusted caller-supplied key; a mismatch can only reject the block.
-//!
-//! Recovery is required rather than verification against the supplied key because two candidate
-//! keys can verify the same `(hash, r, s)`. Selecting the supplied key would let the caller choose the
-//! sender without changing the transaction bytes. Each transaction also enforces the low-`s` rule
-//! from [EIP-2] before recovery.
+//! [`recover_block`] derives each sender from the signed transaction.
+//! [`recover_block_with_public_keys`] additionally checks untrusted key hints. Recovery, rather than
+//! verification alone, prevents a hint from selecting between two keys that verify the same
+//! signature. The [EIP-2] low-`s` rule is enforced first.
 //!
 //! [EIP-2]: https://eips.ethereum.org/EIPS/eip-2
 
@@ -27,9 +23,8 @@ const UNCOMPRESSED_TAG: u8 = 0x04;
 
 /// Bytes in the uncompressed SEC1 form `0x04 || x || y`.
 ///
-/// Construction does not validate that `(x, y)` is a secp256k1 point. The recovery APIs remain safe:
-/// they compare supplied bytes with the canonical point recovered by `libsecp256k1` before deriving
-/// the sender.
+/// Construction checks neither the SEC1 tag nor curve membership. Recovery compares the bytes with
+/// the canonical point returned by `libsecp256k1` before deriving a sender.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UncompressedPublicKey(pub [u8; UNCOMPRESSED_PUBLIC_KEY_LEN]);
 
@@ -79,13 +74,10 @@ pub fn recover_block(block: Block) -> Result<RecoveredBlock, SenderRecoveryError
     Ok(pair_with_senders(block, senders))
 }
 
-/// Establishes the sender of every transaction in `block`, additionally requiring each to be the
-/// account the matching supplied public key controls, and returns the block paired with those
-/// senders.
+/// Recovers every sender and requires it to match the corresponding supplied public key.
 ///
-/// The keys must be given in transaction order, one per transaction. They are a hint, not an input
-/// to the result: the sender is recovered from the transaction either way, and a key that does not
-/// match the recovered one can only get the block rejected.
+/// Keys are ordered one per transaction. They can only confirm or reject a recovered sender, never
+/// select one.
 ///
 /// # Errors
 /// [`SenderRecoveryError`] if the key count does not match the transaction count, or if any
@@ -118,20 +110,12 @@ pub fn recover_block_with_public_keys(
     Ok(pair_with_senders(block, senders))
 }
 
-/// Pairs a block with the senders just established for it.
-///
-/// `senders` was built by mapping over `transactions`, so there is exactly one per transaction and
-/// the count check would be redundant; the lazy hash keeps callers that never ask for it from paying
-/// for it.
+/// Pairs a block with the senders derived one-for-one above, without eagerly hashing it.
 fn pair_with_senders(block: Block, senders: Vec<H160>) -> RecoveredBlock {
     RecoveredBlock::new_unhashed_unchecked(block, senders)
 }
 
-/// The public key `ecrecover` yields for one transaction's signature.
-///
-/// Deliberately takes no candidate key: the recovered key — and therefore the sender — is a function
-/// of the transaction's signature hash, `r`, `s` and `y_parity` alone, all of which are inside the
-/// bytes the block hash commits to, so no caller-supplied value can steer it.
+/// Recovers the public key determined solely by the transaction's signed fields.
 fn recover_public_key(
     transaction: &SignedTxEnvelope,
     index: usize,
@@ -255,10 +239,7 @@ mod tests {
         name: &'static str,
         raw: &'static [u8],
         public_key: [u8; 65],
-        /// The *other* key `libsecp256k1::verify` accepts for this exact `(hash, r, s)`.
-        ///
-        /// `verify` compares only the x coordinate of the recomputed point, so the two keys that
-        /// share one signature both pass it; only recovery at `y_parity` picks one of them.
+        /// The other key that verifies this `(hash, r, s)`; recovery at `y_parity` selects one.
         alt_public_key: [u8; 65],
         sender: [u8; 20],
     }
@@ -375,8 +356,7 @@ mod tests {
 
         let recovered = recover_block_with_public_keys(block_of(transactions), &keys).unwrap();
         assert_eq!(recovered.senders(), expected);
-        // Senders line up with their transactions, in order — asked of the pairing where it is spent,
-        // because that is the only place the two lists are read against each other.
+        // The consuming projection preserves transaction-to-sender order.
         for (tx_env, vector) in recovered.into_tx_envs().unwrap().iter().zip(&all) {
             assert_eq!(tx_env.caller, H160(vector.sender), "{}", vector.name);
         }
@@ -430,8 +410,7 @@ mod tests {
 
     #[test]
     fn a_non_normalized_s_is_rejected_before_verification() {
-        // secp256k1n - s is an equally valid signature over the same message; EIP-2 forbids it, and
-        // it must be rejected even though `verify` itself would accept it.
+        // `n - s` verifies the same message, but EIP-2 forbids it.
         let vector = &vectors()[2];
         let mut transaction = SignedTxEnvelope::decode_2718(vector.raw).unwrap();
         let order = U256::from_big_endian(&hex!(
@@ -474,8 +453,7 @@ mod tests {
     }
     #[test]
     fn the_other_candidate_key_for_the_same_signature_is_rejected() {
-        // The hash-preserving attack: the block's bytes are untouched, only the *hint* changes.
-        // `libsecp256k1::verify` accepts both keys, so the old code let the caller pick the sender.
+        // Changing only the key hint must not select the other verifying key as sender.
         for vector in vectors() {
             let transaction = SignedTxEnvelope::decode_2718(vector.raw).unwrap();
             assert_eq!(
@@ -498,7 +476,7 @@ mod tests {
 
     #[test]
     fn the_two_candidate_keys_name_different_senders() {
-        // Keeps the test above non-vacuous: the choice the old code left open was a real one.
+        // The two verifying keys derive different senders.
         for vector in vectors() {
             let genuine = UncompressedPublicKey(vector.public_key).address(0).unwrap();
             let alternate = UncompressedPublicKey(vector.alt_public_key)
@@ -511,8 +489,7 @@ mod tests {
 
     #[test]
     fn flipping_y_parity_is_rejected() {
-        // `y_parity` is not part of the signature hash, which is why verification could not see this
-        // change; recovery can, because the parity is what selects the point.
+        // `y_parity` is outside the preimage but selects the recovered point.
         for vector in vectors() {
             let mut transaction = SignedTxEnvelope::decode_2718(vector.raw).unwrap();
             let before = transaction.signature_hash();
@@ -537,8 +514,7 @@ mod tests {
 
     #[test]
     fn an_off_curve_key_with_the_uncompressed_tag_is_rejected() {
-        // Reported as a mismatch rather than as an invalid key: an off-curve point can never equal
-        // the on-curve key recovery yields, so the outcome is the same rejection.
+        // An off-curve hint cannot equal the canonical recovered point.
         let vector = &vectors()[2];
         let transaction = SignedTxEnvelope::decode_2718(vector.raw).unwrap();
         let mut off_curve = vector.public_key;

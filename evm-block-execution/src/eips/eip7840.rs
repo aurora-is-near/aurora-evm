@@ -1,32 +1,28 @@
-//! The blob-parameter set a block is executed under — [EIP-7840].
+//! [EIP-7840] blob parameters used for block execution.
 //!
-//! Parameters stored as `u64` match their practical range and avoid casts at call sites. Blob fees
-//! remain `u128`, and calculations that can overflow return `Option` because `excess_blob_gas`
-//! arrives from an untrusted header. See the arithmetic notes in [`eip4844`].
+//! Parameters use `u64`; blob fees use `u128`. Calculations fed by untrusted header values return
+//! `Option` on invalid or overflowing arithmetic. See [`eip4844`].
 //!
 //! [EIP-7840]: https://github.com/ethereum/EIPs/tree/master/EIPS/eip-7840.md
 
 use crate::eips::eip4844::DATA_GAS_PER_BLOB;
 use crate::eips::{eip4844, eip7594, eip7691, eip7892};
 
-/// Minimum execution gas required to include a blob in a block.
-///
-/// Blob gas and execution gas are decoupled, but [EIP-7918] keeps a floor in *execution* gas for
-/// including a blob at all, so the blob market cannot be driven arbitrarily cheap relative to it.
+/// EIP-7918 execution-gas floor used by the blob reserve-price rule.
 ///
 /// [EIP-7918]: https://eips.ethereum.org/EIPS/eip-7918
 pub const BLOB_BASE_COST: u64 = 2_u64.pow(13);
 
-/// Configuration for the blob-related calculations.
+/// Blob-market parameters active for a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlobParams {
-    /// Target blob count for the block.
+    /// Target blobs per block.
     pub target_blob_count: u64,
-    /// Max blob count for the block.
+    /// Maximum blobs per block.
     pub max_blob_count: u64,
-    /// Update fraction for excess blob gas calculation.
+    /// Blob-fee update fraction.
     pub update_fraction: u64,
-    /// Minimum gas price for a data blob.
+    /// Minimum blob gas price.
     ///
     /// Not required per EIP-7840 and assumed to be the default
     /// [`eip4844::BLOB_TX_MIN_BLOB_GASPRICE`] if not set.
@@ -35,7 +31,7 @@ pub struct BlobParams {
     ///
     /// Defaults to `max_blob_count` unless set otherwise.
     pub max_blobs_per_tx: u64,
-    /// Minimum execution gas required to include a blob in a block.
+    /// Execution-gas floor for the EIP-7918 reserve-price rule.
     ///
     /// Defaults to `0` for Cancun and Prague hardforks, and [`BLOB_BASE_COST`] for Osaka and
     /// later.
@@ -118,16 +114,15 @@ impl BlobParams {
         self
     }
 
-    /// Returns the maximum available blob gas in a block: `max_blob_count * DATA_GAS_PER_BLOB`.
+    /// Returns `max_blob_count * DATA_GAS_PER_BLOB`.
     ///
-    /// Saturating: a blob count large enough to overflow is far beyond any schedule a chain could
-    /// carry, and a saturated maximum only ever rejects more blocks, never fewer.
+    /// Saturation is fail-closed: an unrealistic overflowing schedule can only tighten validation.
     #[must_use]
     pub const fn max_blob_gas_per_block(&self) -> u64 {
         self.max_blob_count.saturating_mul(DATA_GAS_PER_BLOB)
     }
 
-    /// Returns the blob gas target per block: `target_blob_count * DATA_GAS_PER_BLOB`.
+    /// Returns `target_blob_count * DATA_GAS_PER_BLOB`.
     ///
     /// Saturating, for the same reason as [`Self::max_blob_gas_per_block`].
     #[must_use]
@@ -135,16 +130,12 @@ impl BlobParams {
         self.target_blob_count.saturating_mul(DATA_GAS_PER_BLOB)
     }
 
-    /// Calculates the next block's `excess_blob_gas` from this block's `excess_blob_gas`,
-    /// `blob_gas_used` and `base_fee_per_gas`.
+    /// Calculates the next block's `excess_blob_gas` from the parent header values.
     ///
-    /// The under-target clamp runs **first**, before the [EIP-7918] reserve-price branch. That order
-    /// is normative: a block whose total usage is below target yields zero regardless of the reserve
-    /// price, and swapping the two would return a scaled value where the spec returns zero.
+    /// Per EIP-7918, usage below target clamps to zero before the reserve-price branch.
     ///
     /// # Errors
-    /// `None` if the blob fee needed by the reserve-price comparison cannot be computed, or if
-    /// `max_blob_count` is zero — a schedule that permits no blobs has no scaling factor.
+    /// `None` if fee arithmetic fails or `max_blob_count` is zero.
     ///
     /// [EIP-7918]: https://eips.ethereum.org/EIPS/eip-7918
     #[inline]
@@ -161,8 +152,7 @@ impl BlobParams {
             return Some(0);
         }
 
-        // EIP-7918: while the blob fee is small relative to the execution base fee, excess grows by
-        // a scaled amount instead of the plain overshoot.
+        // EIP-7918 scales excess while blob fees remain below the execution-gas reserve price.
         let reserve = u128::from(self.blob_base_cost).checked_mul(u128::from(base_fee_per_gas))?;
         let blob_side =
             u128::from(DATA_GAS_PER_BLOB).checked_mul(self.calc_blob_fee(excess_blob_gas)?)?;

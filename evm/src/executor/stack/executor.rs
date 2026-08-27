@@ -58,12 +58,20 @@ pub enum StackExitKind {
     Failed,
 }
 
-/// `Authorization` contains already prepared data for EIP-7702.
-/// - `authority`is `ecrecovered` authority address.
-/// - `address` is delegation destination address.
-/// - `nonce` is the `nonce` value which `authority.nonce` should be equal.
-/// - `is_valid` is the flag that indicates the validity of the authorization. It is used to
-///   charge gas for each authorization item, but if it's invalid exclude from EVM `authority_list` flow.
+/// Executor-ready representation of one EIP-7702 authorization entry.
+///
+/// The transaction layer creates exactly one value for every signed authorization, including an
+/// invalid one, because intrinsic gas is charged for every list entry:
+///
+/// - `authority` is the address recovered by EIP-7702 step 3, or zero when steps 1 or 3 fail;
+/// - `address` is the signed delegation target;
+/// - `nonce` is the account nonce to which the authorization is bound;
+/// - `is_valid` records whether the transaction layer completed steps 1 and 3 successfully.
+///
+/// [`StackExecutor`] skips entries with `is_valid == false`. For the remaining entries it applies
+/// step 2 and the state-dependent steps 4–9 in list order.
+///
+/// See [EIP-7702 authorization processing](https://eips.ethereum.org/EIPS/eip-7702#behavior).
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "with-serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Authorization {
@@ -799,8 +807,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         }
 
         self.warm_addresses_and_storage(caller, address, access_list);
-        // EIP-7702. authorized accounts
-        // NOTE: it must be after `inc_nonce`
+        // EIP-7702 processes authorizations after incrementing the transaction sender's nonce.
         if let Err(e) = self.authorized_accounts(authorization_list) {
             return (e.into(), Vec::new());
         }
@@ -993,24 +1000,23 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 
     /// Authorized accounts behavior.
     ///
-    /// According to `EIP-7702` behavior section should be several steps of verifications.
-    /// Current function includes steps 2.4-9 from the spec:
+    /// Applies EIP-7702 step 2 and steps 4–9 to prepared authorizations:
     /// 2. Verify the `nonce` is less than `2**64 - 1`.
     /// 4. Add `authority` to `accessed_addresses`
     /// 5. Verify the code of `authority` is either empty or already delegated.
     /// 6. Verify the `nonce` of `authority` is equal to `nonce` (of address).
-    /// 7. Add `PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST` gas to the global refund counter if authority exists in the trie.
+    /// 7. Add `PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST` gas to the global refund counter if authority is not empty.
     /// 8. Set the code of `authority` to be `0xef0100 || address`. This is a delegation designation.
     /// 9. Increase the `nonce` of `authority` by one.
     ///
-    /// It means, that steps 1,3 of spec must be passed before calling this function:
+    /// Steps 1 and 3 must be applied before calling this function:
     /// 1. Verify the chain id is either 0 or the chain’s current ID.
     /// 3. `authority = ecrecover(...)`
     ///
     /// See: [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702#behavior)
     ///
-    /// ## Errors
-    /// Return error if nonce increment return error.
+    /// # Errors
+    /// Returns an error if an authority nonce or the refund counter cannot be updated.
     fn authorized_accounts(
         &mut self,
         authorization_list: Vec<Authorization>,
@@ -1023,7 +1029,8 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         let state = self.state_mut();
         let mut warm_authority: Vec<H160> = Vec::with_capacity(authorization_list.len());
         for authority in authorization_list {
-            // If EIP-7702 Spec validation steps 1, 3 return false.
+            // The transaction layer keeps one prepared entry per signed authorization. An entry
+            // that failed step 1 or 3 remains for intrinsic-gas accounting but has no state effects.
             if !authority.is_valid {
                 continue;
             }
@@ -1046,7 +1053,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                 continue;
             }
 
-            // 7. Add PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST gas to the global refund counter if authority exists in the trie.
+            // 7. Refund PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST if authority is not empty.
             if !state.is_empty(authority.authority) {
                 refunded_accounts += 1;
             }
@@ -1235,10 +1242,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             gas_limit = gas_limit.saturating_add(self.config.call_stipend);
         }
 
-        // EIP-7702 - get delegated designation address code
-        // Detect loop for Delegated designation
+        // EIP-7702 resolves an authority's delegation indicator to the target account's code.
+        // Resolution stops after this one pointer: if the target code is another indicator, those
+        // bytes are returned as code rather than followed again, which also terminates cycles.
         let code = self.authority_code(code_address);
-        // Warm Delegated address after access
+        // The first resolved target becomes warm for subsequent accesses.
         if let Some(target_address) = self.get_authority_target(code_address) {
             self.warm_target((target_address, None));
         }
@@ -1514,23 +1522,17 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
         self.state.basic(address).balance
     }
 
-    /// Fetch the code size of an address.
-    /// Provide a default implementation by fetching the code.
+    /// Returns the account's stored code size.
     ///
-    /// According to EIP-7702, the code size of an address is the size of the
-    /// delegated address code size.
-    /// <https://eips.ethereum.org/EIPS/eip-7702#delegation-designation>
+    /// EIP-7702 `EXTCODESIZE` observes the 23-byte delegation indicator itself, not its target.
     fn code_size(&mut self, address: H160) -> U256 {
         let target_code = self.code(address);
         U256::from(target_code.len())
     }
 
-    /// Fetch the code hash of an address.
-    /// Provide a default implementation by fetching the code.
+    /// Returns the account's stored code hash.
     ///
-    /// According to EIP-7702, the code hash of an address is the hash of the
-    /// delegated address code hash.
-    /// <https://eips.ethereum.org/EIPS/eip-7702#delegation-designation>
+    /// EIP-7702 `EXTCODEHASH` hashes the delegation indicator itself, not its target code.
     fn code_hash(&mut self, address: H160) -> H256 {
         if !self.exists(address) {
             return H256::default();
@@ -1805,15 +1807,19 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
         }
     }
 
-    /// Get delegation designator code for the authority code.
-    /// If the code of address is delegation designator, then retrieve code
-    /// from the designation address for the `authority`.
-    /// Detect delegated designation loop and return basic byte code for loop.
+    /// Returns the code executed for an account, resolving one EIP-7702 delegation indicator.
     ///
-    /// It's related to [EIP-7702 Delegation Designation](https://eips.ethereum.org/EIPS/eip-7702#delegation-designation)
-    /// When authority code is found, it should set delegated address to `authority_access` array for
-    /// calculating additional gas cost. Gas must be charged for the authority address and
-    /// for delegated address, for detection is address warm or cold.
+    /// A regular account returns its own code. For a delegated authority, the call context and
+    /// storage address remain the authority, while the code is loaded from the indicated target.
+    /// Resolution stops after one pointer, so a target that is itself delegated returns its
+    /// indicator bytes instead of forming a delegation chain or loop. A precompile target has no
+    /// account code and therefore resolves to empty code rather than invoking the precompile.
+    ///
+    /// The authority-to-target mapping is cached in the access metadata. The call-cost path uses
+    /// that mapping to charge and update the target's EIP-2929 warm/cold status separately from the
+    /// authority's.
+    ///
+    /// See [EIP-7702 delegation indicators](https://eips.ethereum.org/EIPS/eip-7702#delegation-indicator).
     fn authority_code(&mut self, authority: H160) -> Vec<u8> {
         if !self.config.has_authorization_list {
             return self.code(authority);

@@ -267,8 +267,8 @@ impl Transaction {
                 return Err(InvalidTxReason::AuthorizationListNotSupportedForCreate);
             }
 
-            // Check EIP-7702 Spec validation steps: 1 and 2
-            // Other validation step inside EVM transact logic.
+            // Apply EIP-7702 steps 1 and 3. Aurora EVM applies step 2 and steps 4-9 after
+            // incrementing the transaction sender's nonce.
             for auth in &tx_authorization_list {
                 // 1. Verify the chain id is either 0 or the chain’s current ID.
                 let mut is_valid = auth.chain_id <= U256::from(u64::MAX)

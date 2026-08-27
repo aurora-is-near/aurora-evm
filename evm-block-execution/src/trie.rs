@@ -132,12 +132,11 @@ const fn is_empty_account(account: &MemoryAccount) -> bool {
     account.nonce.is_zero() && account.balance.is_zero() && account.code.is_empty()
 }
 
-/// Computes the world `state_root` over a full account map (standalone / full-state path).
+/// Computes the canonical Ethereum state root from a fully materialized account map.
 ///
-/// EIP-161 "empty" accounts are excluded here defensively, so the result is canonical even if the
-/// caller did not prune them (`MemoryBackend::apply` with `delete_empty = true` already prunes
-/// them during execution). Against a witness the root is instead computed by an external sparse trie,
-/// which sees only the revealed leaves.
+/// Addresses are secure-trie keys; storage roots and code hashes are derived from each account.
+/// EIP-161 empty accounts are omitted. A partial witness must instead update an authenticated sparse
+/// trie rooted at the parent state.
 #[must_use]
 pub fn state_root(accounts: &BTreeMap<H160, MemoryAccount>) -> H256 {
     sec_trie_root(

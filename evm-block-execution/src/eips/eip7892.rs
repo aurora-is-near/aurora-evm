@@ -4,59 +4,52 @@
 
 use crate::eips::eip7840::BlobParams;
 
-/// Targeted blob count with BPO1 activation
+/// Target blobs per block from BPO1.
 pub const BPO1_TARGET_BLOBS_PER_BLOCK: u64 = 10;
 
-/// Max blob count with BPO1 activation
+/// Maximum blobs per block from BPO1.
 pub const BPO1_MAX_BLOBS_PER_BLOCK: u64 = 15;
 
-/// Update fraction for BPO1
+/// Blob-fee update fraction from BPO1.
 pub const BPO1_BASE_UPDATE_FRACTION: u64 = 8_346_193;
 
-/// Targeted blob count with BPO2 activation
+/// Target blobs per block from BPO2.
 pub const BPO2_TARGET_BLOBS_PER_BLOCK: u64 = 14;
 
-/// Max blob count with BPO2 activation
+/// Maximum blobs per block from BPO2.
 pub const BPO2_MAX_BLOBS_PER_BLOCK: u64 = 21;
 
-/// Update fraction for BPO2
+/// Blob-fee update fraction from BPO2.
 pub const BPO2_BASE_UPDATE_FRACTION: u64 = 11_684_671;
 
 /// A scheduled blob parameter update entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlobScheduleEntry {
-    /// Blob parameters for the Cancun hardfork
+    /// Cancun blob parameters.
     Cancun(BlobParams),
-    /// Blob parameters for the Prague hardfork
+    /// Prague blob parameters.
     Prague(BlobParams),
-    /// Blob parameters that take effect at a specific timestamp
+    /// Parameters activated at a specific timestamp.
     TimestampUpdate(u64, BlobParams),
 }
 
-/// Blob parameters configuration for a chain, including scheduled updates.
+/// Fork defaults and timestamp-scheduled blob-parameter updates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobScheduleBlobParams {
-    /// Configuration for blob-related calculations for the Cancun hardfork.
+    /// Cancun defaults.
     pub cancun: BlobParams,
-    /// Configuration for blob-related calculations for the Prague hardfork.
+    /// Prague defaults.
     pub prague: BlobParams,
-    /// Configuration for blob-related calculations for the Osaka hardfork.
+    /// Osaka defaults.
     pub osaka: BlobParams,
-    /// All time-based scheduled updates to blob parameters after Osaka.
+    /// Timestamp updates from Osaka onward, in any order.
     ///
-    /// This can include blob params for hardforks after Osaka (e.g. Amsterdam) that are interleaved
-    /// with BPOs.
-    ///
-    /// The order is **not** significant: the field is `pub` and the only constructor that fills it
-    /// keeps the caller's order, so [`Self::active_scheduled_params_at_timestamp`] picks the latest
-    /// active entry rather than trusting a position.
-    ///
-    /// Caution: it is expected that these are only activated at or after Osaka.
+    /// The latest active timestamp wins; entries may include BPOs and later hardfork parameters.
     pub scheduled: Vec<(u64, BlobParams)>,
 }
 
 impl BlobScheduleBlobParams {
-    /// Returns the blob schedule for the ethereum mainnet.
+    /// Returns the Ethereum mainnet blob schedule.
     #[must_use]
     pub fn mainnet() -> Self {
         Self {
@@ -67,7 +60,7 @@ impl BlobScheduleBlobParams {
         }
     }
 
-    /// Configures the scheduled [`BlobParams`] with timestamps.
+    /// Replaces the timestamp-scheduled entries.
     #[must_use]
     pub fn with_scheduled(
         mut self,
@@ -77,14 +70,9 @@ impl BlobScheduleBlobParams {
         self
     }
 
-    /// Returns the latest blob parameters already active at `timestamp`.
+    /// Returns the latest scheduled parameters active at `timestamp`, independent of entry order.
     ///
-    /// Chosen by activation timestamp, not by position: [`Self::scheduled`] is a `pub` field and
-    /// [`Self::with_scheduled`] keeps whatever order it is handed, so reading the last active *entry*
-    /// would hand back an older parameter set for an unsorted schedule — and blob fees and the
-    /// per-block blob limit are validated against it. For a schedule in ascending order the two agree.
-    ///
-    /// Note: this scans only the entries scheduled by timestamp, not cancun or prague.
+    /// Fork defaults are not searched here.
     #[must_use]
     pub fn active_scheduled_params_at_timestamp(&self, timestamp: u64) -> Option<&BlobParams> {
         self.scheduled
@@ -123,8 +111,7 @@ impl Default for BlobScheduleBlobParams {
 mod tests {
     use super::{BlobParams, BlobScheduleBlobParams};
 
-    /// The two BPOs, deliberately handed over newest-first — the order a caller has no obligation to
-    /// get right, since the field is `pub` and the setter does not sort.
+    /// Two BPOs in reverse order prove that lookup does not trust insertion order.
     fn unordered() -> BlobScheduleBlobParams {
         BlobScheduleBlobParams::mainnet()
             .with_scheduled([(200, BlobParams::bpo2()), (100, BlobParams::bpo1())])
@@ -143,7 +130,7 @@ mod tests {
         }
     }
 
-    /// The boundaries themselves: activation is inclusive, and nothing is active before the first.
+    /// Activation boundaries are inclusive; nothing precedes the first entry.
     #[test]
     fn activation_is_inclusive_and_starts_empty() {
         let schedule = unordered();

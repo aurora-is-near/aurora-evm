@@ -52,7 +52,7 @@ pub struct EvmContext<'block, 'tx> {
     /// Current block environment.
     pub block: &'block BlockEnv,
     /// Transaction being validated.
-    pub tx: &'tx TxEnv,
+    pub(crate) tx: &'tx TxEnv,
     /// Aurora EVM gas rules for the active hardfork.
     pub gas_config: Config,
     /// Active hardfork.
@@ -453,7 +453,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         Ok(())
     }
 
-    /// Validates an EIP-7702 transaction.
+    /// Validates the transaction-level EIP-7702 rules.
     ///
     /// # Errors
     /// Returns [`InvalidEvmContext`] if the fork, fee, authorization list or destination is invalid.

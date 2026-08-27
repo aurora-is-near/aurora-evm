@@ -7,20 +7,14 @@
 //! body  = [transactions, ommers, withdrawals?]
 //! ```
 //!
-//! Withdrawals are trailing-optional, so absence and an empty list remain distinct. Ommers are always
-//! encoded as an empty list and any non-empty list is rejected because only post-merge blocks are
-//! supported.
+//! Withdrawals are trailing-optional, preserving the distinction between absence and an empty list.
+//! Only post-merge blocks are supported, so ommers must be empty.
 //!
-//! Inside the transaction list a legacy transaction is a bare RLP list, while a typed one is its
-//! EIP-2718 envelope wrapped in an RLP byte string. Trie values and transaction hashes use the bare
-//! envelope instead; [`SignedTxEnvelope::decode_block_item`] keeps those forms distinct and rejects
-//! wrapped or explicitly typed legacy transactions.
+//! A legacy body item is a bare RLP list; a typed transaction is a string-wrapped EIP-2718 envelope.
+//! Trie values and transaction hashes use the bare envelope instead.
 //!
-//! Canonical blocks implement `rlp::Encodable`. Because a manually assembled [`Header`] can contain
-//! a gap in its optional tail, callers must check it through [`Header::encode_rlp`] before relying on
-//! the trait encoding. Decoding remains a method so [`BlockDecodeError`] can preserve transaction
-//! indices, unsupported ommers and exact buffer-length failures. The EIP-4844 network wrapper is not
-//! accepted: blocks contain only the transaction payload with versioned hashes.
+//! Manually assembled headers should use [`Header::encode_rlp`] to reject optional-tail gaps. The
+//! EIP-4844 network wrapper is not a valid block-body transaction item.
 
 use crate::block::{Block, BlockBody, Header};
 use crate::rlp_strict;
@@ -118,11 +112,9 @@ impl rlp::Encodable for Block {
 }
 
 impl Block {
-    /// Decodes a block from the start of `bytes`, **ignoring anything after it**.
+    /// Decodes one block from the start of `bytes`, ignoring trailing bytes.
     ///
-    /// Crate-internal, because that leniency is the hazard the strict path exists to remove: a block
-    /// decoded this way can re-encode to different bytes than it arrived as. [`Self::decode_exact`] is
-    /// the public form, and it is this one plus the check that the block covers its buffer.
+    /// Crate-internal because public byte input must use [`Self::decode_exact`].
     ///
     /// # Errors
     /// [`BlockDecodeError`] if the list has the wrong length, the header or a transaction does not
@@ -135,19 +127,12 @@ impl Block {
         Ok(Self::new(header, body))
     }
 
-    /// Decodes a block that must occupy `bytes` **entirely**.
-    ///
-    /// The only way in from bytes, and strict on purpose: RLP is self-delimiting, so a lenient
-    /// decoder would silently drop whatever follows the block and then re-encode to something the
-    /// input never was.
+    /// Decodes exactly one block occupying all of `bytes`.
     ///
     /// # Errors
-    /// [`BlockDecodeError::TrailingBytes`] if `bytes` holds more than the block;
-    /// [`rlp::DecoderError::RlpIsTooShort`] if the block declares a payload `bytes` does not hold —
-    /// the opposite fault, and named as such rather than folded into `TrailingBytes`;
-    /// [`rlp::DecoderError::RlpInvalidLength`] if the declared length overflows a `usize`; and
-    /// otherwise [`BlockDecodeError`] for a list of the wrong length, a header or transaction that
-    /// does not decode, or a non-empty ommers list.
+    /// [`BlockDecodeError::TrailingBytes`] for bytes after the block,
+    /// [`rlp::DecoderError::RlpIsTooShort`] for a truncated item, or another [`BlockDecodeError`] for
+    /// malformed contents, unsupported ommers or an overflowing declared length.
     pub fn decode_exact(bytes: &[u8]) -> Result<Self, BlockDecodeError> {
         let consumed = rlp_strict::declared_item_len(bytes)?;
         match consumed.cmp(&bytes.len()) {

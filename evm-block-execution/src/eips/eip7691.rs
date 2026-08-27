@@ -4,17 +4,16 @@
 
 use crate::eips::eip4844::{BLOB_TX_MIN_BLOB_GASPRICE, fake_exponential};
 
-/// CL-enforced target blobs per block after Pectra hardfork activation.
+/// Consensus-layer target blobs per block from Pectra.
 pub const TARGET_BLOBS_PER_BLOCK_ELECTRA: u64 = 6;
 
-/// CL-enforced maximum blobs per block after Pectra hardfork activation.
+/// Consensus-layer maximum blobs per block from Pectra.
 pub const MAX_BLOBS_PER_BLOCK_ELECTRA: u64 = 9;
 
-/// Determines the maximum rate of change for blob fee after Pectra hardfork activation.
+/// Blob-fee update fraction from Pectra.
 pub const BLOB_GASPRICE_UPDATE_FRACTION_PECTRA: u64 = 5_007_716;
 
-/// As [`eip4844::calc_blob_gasprice`](crate::eips::eip4844::calc_blob_gasprice), but with the Pectra update
-/// fraction.
+/// Calculates the blob gas price with Pectra's update fraction.
 ///
 /// # Errors
 /// `None` if the price overflows `u128`; see

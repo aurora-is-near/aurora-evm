@@ -1,9 +1,7 @@
 //! The Ethereum block header and its RLP identity.
 //!
-//! [`Header`] is the canonical header: the same fields, in the same order, that the Yellow Paper
-//! and the post-merge EIPs define. Its RLP encoding is what the block hash is computed from
-//! ([`Header::hash_slow`]), so the field order and the encoding of every field are
-//! consensus-critical.
+//! [`Header`] follows consensus field order. Its RLP encoding defines the block hash through
+//! [`Header::hash_slow`].
 
 use crate::block::SealedHeader;
 use crate::bloom::Bloom;
@@ -121,18 +119,12 @@ impl Header {
         keccak256(&rlp::encode(self))
     }
 
-    /// Decodes a header that must occupy `bytes` **entirely**.
+    /// Decodes exactly one header occupying all of `bytes`.
     ///
-    /// The form to use for a header that arrives as a standalone blob — an ancestor supplied in an
-    /// execution witness, say — because its hash is `keccak256` of exactly those bytes: trailing
-    /// bytes that decoding ignored would still be hashed, so a lenient decode would pair a header
-    /// with a hash that is not its own.
+    /// Exactness is required when the input bytes define the header hash, as for witnessed ancestors.
     ///
     /// # Errors
-    /// [`rlp::DecoderError::RlpIsTooShort`] if the header declares a payload the buffer does not
-    /// hold, [`rlp::DecoderError::RlpIsTooBig`] if bytes follow the header, and
-    /// [`rlp::DecoderError::RlpInvalidLength`] if the declared length overflows a `usize`; otherwise
-    /// whatever decoding the header itself reports.
+    /// [`rlp::DecoderError`] for truncation, trailing bytes, length overflow or malformed fields.
     pub fn decode_exact(bytes: &[u8]) -> Result<Self, rlp::DecoderError> {
         let consumed = rlp_strict::declared_item_len(bytes)?;
         match consumed.cmp(&bytes.len()) {
@@ -290,10 +282,7 @@ impl Header {
     }
 }
 
-/// Reads the 8-byte proof-of-work nonce from position `index` of an RLP list.
-///
-/// `decode_value` enforces canonical string encoding and checks the borrowed payload before copying;
-/// `Custom` preserves a field-specific width error within [`rlp::Decodable`].
+/// Decodes a canonical, fixed-width proof-of-work nonce without an intermediate allocation.
 fn decode_nonce_at(rlp: &rlp::Rlp<'_>, index: usize) -> Result<[u8; 8], rlp::DecoderError> {
     rlp.at(index)?.decoder().decode_value(|bytes| {
         bytes
@@ -369,9 +358,7 @@ impl rlp::Decodable for Header {
             state_root: rlp.val_at(3)?,
             transactions_root: rlp.val_at(4)?,
             receipts_root: rlp.val_at(5)?,
-            // Through `Bloom`'s own decoder: it already owns the width and shape rules, and this is
-            // the only place a bloom arrives from the wire, so restating them here would be the
-            // second copy of one rule.
+            // `Bloom` owns its fixed-width and canonical-string checks.
             logs_bloom: rlp.val_at(6)?,
             difficulty: rlp.val_at(7)?,
             number: rlp.val_at(8)?,
@@ -647,8 +634,7 @@ mod tests {
         );
     }
 
-    /// `encode_rlp` must accept exactly the nine positional prefixes across all 256 shapes and name
-    /// the first field that breaks one.
+    /// Across all 256 shapes, only nine positional prefixes are encodable.
     #[test]
     fn encode_rlp_accepts_exactly_the_prefixes() {
         const FIELDS: [HeaderField; 8] = [
@@ -689,8 +675,7 @@ mod tests {
         assert_eq!(prefixes, 9);
     }
 
-    /// Positional fields round-trip only as a prefix, so every prefix must round-trip exactly — the
-    /// item count alone has to identify which fields are present.
+    /// Every optional-tail prefix round-trips with its field count intact.
     #[test]
     fn every_prefix_of_the_trailing_fields_round_trips() {
         for count in 0..=8 {
@@ -711,17 +696,8 @@ mod tests {
         }
     }
 
-    /// Why the gap has to be refused rather than encoded, spelled out on the bytes.
-    ///
-    /// `{blob_gas_used: Some(x)}` with the two fields before it absent writes 16 items, and item 15 is
-    /// `base_fee_per_gas` by position — so `x` reads back as a base fee and `blob_gas_used` reads back
-    /// as absent. Nothing about those bytes is malformed; they are a valid London header that says
-    /// something else. Two distinct headers therefore share one encoding and one hash, which is exactly
-    /// what a block hash must never allow.
-    ///
-    /// Some gaps are caught by accident, because the field a value shifts into is a different width —
-    /// a 32-byte withdrawals root does not fit the `u64` `base_fee_per_gas`. This one shifts a `u64`
-    /// into a `u64`, so nothing catches it but the check.
+    /// A `blob_gas_used` gap shifts one `u64` into the `base_fee_per_gas` position, producing valid
+    /// bytes for a different header and therefore an ambiguous hash.
     #[test]
     fn encoding_a_gap_would_produce_a_different_header() {
         let mut present = [false; 8];

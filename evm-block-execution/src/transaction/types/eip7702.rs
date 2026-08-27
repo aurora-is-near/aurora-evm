@@ -72,10 +72,11 @@ impl TxEip7702 {
         self.append_fields(stream);
     }
 
-    /// The authorities this transaction's tuples authorize, one entry per tuple.
+    /// Projects every signed tuple into the executor's prepared form.
     ///
-    /// One RLP buffer is reused across tuples. Failed tuples remain as `is_valid: false` because
-    /// intrinsic gas is charged per tuple.
+    /// This applies EIP-7702 steps 1 and 3. The executor applies step 2 and steps 4–9 after
+    /// incrementing the sender nonce. Invalid tuples remain in place because intrinsic gas is
+    /// charged for every tuple. One RLP buffer is reused for all signing preimages.
     #[must_use]
     pub fn recovered_authorizations(&self) -> Vec<Authorization> {
         let mut stream = rlp::RlpStream::new();
@@ -89,7 +90,8 @@ impl TxEip7702 {
     /// Named destructuring makes new consensus fields compile-time update points.
     #[must_use]
     pub fn into_tx_env(self, caller: H160) -> TxEnv {
-        // Recovery borrows the tuples, so do it before moving the transaction fields.
+        // Recovery applies EIP-7702 steps 1 and 3 before the signed tuples are discarded. The
+        // state-dependent step 2 and steps 4-9 remain with Aurora EVM.
         let authorization_list = self.recovered_authorizations();
 
         let Self {

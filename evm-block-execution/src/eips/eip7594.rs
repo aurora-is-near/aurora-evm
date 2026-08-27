@@ -19,8 +19,8 @@ pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMEN
 /// A wrapper version for EIP-7594 sidecar encoding.
 pub const EIP_7594_WRAPPER_VERSION: u8 = 1;
 
-/// Maximum number of blobs per transaction after Fusaka hardfork activation.
+/// Maximum blobs per transaction from Fusaka.
 pub const MAX_BLOBS_PER_TX_FUSAKA: u64 = 6;
 
-// A `Cell` type belongs with the blob payload, which this crate does not model — see the note in
-// `eip4844`. Only the sizes are kept, because the fork's per-transaction blob cap is defined here.
+// Blob payloads and cells are outside this crate; only their protocol sizes and transaction cap live
+// here.

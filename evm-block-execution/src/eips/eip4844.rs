@@ -1,10 +1,7 @@
 //! [EIP-4844] blob constants and the blob-gas market helpers.
 //!
-//! # Arithmetic
-//!
-//! [`fake_exponential`] and its callers use checked, fallible arithmetic. `excess_blob_gas` comes
-//! from an untrusted header; an unchecked Taylor loop could overflow or run for an impractical
-//! number of iterations. Returning `None` bounds both failure modes.
+//! Blob-fee arithmetic is checked because `excess_blob_gas` comes from an untrusted header.
+//! [`fake_exponential`] returns `None` on invalid or overflowing inputs.
 //!
 //! [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 
@@ -12,8 +9,7 @@ use crate::eips::eip7840;
 use hex_literal::hex;
 use primitive_types::{H256, U256};
 
-/// The modulus of the BLS group used in the KZG commitment scheme. All field elements contained in
-/// a blob MUST be STRICTLY LESS than this value.
+/// BLS scalar-field modulus; every blob field element must be strictly smaller.
 pub const BLS_MODULUS_BYTES: H256 = H256(hex!(
     "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
 ));
@@ -46,8 +42,7 @@ pub const FIELD_ELEMENTS_PER_BLOB_USIZE: usize = 4096;
 /// Number of usable bits in a field element. The top two bits are always zero.
 pub const USABLE_BITS_PER_FIELD_ELEMENT: usize = 254;
 
-/// The number of usable bytes in a single data blob — how much can be encoded without any field
-/// element reaching [`bls_modulus`].
+/// Usable payload bytes per blob without reaching [`bls_modulus`].
 pub const USABLE_BYTES_PER_BLOB: usize =
     USABLE_BITS_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB_USIZE / 8;
 
@@ -112,15 +107,10 @@ pub fn calc_blob_gasprice(excess_blob_gas: u64) -> Option<u128> {
     eip7840::BlobParams::cancun().calc_blob_fee(excess_blob_gas)
 }
 
-/// EIP-4844 `fake_exponential`: approximates `factor * e ** (numerator / denominator)` by Taylor
-/// expansion, with fully **checked** arithmetic.
+/// Approximates `factor * e ** (numerator / denominator)` using EIP-4844's Taylor expansion.
 ///
-/// Returns `None` if any intermediate term overflows `u128`. This keeps consensus code free of the
-/// debug-panic / release-wrap divergence of raw arithmetic, and — unlike a saturating variant — it
-/// also **bounds the work**: a term only overflows once `numerator / denominator` is large, so the
-/// loop makes at most a few dozen iterations before it either converges or reports overflow. An
-/// adversarially huge `numerator` (a witness-supplied excess blob gas near `u64::MAX`, say) can no
-/// longer make the loop spin for billions of iterations or silently return a wrong value.
+/// Checked arithmetic prevents debug/release divergence and bounds adversarial inputs: the function
+/// either converges or reports overflow instead of wrapping or running an impractical loop.
 ///
 /// # Errors
 /// `None` if `denominator == 0`, or if any intermediate term overflows.
@@ -244,8 +234,7 @@ mod tests {
         }
     }
 
-    /// The reason the function is fallible: an adversarial `excess_blob_gas` must neither wrap nor
-    /// make the Taylor loop run away.
+    /// Adversarial excess blob gas must neither wrap nor make the Taylor loop run away.
     #[test]
     fn an_adversarial_numerator_reports_overflow_rather_than_wrapping() {
         assert_eq!(fake_exponential(1, u64::MAX, 5_007_716), None);
