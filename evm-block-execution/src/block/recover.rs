@@ -25,7 +25,11 @@ const UNCOMPRESSED_PUBLIC_KEY_LEN: usize = 65;
 /// The SEC1 tag that introduces an uncompressed public key.
 const UNCOMPRESSED_TAG: u8 = 0x04;
 
-/// An uncompressed secp256k1 public key: `0x04 || x || y`.
+/// Bytes in the uncompressed SEC1 form `0x04 || x || y`.
+///
+/// Construction does not validate that `(x, y)` is a secp256k1 point. The recovery APIs remain safe:
+/// they compare supplied bytes with the canonical point recovered by `libsecp256k1` before deriving
+/// the sender.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UncompressedPublicKey(pub [u8; UNCOMPRESSED_PUBLIC_KEY_LEN]);
 
@@ -39,6 +43,9 @@ impl Deref for UncompressedPublicKey {
 
 impl UncompressedPublicKey {
     /// The account address this key controls: the low 20 bytes of `keccak256(x || y)`.
+    ///
+    /// This checks the `0x04` tag, but not whether `(x, y)` lies on secp256k1. Use the block recovery
+    /// APIs when the key must be authenticated as a transaction signer.
     ///
     /// # Errors
     /// [`SenderRecoveryError::InvalidPublicKey`] if the key does not carry the uncompressed tag.
@@ -185,7 +192,7 @@ pub enum SenderRecoveryError {
         /// Index of the offending transaction.
         index: usize,
     },
-    /// The supplied public key is not a valid uncompressed secp256k1 point.
+    /// The supplied bytes do not carry the required `0x04` uncompressed SEC1 tag.
     InvalidPublicKey {
         /// Index of the offending transaction.
         index: usize,

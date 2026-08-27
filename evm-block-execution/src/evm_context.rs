@@ -502,6 +502,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     ///
     /// # Errors
     /// Returns [`InvalidEvmContext`] if either required gas amount exceeds the transaction limit.
+    #[inline]
     pub fn validate_and_get_initial_tx_gas(
         &self,
     ) -> Result<IntrinsicAndFloorGas, InvalidEvmContext> {

@@ -11,6 +11,18 @@ use crate::transaction::TxType;
 use crate::transaction::types::{eip1559, eip2930, eip4844, eip7702};
 use aurora_evm::backend::Log;
 
+/// Appends the receipt form of logs: `[address, topics, data]` for each entry.
+fn append_logs(stream: &mut rlp::RlpStream, logs: &[Log]) {
+    stream.begin_list(logs.len());
+    for log in logs {
+        stream.begin_list(3);
+        stream.append(&log.address);
+        stream.append_list(&log.topics);
+        // `Vec<u8>` implements list encoding; receipt log data is one RLP byte string.
+        stream.append(&log.data.as_slice());
+    }
+}
+
 /// Execution receipt for a single transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Receipt {
@@ -48,7 +60,7 @@ impl Receipt {
         stream.append(&u8::from(self.success));
         stream.append(&self.cumulative_gas_used);
         stream.append(&self.bloom);
-        stream.append_list(&self.logs);
+        append_logs(stream, &self.logs);
     }
 
     /// EIP-2718 encoding: `rlp(body)` for legacy receipts, `type_byte || rlp(body)` otherwise.
@@ -102,7 +114,9 @@ mod tests {
     use super::Receipt;
     use crate::bloom::Bloom;
     use crate::transaction::TxType;
+    use crate::trie::ordered_trie_root;
     use aurora_evm::backend::Log;
+    use hex_literal::hex;
     use primitive_types::{H160, H256};
 
     /// Independent, allocation-insensitive expression of the EIP-2718 receipt encoding.
@@ -111,7 +125,13 @@ mod tests {
         body.append(&u8::from(receipt.success));
         body.append(&receipt.cumulative_gas_used);
         body.append(&receipt.bloom);
-        body.append_list(&receipt.logs);
+        body.begin_list(receipt.logs.len());
+        for log in &receipt.logs {
+            body.begin_list(3);
+            body.append(&log.address);
+            body.append_list(&log.topics);
+            body.append(&log.data.as_slice());
+        }
         let body = body.out();
 
         let type_byte = match receipt.tx_type {
@@ -154,6 +174,58 @@ mod tests {
             let receipt = Receipt::new(tx_type, true, 21_000, vec![]);
             assert_eq!(receipt.encoded()[0], expected, "{tx_type:?}");
         }
+    }
+
+    /// Published EIP-2481 vector, also used by Reth's Ethereum receipt tests.
+    #[test]
+    fn legacy_receipt_matches_eip2481_vector() {
+        let mut expected = vec![0xf9, 0x01, 0x66, 0x80, 0x01, 0xb9, 0x01, 0x00];
+        expected.extend_from_slice(&[0; 256]);
+        expected.extend_from_slice(&hex!(
+            "f85ff85d940000000000000000000000000000000000000011f842"
+            "a0000000000000000000000000000000000000000000000000000000000000dead"
+            "a0000000000000000000000000000000000000000000000000000000000000beef830100ff"
+        ));
+        let receipt = Receipt {
+            tx_type: TxType::Legacy,
+            success: false,
+            cumulative_gas_used: 1,
+            logs: vec![Log {
+                address: H160(hex!("0000000000000000000000000000000000000011")),
+                topics: vec![
+                    H256(hex!(
+                        "000000000000000000000000000000000000000000000000000000000000dead"
+                    )),
+                    H256(hex!(
+                        "000000000000000000000000000000000000000000000000000000000000beef"
+                    )),
+                ],
+                data: hex!("0100ff").to_vec(),
+            }],
+            // The published encoding vector deliberately carries an explicit zero bloom.
+            bloom: Bloom::zero(),
+        };
+
+        assert_eq!(receipt.encoded(), expected);
+    }
+
+    /// Single-receipt Cancun block from EEST v5.4.0 (`blobhash_opcode_contexts`, legacy case).
+    #[test]
+    fn eest_receipt_matches_its_encoding_and_root() {
+        let receipt = Receipt::new(TxType::Legacy, true, 0x5aa9, vec![]);
+
+        // rlp([status = 1, cumulative_gas = 0x5aa9, zero bloom, empty logs]).
+        let mut expected = vec![0xf9, 0x01, 0x08, 0x01, 0x82, 0x5a, 0xa9, 0xb9, 0x01, 0x00];
+        expected.extend_from_slice(&[0; 256]);
+        expected.push(0xc0);
+
+        assert_eq!(receipt.encoded(), expected);
+        assert_eq!(
+            ordered_trie_root([expected]),
+            H256(hex!(
+                "a5ca6f0ba985abff77f091ae13b5077613972f2f4aff28b45229f5726a3e59e6"
+            ))
+        );
     }
 
     #[test]

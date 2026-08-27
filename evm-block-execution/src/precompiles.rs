@@ -250,3 +250,18 @@ fn map_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError
         Src::CreateContractStartingWithEF => ExitError::CreateContractStartingWithEF,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Kzg, Precompiles};
+    use crate::spec::Spec;
+    use aurora_evm::executor::stack::PrecompileSet;
+
+    #[test]
+    fn kzg_activation_starts_at_cancun() {
+        assert!(!Precompiles::new(&Spec::Shanghai).is_precompile(Kzg::ADDRESS));
+        for spec in [Spec::Cancun, Spec::Prague, Spec::Osaka] {
+            assert!(Precompiles::new(&spec).is_precompile(Kzg::ADDRESS));
+        }
+    }
+}
