@@ -17,10 +17,7 @@ use aurora_evm::gasometer::Gasometer;
 use core::fmt;
 use primitive_types::{H256, U256};
 
-/// Blob gas a transaction consumes for `blob_count` blobs.
-///
-/// Saturating: a blob count large enough to overflow cannot come from a decoded transaction, and a
-/// saturated value only ever exceeds a limit, never slips under one.
+/// Blob gas for `blob_count`, saturated so oversized input cannot wrap below a limit.
 fn total_blob_gas(blob_count: usize) -> u64 {
     u64::try_from(blob_count)
         .unwrap_or(u64::MAX)
@@ -112,11 +109,10 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         self.spec >= Spec::Prague && self.tx.tx_type == TxType::Eip7702
     }
 
-    /// Calculates the **maximum** [EIP-4844] blob `data_fee`, at the transaction's
-    /// `max_fee_per_blob_gas`. This is the amount reserved up front against the sender's balance;
-    /// the amount actually charged and burned is [`Self::calc_data_fee`], computed at the block's
-    /// current blob gas price (which is `<=` the max after validation). `None` for non-blob
-    /// transactions.
+    /// Maximum [EIP-4844] blob fee reserved against the sender's balance.
+    ///
+    /// Uses `max_fee_per_blob_gas`; [`Self::calc_data_fee`] returns the fee actually burned.
+    /// Returns `None` for non-blob transactions.
     ///
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[inline]
@@ -129,9 +125,10 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         })
     }
 
-    /// Calculates the **actual** [EIP-4844] blob `data_fee`, at the block's current blob gas price.
-    /// This is the amount charged and burned — contrast [`Self::calc_max_data_fee`], which reserves
-    /// up front at the transaction's `max_fee_per_blob_gas`. `None` for non-blob transactions.
+    /// [EIP-4844] blob fee charged at the block's current blob gas price.
+    ///
+    /// [`Self::calc_max_data_fee`] returns the larger amount reserved up front. Returns `None` for
+    /// non-blob transactions.
     ///
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[inline]
@@ -172,8 +169,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
                 InvalidTransaction::OutOfFunds,
             ))
             .and_then(|funds| {
-                // Upfront balance check must reserve the MAX blob fee (max_fee_per_blob_gas),
-                // not the current effective blob price.
+                // Balance validation reserves the fee cap, not the current blob fee.
                 self.calc_max_data_fee()
                     .map(|data_fee| {
                         funds
@@ -206,7 +202,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        // EIP-4844: Blob Transactions
+        // Cancun requires the block-wide inputs used to price blob gas.
         if self.spec >= Spec::Cancun && self.block.blob_excess_gas_and_price.is_none() {
             return Err(InvalidEvmContext::InvalidHeader(
                 InvalidHeader::ExcessBlobGasNotSet,
@@ -219,9 +215,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        // EIP-155: simple replay attack protection. Unconditional — the chain a block belongs to
-        // is not optional. Only a legacy transaction may omit its own `chain_id`, which selects the
-        // six-field signing preimage over the nine-field one; every typed transaction must carry it.
+        // Typed transactions always carry a chain id; legacy may select the pre-EIP-155 form.
         if self.tx.tx_type != TxType::Legacy && self.tx.chain_id.is_none() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::MissingChainId,
@@ -233,7 +227,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        // EIP-7825: Transaction Gas Limit Cap.
+        // EIP-7825 transaction gas cap.
         if self.spec >= Spec::Osaka {
             let cap = self.tx_gas_limit_cap.unwrap_or(eip7825::TX_GAS_LIMIT_CAP);
             if self.tx.gas_limit > cap {
@@ -270,16 +264,14 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             }
         }
 
-        // Authorization List is only supported for EIP-7702 transactions, so if the transaction
-        // is not of type EIP-7702 and has non-empty authorization list, it is invalid.
+        // Authorization lists belong only to EIP-7702 transactions.
         if !matches!(self.tx.tx_type, TxType::Eip7702) && !self.tx.authorization_list.is_empty() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::AuthorizationListNotSupported,
             ));
         }
 
-        // Blob versioned hashes are an EIP-4844 field: any other transaction type carrying them
-        // is invalid.
+        // Versioned hashes belong only to EIP-4844 transactions.
         if !matches!(self.tx.tx_type, TxType::Eip4844) && !self.tx.blob_versioned_hashes.is_empty()
         {
             return Err(InvalidEvmContext::InvalidTransaction(
@@ -287,18 +279,15 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             ));
         }
 
-        // An access list is an EIP-2930 field, and a legacy transaction has no field for it: the
-        // encoder never writes one, so a non-empty one here is state no signature covered. Unlike the
-        // two checks above it is also *read* — it feeds intrinsic gas and pre-warms addresses and
-        // slots — so it has to be rejected before the gas computation below.
+        // Legacy has no signed access-list field; accepting one would also change intrinsic gas and
+        // address warming outside the signed payload.
         if matches!(self.tx.tx_type, TxType::Legacy) && !self.tx.access_list.is_empty() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::UnexpectedAccessList,
             ));
         }
 
-        // Intrinsic / floor gas (EIP-7623), using the execution-ready access list. Sender-state,
-        // required-funds and block-total checks remain with the block executor.
+        // Sender-state, required-funds and block-total checks remain with the block executor.
         self.validate_and_get_initial_tx_gas()?;
 
         Ok(self)
@@ -335,8 +324,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
     /// # Errors
     /// Returns [`InvalidEvmContext`] for missing, incompatible or inconsistent fee fields.
     pub fn validate_priority_fee(&self) -> Result<(), InvalidEvmContext> {
-        // A typed (EIP-1559/4844/7702) transaction must not carry a legacy `gas_price` field;
-        // otherwise the fee source would be ambiguous.
+        // Dynamic-fee types cannot also carry the legacy fee field.
         if self.tx.gas_price.is_some() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::UnexpectedGasPriceField,
@@ -414,31 +402,28 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             .blob_excess_gas_and_price
             .unwrap_or_default()
             .blob_gas_price;
-        // Ensure that the sender was willing to pay the current blob gas price.
+        // The current blob price must fit under the transaction's fee cap.
         if blob_gas_price > self.tx.max_fee_per_blob_gas {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::BlobGasPriceGreaterThanMax,
             ));
         }
 
-        // There must be at least one blob
+        // A blob transaction must reference at least one blob.
         if self.tx.blob_versioned_hashes.is_empty() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::EmptyBlobs,
             ));
         }
 
-        // The field `to` deviates slightly from the semantics with the exception
-        // that it MUST NOT be nil and therefore must always represent
-        // a 20-byte address. This means that blob transactions cannot
-        // have the form of a `create` transaction.
+        // EIP-4844 requires a destination and forbids contract creation.
         if self.tx.tx_kind.is_create() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::BlobCreateTransaction,
             ));
         }
 
-        // All versioned blob hashes must start with VERSIONED_HASH_VERSION_KZG
+        // Every versioned hash must use the KZG version byte.
         for blob_hash in &self.tx.blob_versioned_hashes {
             let blob_hash = H256(blob_hash.to_big_endian());
             if blob_hash[0] != eip4844::VERSIONED_HASH_VERSION_KZG {
@@ -448,8 +433,7 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
             }
         }
 
-        // The per-transaction and per-block blob-count limits are enforced by the block layer
-        // against the active `BlobParams` (EIP-7594 / EIP-7840), not from a `Spec` comparison here.
+        // The block layer applies schedule-dependent blob-count limits from `BlobParams`.
         Ok(())
     }
 
@@ -481,14 +465,12 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
         }
         self.validate_priority_fee()?;
 
-        // `authorization_list` must be present
         if self.tx.authorization_list.is_empty() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::EmptyAuthorizationList,
             ));
         }
 
-        // EIP-7702 - if transaction is contract creation - validation fails
         if self.tx.tx_kind.is_create() {
             return Err(InvalidEvmContext::InvalidTransaction(
                 InvalidTransaction::Eip7702CreateTransaction,
@@ -536,10 +518,8 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
 
     /// Returns the transaction's validated fee cap.
     ///
-    /// The fee source is chosen by **transaction type**, never by fork or by which field happens
-    /// to be populated: legacy and EIP-2930 use `gas_price`, EIP-1559/4844/7702 use
-    /// `max_fee_per_gas`. `validate_tx` rejects the incompatible field combinations, so this is
-    /// unambiguous for a validated transaction.
+    /// Legacy and EIP-2930 use `gas_price`; dynamic-fee types use `max_fee_per_gas`.
+    /// [`Self::validate_tx`] rejects incompatible field combinations.
     #[must_use]
     pub fn get_gas_price(&self) -> U256 {
         match self.tx.tx_type {

@@ -236,6 +236,7 @@ mod tests {
     use super::{Block, BlockBody, BlockDecodeError, decode_body_items};
     use crate::rlp_strict;
     use crate::transaction::{SignedTxEnvelope, TxType};
+    use crate::trie::ordered_trie_root;
     use crate::withdrawal::Withdrawal;
     use hex_literal::hex;
     use primitive_types::{H160, H256};
@@ -272,9 +273,8 @@ mod tests {
     /// A real block from the Ethereum execution-spec fixtures: its `rlp` field, the `blockHeader.hash`
     /// it must reproduce, and the body shape it must decode to.
     ///
-    /// Between them the four vectors cover every branch of the codec: an empty body, a body mixing
-    /// a legacy transaction with a typed (string-wrapped) one, a pre-Shanghai block whose
-    /// `withdrawals` item is *absent*, and a block carrying an actual withdrawal.
+    /// Together the vectors cover every transaction type, nested access and authorization lists,
+    /// empty and mixed bodies, and both absent and present withdrawals.
     pub(super) struct Vector {
         name: &'static str,
         pub(super) rlp: &'static [u8],
@@ -292,6 +292,24 @@ mod tests {
                 ),
                 hash: hex!("e359e707caf12c4e0ef2c7cf55f318dacf56bce5348139d61b7381ccec90b0dc"),
                 tx_types: &[],
+                withdrawals: Some(0),
+            },
+            Vector {
+                name: "Prague, EIP-2930 with repeated access-list entries",
+                rlp: &hex!(
+                    "f9033bf9025ca0ca3ae77044b619cb2b299418ce3fd8a207f521d6da65c71e9820c218c885dcf0a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347942adc25665018aa1fe0e6bc666dac8fc2697ff9baa0f8199b49791a7ad9b3793e70c6ae1c4808d51d7e707329f887bac682b67e06f8a06bc3b7e2af708bffdf8395b47c0a65ac8bed13010b693bd10d458e3726c7cee8a034e69c07529f60bc157d3f9bfe310b8bdcfbaea80dedb9b66cadb01d5c5531e4b901000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080018407270e00830110e48203e800a0000000000000000000000000000000000000000000000000000000000000000088000000000000000007a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b4218080a00000000000000000000000000000000000000000000000000000000000000000a0e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855f8d8b8d601f8d301800a8307a120948cdf9cd5727230f7cf60842520379509cfa508258080f870f7948cdf9cd5727230f7cf60842520379509cfa50825e1a00000000000000000000000000000000000000000000000000000000000000000f7948cdf9cd5727230f7cf60842520379509cfa50825e1a0000000000000000000000000000000000000000000000000000000000000000180a0a8d412d7ef346948f2541965a0d16a5cf3e38385f3bfa41ca9e45ff9d2075195a04305f95428e06fc531341fffc20f96e444717c3d3a15e6d4e40d2bcd332cbeacc0c0"
+                ),
+                hash: hex!("f94ad38f0d7f8ebf9a6acaab5f90df534e6df3d5541b4398dfc7cc980121e1b0"),
+                tx_types: &[TxType::Eip2930],
+                withdrawals: Some(0),
+            },
+            Vector {
+                name: "Cancun, EIP-4844 + EIP-1559 (blobhash_multiple_txs_in_block)",
+                rlp: &hex!(
+                    "f9041ff9023ca012b0d4adf590f23c4c014f233f14bad0430b2ddb4e92cd554924eacb0ae15cc6a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347942adc25665018aa1fe0e6bc666dac8fc2697ff9baa05e69418e4413143c6dedb27e54ea2df6ebcf5968861c0e7da9fa3fe0e6fbe371a0d284c6c90a6579f509f6f07dd3263fccf8e84d0a79030a34398160509c1d2089a0f44b62ca500455002c17e676410100f1a6df14862de0691766cb2a9ed3c59dc8b901000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080018407270e008302f8a80c80a0000000000000000000000000000000000000000000000000000000000000000088000000000000000007a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421830c000080a00000000000000000000000000000000000000000000000000000000000000000f901dbb9015003f9014c018080078307a120948fc0e9c3c2239d0fca8631f4e272257cf8af952e80a00000000000000000000000000000000000000000000000000000000000000000c00af8c6a001b8c5b09810b5fc07355d3da42e2c3a3e200c1d9a678491b7e8e256fc50cc4fa0015b4c8cc4f86aa2d2cf9e9ce97fca704a11a6c20f6b1d6c00a6e15f6d60a6dfa001878f80eaf10be1a6f618e6f8c071b10a6c14d9b89a3bf2a3f3cf2db6c5681da0014eb72b108d562c639faeb6f8c6f366a28b0381c7d30431117ec8c7bb89f834a001a9b2a6c3f3f0675b768d49b5f5dc5b5d988f88d55766247ba9e40b125f16bba001a4d4cde4aa01e57fb2c880d1d9c778c33bdf85e48ef4c4d4b4de51abccf4ed80a0ab24aec8d2287e8f5f853cb5fdf8de14fe8b8fe4486940bba3ff466c23b7a4c0a07a105021f4d892469dd5a5fa763fa06f23663c7f29939e8dfb7cd32d0775548eb88602f883010180078307a120948fc0e9c3c2239d0fca8631f4e272257cf8af952e80a00000000000000000000000000000000000000000000000000000000000000000c080a0e4cf8e34c5772818f55502c9e4a730f4569b2227b763eccd61ca83b6a8458e20a0649a45b84c873f851d4425282f9cd85b468c68e2fc9002cc0783727a4da8e7d3c0c0"
+                ),
+                hash: hex!("1d8d14f7914fdc34c7aa3e37c613d5c51bc9ea804dd88d35a2c3cfc61b42fd7f"),
+                tx_types: &[TxType::Eip4844, TxType::Eip1559],
                 withdrawals: Some(0),
             },
             Vector {
@@ -324,6 +342,13 @@ mod tests {
         ]
     }
 
+    fn vector_named(name: &str) -> Vector {
+        vectors()
+            .into_iter()
+            .find(|vector| vector.name.contains(name))
+            .unwrap_or_else(|| panic!("missing block vector matching {name:?}"))
+    }
+
     /// The strongest check available: every vector must decode, reproduce the fixture's own block
     /// hash, and re-encode to the very bytes it came from.
     #[test]
@@ -352,6 +377,27 @@ mod tests {
                 .map(SignedTxEnvelope::tx_type)
                 .collect();
             assert_eq!(types, vector.tx_types, "{} transaction types", vector.name);
+
+            let transactions_root = ordered_trie_root(
+                block
+                    .transactions()
+                    .iter()
+                    .map(SignedTxEnvelope::encoded_2718),
+            );
+            assert_eq!(
+                transactions_root, block.header.transactions_root,
+                "{} transactions root",
+                vector.name
+            );
+
+            let withdrawals_root = block.body.withdrawals().map(|withdrawals| {
+                ordered_trie_root(withdrawals.iter().map(|item| rlp::encode(item).to_vec()))
+            });
+            assert_eq!(
+                withdrawals_root, block.header.withdrawals_root,
+                "{} withdrawals root",
+                vector.name
+            );
             assert_eq!(
                 block.body.withdrawals().map(<[Withdrawal]>::len),
                 vector.withdrawals,
@@ -420,7 +466,7 @@ mod tests {
 
     #[test]
     fn decode_exact_rejects_trailing_bytes() {
-        let vector = &vectors()[0];
+        let vector = vector_named("empty body");
         let mut padded = vector.rlp.to_vec();
         padded.push(0xff);
 
@@ -439,7 +485,7 @@ mod tests {
     /// `TrailingBytes` is only ever the one it is named for, so `consumed < total` always holds in it.
     #[test]
     fn decode_exact_names_a_truncated_block_apart_from_a_padded_one() {
-        let raw = vectors()[0].rlp;
+        let raw = vector_named("empty body").rlp;
 
         let mut padded = raw.to_vec();
         padded.push(0xff);
@@ -468,7 +514,7 @@ mod tests {
 
     #[test]
     fn decode_rejects_non_empty_ommers() {
-        let block = Block::decode_exact(vectors()[0].rlp).unwrap();
+        let block = Block::decode_exact(vector_named("empty body").rlp).unwrap();
 
         let mut stream = rlp::RlpStream::new_list(4);
         stream.append(&block.header);
@@ -485,7 +531,7 @@ mod tests {
 
     #[test]
     fn decode_rejects_ommers_that_are_not_a_list() {
-        let block = Block::decode_exact(vectors()[0].rlp).unwrap();
+        let block = Block::decode_exact(vector_named("empty body").rlp).unwrap();
 
         let mut stream = rlp::RlpStream::new_list(4);
         stream.append(&block.header);
@@ -503,7 +549,7 @@ mod tests {
 
     #[test]
     fn decode_rejects_wrong_item_count() {
-        let block = Block::decode_exact(vectors()[0].rlp).unwrap();
+        let block = Block::decode_exact(vector_named("empty body").rlp).unwrap();
 
         for count in [0usize, 1, 2, 5] {
             let mut stream = rlp::RlpStream::new_list(count);
@@ -547,7 +593,7 @@ mod tests {
     #[test]
     fn transaction_errors_carry_their_index() {
         let good = encode_block_item(
-            &Block::decode_exact(vectors()[1].rlp)
+            &Block::decode_exact(vector_named("legacy + EIP-7702").rlp)
                 .unwrap()
                 .body
                 .transactions[0],
@@ -568,7 +614,7 @@ mod tests {
 
     #[test]
     fn body_with_withdrawals_roundtrips_through_a_block() {
-        let block = Block::decode_exact(vectors()[3].rlp).unwrap();
+        let block = Block::decode_exact(vector_named("one withdrawal").rlp).unwrap();
         assert_eq!(
             block.body.withdrawals(),
             Some(
@@ -585,7 +631,9 @@ mod tests {
     #[test]
     fn empty_block_body_encodes_to_three_empty_lists() {
         let block = Block::new(
-            Block::decode_exact(vectors()[0].rlp).unwrap().header,
+            Block::decode_exact(vector_named("empty body").rlp)
+                .unwrap()
+                .header,
             BlockBody::new(Vec::new(), Some(Vec::new())),
         );
         let encoded = rlp::encode(&block).to_vec();
@@ -597,11 +645,12 @@ mod tests {
     /// a round trip with each form preserved.
     #[test]
     fn mixed_transaction_forms_survive_the_body() {
-        let block = Block::decode_exact(vectors()[1].rlp).unwrap();
+        let vector = vector_named("legacy + EIP-7702");
+        let block = Block::decode_exact(vector.rlp).unwrap();
         let transactions: &[SignedTxEnvelope] = block.transactions();
         assert_eq!(transactions.len(), 2);
 
-        let list = rlp::Rlp::new(vectors()[1].rlp).at(1).unwrap();
+        let list = rlp::Rlp::new(vector.rlp).at(1).unwrap();
         assert!(list.at(0).unwrap().is_list(), "legacy stays a bare list");
         assert!(
             list.at(1).unwrap().is_data(),
@@ -665,9 +714,9 @@ mod tests {
         stream.out().to_vec()
     }
 
-    /// Vector `vector`'s block with top-level item `index` replaced by `replacement`.
-    fn block_with_item(vector: usize, index: usize, replacement: Vec<u8>) -> Vec<u8> {
-        let mut items = items_of(vectors()[vector].rlp);
+    /// Named vector with top-level item `index` replaced by `replacement`.
+    fn block_with_item(vector: &str, index: usize, replacement: Vec<u8>) -> Vec<u8> {
+        let mut items = items_of(vector_named(vector).rlp);
         items[index] = replacement;
         list_of(&items, &[])
     }
@@ -697,7 +746,7 @@ mod tests {
     fn decode_rejects_a_byte_string_where_a_list_belongs() {
         // `rlp`'s own walk over a byte string yields nothing, so each of these used to decode as an
         // *empty* list while `hash_slow()` still returned the genuine block hash.
-        let transactions = items_of(vectors()[1].rlp)[1].clone();
+        let transactions = items_of(vector_named("legacy + EIP-7702").rlp)[1].clone();
         for (label, item, replacement) in [
             (
                 "transactions as a byte string",
@@ -707,61 +756,66 @@ mod tests {
             ("transactions as 0x80", 1, hex!("80").to_vec()),
             ("transactions as 0x83aabbcc", 1, hex!("83aabbcc").to_vec()),
         ] {
-            assert_rejected(label, &block_with_item(1, item, replacement));
+            assert_rejected(
+                label,
+                &block_with_item("legacy + EIP-7702", item, replacement),
+            );
         }
-        // Vector 3 is the one with a real withdrawal.
-        let withdrawals = items_of(vectors()[3].rlp)[3].clone();
+        let withdrawals = items_of(vector_named("one withdrawal").rlp)[3].clone();
         for (label, replacement) in [
             ("withdrawals as a byte string", as_byte_string(&withdrawals)),
             ("withdrawals as 0x80", hex!("80").to_vec()),
         ] {
-            assert_rejected(label, &block_with_item(3, 3, replacement));
+            assert_rejected(label, &block_with_item("one withdrawal", 3, replacement));
         }
     }
 
     #[test]
     fn decode_rejects_bytes_that_no_item_accounts_for() {
-        let top = items_of(vectors()[1].rlp);
+        let top = items_of(vector_named("legacy + EIP-7702").rlp);
         // An "empty" ommers list hiding three bytes: the `!= 0` count check waves it through.
         assert_rejected(
             "ommers = c3 b9ffff",
-            &block_with_item(1, 2, hex!("c3b9ffff").to_vec()),
+            &block_with_item("legacy + EIP-7702", 2, hex!("c3b9ffff").to_vec()),
         );
         // Inside the transactions list.
         assert_rejected(
             "poison after the last transaction",
-            &block_with_item(1, 1, list_of(&items_of(&top[1]), POISON)),
+            &block_with_item("legacy + EIP-7702", 1, list_of(&items_of(&top[1]), POISON)),
         );
         // Inside the header's own list.
         assert_rejected(
             "poison inside the header",
-            &block_with_item(1, 0, list_of(&items_of(&top[0]), POISON)),
+            &block_with_item("legacy + EIP-7702", 0, list_of(&items_of(&top[0]), POISON)),
         );
         // Inside the block's own list payload: this is the contract `decode_exact` documents.
         assert_rejected("poison inside the block's payload", &list_of(&top, POISON));
         // Inside a withdrawal, and after the last withdrawal.
-        let with_withdrawals = items_of(vectors()[3].rlp);
+        let with_withdrawals = items_of(vector_named("one withdrawal").rlp);
         let withdrawals = items_of(&with_withdrawals[3]);
         assert_rejected(
             "poison after the last withdrawal",
-            &block_with_item(3, 3, list_of(&withdrawals, POISON)),
+            &block_with_item("one withdrawal", 3, list_of(&withdrawals, POISON)),
         );
         let mut poisoned = withdrawals.clone();
         poisoned[0] = list_of(&items_of(&withdrawals[0]), POISON);
         assert_rejected(
             "poison inside a withdrawal",
-            &block_with_item(3, 3, list_of(&poisoned, POISON.get(..0).unwrap())),
+            &block_with_item(
+                "one withdrawal",
+                3,
+                list_of(&poisoned, POISON.get(..0).unwrap()),
+            ),
         );
     }
 
     #[test]
     fn decode_rejects_a_legacy_transaction_wrapped_in_a_byte_string() {
-        // Vector 1's first transaction is a bare legacy list. Wrapping it decodes to the same
-        // transaction, so accepting both forms would give this block two valid encodings.
-        let top = items_of(vectors()[1].rlp);
+        // Wrapping a bare legacy list would give the same block two encodings.
+        let top = items_of(vector_named("legacy + EIP-7702").rlp);
         let mut transactions = items_of(&top[1]);
         transactions[0] = wrapped(&transactions[0]);
-        let mutated = block_with_item(1, 1, list_of(&transactions, &[]));
+        let mutated = block_with_item("legacy + EIP-7702", 1, list_of(&transactions, &[]));
         let error = Block::decode_exact(&mutated).unwrap_err();
         assert!(
             matches!(error, BlockDecodeError::Transaction { index: 0, .. }),
@@ -778,11 +832,19 @@ mod tests {
         // The property the individual cases above are instances of: anything `decode_exact` accepts
         // re-encodes to exactly its input, so one block has exactly one encoding.
         let mut inputs: Vec<Vec<u8>> = vectors().iter().map(|v| v.rlp.to_vec()).collect();
-        let top = items_of(vectors()[1].rlp);
-        inputs.push(block_with_item(1, 1, hex!("80").to_vec()));
-        inputs.push(block_with_item(1, 2, hex!("c3b9ffff").to_vec()));
+        let top = items_of(vector_named("legacy + EIP-7702").rlp);
+        inputs.push(block_with_item("legacy + EIP-7702", 1, hex!("80").to_vec()));
+        inputs.push(block_with_item(
+            "legacy + EIP-7702",
+            2,
+            hex!("c3b9ffff").to_vec(),
+        ));
         inputs.push(list_of(&top, POISON));
-        inputs.push(block_with_item(1, 1, list_of(&items_of(&top[1]), POISON)));
+        inputs.push(block_with_item(
+            "legacy + EIP-7702",
+            1,
+            list_of(&items_of(&top[1]), POISON),
+        ));
         for input in inputs {
             if let Ok(block) = Block::decode_exact(&input) {
                 assert_eq!(

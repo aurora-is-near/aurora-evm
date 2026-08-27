@@ -1,23 +1,15 @@
-//! Strict guards around `rlp` at the untrusted consensus boundary.
+//! Strict RLP guards for untrusted consensus input.
 //!
-//! The upstream API is intentionally general-purpose and does not establish three invariants this
-//! crate needs:
+//! The upstream accessors are intentionally lenient in ways this crate cannot accept:
 //!
 //! - [`rlp::Rlp::item_count`] and [`rlp::Rlp::list_at`] use an iterator whose parse error ends the
-//!   walk. A byte string can therefore look like an empty list, and a malformed suffix can disappear
-//!   behind a valid prefix.
-//! - [`rlp::Rlp::data`] exposes a declared payload without requiring a canonical byte string.
-//!   Fixed-width fields instead use `Rlp::decoder().decode_value` directly.
+//!   walk, so a string can resemble an empty list and a malformed suffix can be hidden.
+//! - [`rlp::Rlp::data`] exposes payload bytes without requiring a canonical byte string.
 //! - [`rlp::PayloadInfo::total`] adds header and payload lengths without overflow checking.
 //!
-//! [`checked_len`] proves that a value is a list and that its items cover the payload exactly;
-//! [`checked_list_at`] applies that proof to a nested list. The guarantee is deliberately one level
-//! deep, so every nested list is checked where it is read. [`declared_item_len`] computes the leading
-//! item's declared extent with checked arithmetic, leaving truncated versus trailing input to the
-//! caller. Ordinary decoding remains delegated to `rlp` after these boundary checks.
-//!
-//! Tests pin the upstream leniencies as well as these stricter contracts, so a future change in
-//! `rlp` cannot silently make the guards obsolete or inconsistent.
+//! [`checked_len`] verifies a complete list, [`checked_list_at`] applies that check to a nested list,
+//! and [`declared_item_len`] computes an item's extent with checked arithmetic. Canonical scalar and
+//! fixed-width decoding uses `Rlp::decoder().decode_value`; ordinary decoding remains with `rlp`.
 
 /// Number of items in `rlp`, requiring it to be a list whose items exactly tile its payload.
 ///
@@ -30,17 +22,12 @@ pub fn checked_len(rlp: &rlp::Rlp<'_>) -> Result<usize, rlp::DecoderError> {
     if !rlp.is_list() {
         return Err(rlp::DecoderError::RlpExpectedToBeList);
     }
-    // The bounded accessor, not `PayloadInfo::from`: it establishes `header_len + value_len <=
-    // rlp.as_raw().len()`, which is what makes the sum below unable to overflow.
+    // This bounded accessor proves the declared payload fits inside `as_raw()`.
     let payload_len = rlp.payload_info()?.value_len;
     let mut covered: usize = 0;
     let mut count: usize = 0;
-    // `at()` resumes from an offset cache when the items are walked in order, so this is one linear
-    // pass over the item headers; the items themselves are not decoded.
-    //
-    // `covered` is summed without a guard because every item's slice lies inside this list's payload,
-    // so the total cannot pass `payload_len` — itself bounded by the buffer. `count` is bounded by the
-    // same payload, since no item is zero bytes wide.
+    // Ordered iteration uses `Rlp`'s offset cache. Both sums are bounded by the validated payload:
+    // each item lies inside it, and no RLP item is zero bytes wide.
     for item in rlp {
         covered += item.as_raw().len();
         count += 1;
@@ -67,14 +54,13 @@ pub fn checked_list_at<T: rlp::Decodable>(
 
 /// Number of bytes the leading RLP item **declares** it occupies, header included.
 ///
-/// Unlike [`rlp::PayloadInfo::total`], this guards the addition of header and payload lengths. A
-/// long-form length may encode `usize::MAX`, so the header alone can make the sum overflow.
+/// Unlike [`rlp::PayloadInfo::total`], this checks the header-plus-payload addition.
 ///
 /// The result is not checked against `bytes.len()`; callers classify truncated, exact and trailing
 /// input according to their own error type.
 ///
 /// # Errors
-/// [`rlp::DecoderError`] if `bytes` carries no readable header;
+/// [`rlp::DecoderError`] if `bytes` has no readable header;
 /// [`rlp::DecoderError::RlpInvalidLength`] if the declared length overflows a `usize`.
 pub fn declared_item_len(bytes: &[u8]) -> Result<usize, rlp::DecoderError> {
     let info = rlp::PayloadInfo::from(bytes)?;
@@ -83,15 +69,10 @@ pub fn declared_item_len(bytes: &[u8]) -> Result<usize, rlp::DecoderError> {
         .ok_or(rlp::DecoderError::RlpInvalidLength)
 }
 
-/// A long-form RLP header whose declared payload length overflows a `usize`, and nothing behind it.
+/// Builds a long-form RLP header whose declared extent overflows `usize`.
 ///
 /// `list` picks the long-list form (`0xf8..=0xff`) over the long-string form (`0xb8..=0xbf`).
-///
-/// Sized from [`size_of::<usize>`](core::mem::size_of) rather than hardcoded to eight length bytes,
-/// because `rlp`'s `decode_usize` rejects more length bytes than a `usize` holds. A hardcoded
-/// eight-byte form fails as `RlpIsTooBig` on a 32-bit target — before the sum this exercises is ever
-/// attempted — and a zkVM guest is 32-bit, so the hardcoded vector would silently stop testing
-/// anything there.
+/// Its length-of-length follows the target pointer width so it reaches the overflow on 32-bit zkVMs.
 #[cfg(test)]
 pub fn overflowing_header(list: bool) -> Vec<u8> {
     let len_of_len = core::mem::size_of::<usize>();
@@ -131,8 +112,7 @@ mod tests {
 
     #[test]
     fn a_lists_items_must_tile_its_payload() {
-        // A long-string header claiming 65535 bytes with nothing behind it: `payload_info` fails,
-        // so `rlp`'s own walk stops there and reports zero items.
+        // The malformed item makes the upstream iterator stop and report zero items.
         let hiding = hex!("c3b9ffff");
         assert!(rlp::Rlp::new(&hiding).is_list());
         assert_eq!(rlp::Rlp::new(&hiding).item_count().unwrap(), 0);
@@ -167,9 +147,7 @@ mod tests {
 
     #[test]
     fn declared_item_len_reports_the_declared_extent_not_the_buffer() {
-        // A long-form header declaring 64 bytes of payload, with three supplied. The number is what
-        // the header claims; comparing it with the buffer is the caller's, because the two
-        // directions are different faults.
+        // The helper reports the header claim; callers distinguish truncation from trailing bytes.
         let truncated = hex!("f840010203");
         assert_eq!(declared_item_len(&truncated).unwrap(), 66);
         assert!(declared_item_len(&truncated).unwrap() > truncated.len());
@@ -177,9 +155,7 @@ mod tests {
 
     #[test]
     fn a_declared_length_that_overflows_a_usize_is_rejected_rather_than_summed() {
-        // `value_len` is `usize::MAX`, so `header_len + value_len` leaves the range.
-        // `PayloadInfo::total()` wraps here where overflow checks are off and panics where they are
-        // on; a header and its length bytes are the whole attack.
+        // `PayloadInfo::total()` would overflow when adding this header to `usize::MAX`.
         for bytes in [overflowing_header(false), overflowing_header(true)] {
             let info = rlp::PayloadInfo::from(&bytes).unwrap();
             assert_eq!(info.header_len, bytes.len(), "{bytes:02x?}");
@@ -196,16 +172,14 @@ mod tests {
         }
     }
 
-    /// The vector must overflow on the target actually being built, not only on a 64-bit host: a
-    /// hardcoded eight-byte length would be rejected as `RlpIsTooBig` by `decode_usize` on a 32-bit
-    /// target and would stop reaching the sum at all.
+    /// The vector must reach the addition overflow on both host and zkVM pointer widths.
     #[test]
     fn the_overflow_vector_is_sized_for_this_target() {
         let list = overflowing_header(true);
         assert_eq!(list.len(), 1 + size_of::<usize>());
         assert_eq!(list[0], 0xf7 + u8::try_from(size_of::<usize>()).unwrap());
         assert!(list[1..].iter().all(|byte| *byte == 0xff));
-        // Eight length bytes are the wrong vector wherever a `usize` is narrower than eight bytes.
+        // Eight length bytes are rejected before the addition on narrower targets.
         let hardcoded = hex!("ffffffffffffffffff");
         assert_eq!(
             rlp::PayloadInfo::from(&hardcoded).is_ok(),
@@ -241,15 +215,7 @@ mod tests {
             rlp::DecoderError::RlpExpectedToBeList
         );
     }
-    /// Why every fixed-width field in this crate decodes through `decoder().decode_value` and never
-    /// through [`rlp::Rlp::data`].
-    ///
-    /// `data()` returns whatever payload an item's header declares, without asking whether the item is
-    /// a string at all or whether a one-byte string used its minimal form. Both leniencies are
-    /// asserted rather than described, for the same reason as the rest of this module: a future `rlp`
-    /// that closes them makes this test fail loudly instead of leaving the rule silently unnecessary —
-    /// and a reader tempted to simplify a decoder to `data()` finds the counterexamples already
-    /// written down.
+    /// `data()` accepts lists and non-minimal strings that `decode_value` rejects.
     #[test]
     fn rlp_data_is_lenient_where_decode_value_is_not() {
         let borrow = |bytes: &[u8]| Ok::<Vec<u8>, rlp::DecoderError>(bytes.to_vec());

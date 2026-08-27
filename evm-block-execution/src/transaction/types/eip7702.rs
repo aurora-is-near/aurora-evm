@@ -175,7 +175,9 @@ mod tests {
         AUTHORIZATION_LIST_INDEX, SignedTxEip7702, TRANSACTION_FIELDS, TYPE_BYTE, TxEip7702,
     };
     use crate::transaction::TxEnv;
-    use crate::transaction::{SignedAuthorization, TxKind, TxType};
+    use crate::transaction::{
+        SignedAuthorization, SignedTxEnvelope, TxDecodeError, TxKind, TxType,
+    };
     use hex_literal::hex;
     use primitive_types::H160;
     use primitive_types::U256;
@@ -350,5 +352,33 @@ mod tests {
         );
         assert_eq!(together[0], together[2]);
         assert_eq!(together[1], together[3]);
+    }
+
+    /// EEST v5.4.0 malformed authorization-list fixtures.
+    #[test]
+    fn eest_rejects_malformed_authorization_tuple_shapes() {
+        let tuple_as_bytes = hex!(
+            "04f8c301808007830186a09400000000000000000000000000000000000000008080c0f85eb85cf85a809400000000000000000000000000000000000000018001a095157c126bdec50d7901a895e5f70c4ad86f1921de552f4d89f2513149d3dad7a05d5b13d1fae5359a4bc12fd267e2e6c2162e04fe013d134984ccad3cdbbcaed101a0eb7cf0ec0a284da7ee62deeec2614134922fbf4ac9a7a7d17fe6014134c008dfa05728b91e621ace623c09dacc3f7f8ad3357057b0407a4c81fa9e1302b984b25b"
+        );
+        assert_eq!(
+            SignedTxEnvelope::decode_2718(&tuple_as_bytes).unwrap_err(),
+            TxDecodeError::Rlp(rlp::DecoderError::RlpExpectedToBeList)
+        );
+
+        let missing_field = hex!(
+            "04f8ac01808007830186a09400000000000000000000000000000000000000008080c0f847f845808080a00db487b089395bf00977120a724d9ab9b23383222687873e3bcf03f0dfdc461ea03bd9e9eae7394698b5bbe3b1e5e62a262b3be614f27c6875591e68e6a94317de01a0361c3c3ebec70e8e5776ec97cf6553a1f43dd7d29260aae765c81a3fb7c0c101a05494c1471db5804b49b6e327efd2df1d68f7b45d07131314c95ed8fa124007af"
+        );
+        assert_eq!(
+            SignedTxEnvelope::decode_2718(&missing_field).unwrap_err(),
+            TxDecodeError::Rlp(rlp::DecoderError::RlpIncorrectListLen)
+        );
+
+        let extra_field = hex!(
+            "04f8c201808007830186a09400000000000000000000000000000000000000008080c0f85df85b809400000000000000000000000000000000000000018080a0c2e3332ab6a44d8243d807c2b3ef2fcb3f9fce961ca96041d88138ac01423ce1a04a81d39a284894217fc44a4aaf0d40f297252a42081a5b04353f1e6cfb9161758001a07c318e4bce24639fe1ddd57e36b88217cff1e1303969a85552a3e5e61dcb1ebca00100905b3bab29ecb50c076efe6fb37f7639f3508814abdc18f0f358e7f7056d"
+        );
+        assert_eq!(
+            SignedTxEnvelope::decode_2718(&extra_field).unwrap_err(),
+            TxDecodeError::Rlp(rlp::DecoderError::RlpIncorrectListLen)
+        );
     }
 }

@@ -532,8 +532,9 @@ mod tests {
     use crate::errors::{BlockExecutionError, InvalidTransaction};
     use crate::evm_context::InvalidEvmContext;
     use crate::spec::Spec;
-    use crate::transaction::{TxEnv, TxKind, TxType};
+    use crate::transaction::{SignedTxEnvelope, TxEnv, TxKind, TxType};
     use aurora_evm::backend::MemoryAccount;
+    use hex_literal::hex;
     use primitive_types::{H160, H256, U256};
     use std::collections::BTreeMap;
 
@@ -866,6 +867,34 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    /// EEST v5.4.0 `test_empty_authorization_list` transaction fixture.
+    #[test]
+    fn eest_rejects_an_empty_eip7702_authorization_list() {
+        let raw = hex!(
+            "04f86401808007830186a09400000000000000000000000000000000000000008080c0c001"
+            "a04319a2e8066a9beedd85b227bf40cdecfb6134e6c1254f1e680895bc3131df31a059efad54"
+            "e662f062d9af60acca08efb1d3d312742e381a600aac7c7989f892cc"
+        );
+        let tx = SignedTxEnvelope::decode_2718(&raw)
+            .unwrap()
+            .into_tx_env(H160::zero());
+        let mut blk = block(0, addr(0xcb));
+        blk.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::default());
+
+        assert!(matches!(
+            validate(
+                tx,
+                &BTreeMap::new(),
+                Spec::Prague,
+                &blk,
+                BlockExecutionCounters::default()
+            ),
+            Err(BlockExecutionError::InvalidContext(
+                InvalidEvmContext::InvalidTransaction(InvalidTransaction::EmptyAuthorizationList)
+            ))
+        ));
     }
 
     #[test]

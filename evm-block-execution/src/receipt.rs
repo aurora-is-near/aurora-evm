@@ -11,14 +11,15 @@ use crate::transaction::TxType;
 use crate::transaction::types::{eip1559, eip2930, eip4844, eip7702};
 use aurora_evm::backend::Log;
 
-/// Appends the receipt form of logs: `[address, topics, data]` for each entry.
+/// Appends logs as `[address, topics, data]` receipt entries.
 fn append_logs(stream: &mut rlp::RlpStream, logs: &[Log]) {
     stream.begin_list(logs.len());
     for log in logs {
         stream.begin_list(3);
         stream.append(&log.address);
         stream.append_list(&log.topics);
-        // `Vec<u8>` implements list encoding; receipt log data is one RLP byte string.
+        // The derived `Encodable for Log` treats `data` as a list of bytes; receipts require one
+        // RLP byte string.
         stream.append(&log.data.as_slice());
     }
 }
@@ -70,21 +71,19 @@ impl Receipt {
         self.encode_2718_in(&mut stream).to_vec()
     }
 
-    /// Writes the EIP-2718 receipt encoding into a dedicated scratch stream and returns its slice.
+    /// Writes the EIP-2718 encoding into reusable `stream` and returns the receipt slice.
     ///
-    /// The stream is cleared before use, so one backing allocation can serve every receipt in a
-    /// block. If the stream was created over an existing buffer, the returned slice excludes that
-    /// prefix and covers only this receipt.
+    /// The stream is cleared but retains its allocation. Any existing backing-buffer prefix is
+    /// excluded from the returned slice.
     ///
     /// # Panics
-    /// Panics if the fixed four-field receipt body is left unfinished. In debug builds, also panics
-    /// if `stream` already contains an unfinished list instead of a reusable scratch value.
+    /// Panics if encoding leaves an RLP list unfinished. Debug builds also reject an unfinished
+    /// input stream.
     pub(crate) fn encode_2718_in<'stream>(
         &self,
         stream: &'stream mut rlp::RlpStream,
     ) -> &'stream [u8] {
-        // `clear()` would silently discard an enclosing list; catch misuse of the scratch contract
-        // while developing, without charging the zkVM release path.
+        // Catch an enclosing list before `clear()` silently discards it in debug builds.
         debug_assert!(
             stream.is_finished(),
             "the receipt scratch stream must not contain an unfinished list"
@@ -102,8 +101,7 @@ impl Receipt {
             stream.append_raw(&[type_byte], 0);
         }
         self.append_body(stream);
-        // `as_raw()` bypasses `RlpStream::out()` and its completion check, so an unfinished body
-        // must fail closed before it can change the receipts root.
+        // `as_raw()` skips `out()`'s completion check; fail closed before hashing the receipt.
         assert!(stream.is_finished(), "receipt encoding left an open list");
         &stream.as_raw()[base..]
     }
@@ -119,7 +117,7 @@ mod tests {
     use hex_literal::hex;
     use primitive_types::{H160, H256};
 
-    /// Independent, allocation-insensitive expression of the EIP-2718 receipt encoding.
+    /// Separate expression of the EIP-2718 receipt encoding used by scratch-buffer tests.
     fn reference_encoding(receipt: &Receipt) -> Vec<u8> {
         let mut body = rlp::RlpStream::new_list(4);
         body.append(&u8::from(receipt.success));
@@ -159,7 +157,7 @@ mod tests {
     fn legacy_receipt_has_no_type_prefix() {
         let receipt = Receipt::new(TxType::Legacy, true, 21_000, vec![]);
         let encoded = receipt.encoded();
-        // A legacy receipt is a bare RLP list (first byte >= 0xc0), no type envelope byte.
+        // A legacy receipt is a bare RLP list.
         assert!(encoded[0] >= 0xc0);
     }
 
@@ -214,7 +212,7 @@ mod tests {
     fn eest_receipt_matches_its_encoding_and_root() {
         let receipt = Receipt::new(TxType::Legacy, true, 0x5aa9, vec![]);
 
-        // rlp([status = 1, cumulative_gas = 0x5aa9, zero bloom, empty logs]).
+        // rlp([status = 1, cumulative gas = 0x5aa9, zero bloom, empty logs]).
         let mut expected = vec![0xf9, 0x01, 0x08, 0x01, 0x82, 0x5a, 0xa9, 0xb9, 0x01, 0x00];
         expected.extend_from_slice(&[0; 256]);
         expected.push(0xc0);
@@ -275,18 +273,18 @@ mod tests {
         let encoded = receipt.encoded();
         let rlp = rlp::Rlp::new(&encoded);
         assert_eq!(rlp.item_count().unwrap(), 4);
-        assert_eq!(rlp.val_at::<u8>(0).unwrap(), 1); // status: success → 1
-        assert_eq!(rlp.val_at::<u64>(1).unwrap(), 21_000); // cumulative gas
-        assert_eq!(rlp.val_at::<Vec<u8>>(2).unwrap().len(), 256); // bloom
-        assert!(rlp.at(3).unwrap().is_list()); // logs
+        assert_eq!(rlp.val_at::<u8>(0).unwrap(), 1);
+        assert_eq!(rlp.val_at::<u64>(1).unwrap(), 21_000);
+        assert_eq!(rlp.val_at::<Vec<u8>>(2).unwrap().len(), 256);
+        assert!(rlp.at(3).unwrap().is_list());
     }
 
     #[test]
     fn typed_receipt_body_decodes_and_status_zero_is_empty() {
         let receipt = Receipt::new(TxType::Eip1559, false, 50_000, vec![]);
         let encoded = receipt.encoded();
-        assert_eq!(encoded[0], 0x02); // EIP-2718 type envelope
-        // status `false` is encoded as the empty string (0x80), decoding back to 0.
+        assert_eq!(encoded[0], 0x02);
+        // `false` is the empty RLP string and decodes to zero.
         let body = rlp::Rlp::new(&encoded[1..]);
         assert_eq!(body.item_count().unwrap(), 4);
         assert_eq!(body.val_at::<u8>(0).unwrap(), 0);

@@ -1,4 +1,4 @@
-//! Block types and their progression toward execution:
+//! Block representations used from decoding through execution:
 //!
 //! 1. [`Header`] — the canonical header; its RLP encoding defines the block hash.
 //! 2. [`BlockBody`] — the transactions and withdrawals the header commits to.
@@ -6,12 +6,11 @@
 //! 4. [`SealedBlock`] — a block with a lazily cached hash.
 //! 5. [`RecoveredBlock`] — a sealed block paired with each transaction's recovered sender.
 //!
-//! [`SignedTxEnvelope`] contains a signature but no sender. [`recover_block`] derives senders from
-//! those signatures; [`recover_block_with_public_keys`] additionally checks caller-supplied keys.
-//! The resulting pairing is later consumed into [`TxEnv`](crate::transaction::TxEnv) values.
+//! [`recover_block`] derives senders from signed envelopes;
+//! [`recover_block_with_public_keys`] also verifies caller-supplied keys. Execution consumes the
+//! resulting pairing as [`TxEnv`](crate::transaction::TxEnv) values.
 //!
-//! Only post-merge blocks are modelled, so ommers are absent from [`BlockBody`] entirely: the list
-//! is empty and `ommers_hash` must be
+//! Only post-merge bodies are modelled: the encoded ommers list is empty and `ommers_hash` must be
 //! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH).
 
 mod body;
@@ -35,12 +34,10 @@ pub use recovered::{BlockRecoveryError, RecoveredBlock};
 pub use sealed::{SealedBlock, SealedHeader};
 use std::ops::Deref;
 
-/// An Ethereum block: its [`Header`] and the [`BlockBody`] that header commits to.
+/// An Ethereum [`Header`] and its committed [`BlockBody`].
 ///
-/// Dereferences to the header, so header fields can be read straight off the block
-/// (`block.state_root`). Sealing it ([`Block::seal_slow`]) caches the block hash; pairing it with
-/// its senders — which [`recover_block_with_public_keys`]
-/// establishes — yields a [`RecoveredBlock`], the form execution consumes.
+/// Dereferences to the header. Sealing caches its hash; sender recovery produces the
+/// [`RecoveredBlock`] consumed by execution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Block {
     /// The block header.
@@ -86,7 +83,7 @@ impl Block {
         SealedBlock::seal_slow(self)
     }
 
-    /// Seals the block with a hash the caller already knows, without recomputing it.
+    /// Seals the block with a trusted hash, without recomputing it.
     #[must_use]
     pub fn seal_unchecked(self, hash: H256) -> SealedBlock {
         SealedBlock::new_unchecked(self, hash)
