@@ -1,35 +1,31 @@
+//! Hardfork identifiers and their Aurora EVM gas configurations.
+
 use aurora_evm::Config;
 use core::str::FromStr;
 
+/// Ethereum execution hardfork supported by this crate.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Spec {
-    /// Istanbul hard fork
-    /// Activated at block 9069000
+    /// Istanbul.
     Istanbul,
-    /// Berlin hard fork
-    /// Activated at block 12244000
+    /// Berlin.
     Berlin,
-    /// London hard fork
-    /// Activated at block 12965000
+    /// London.
     London,
-    /// Paris/Merge hard fork
-    /// Activated at block 15537394 (TTD: 58750000000000000000000)
+    /// Paris / the Merge.
     Merge,
-    /// Shanghai hard fork
-    /// Activated at block 17034870 (Timestamp: 1681338455)
+    /// Shanghai.
     Shanghai,
-    /// Cancun hard fork
-    /// Activated at block 19426587 (Timestamp: 1710338135)
+    /// Cancun.
     Cancun,
-    /// Prague hard fork
-    /// Activated at block 22431084 (Timestamp: 1746612311)
+    /// Prague.
     Prague,
-    /// Osaka hard fork
-    /// Activated at block TBD
+    /// Osaka.
     Osaka,
 }
 
 impl Spec {
+    /// Returns the Aurora EVM gasometer configuration for this hardfork.
     #[must_use]
     pub const fn get_gasometer_config(&self) -> Config {
         match self {

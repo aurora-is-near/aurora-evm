@@ -1,26 +1,29 @@
+//! Results produced by block execution.
+
 use crate::receipt::Receipt;
 use crate::requests::Requests;
 use aurora_evm::backend::MemoryAccount;
 use primitive_types::H160;
 use std::collections::BTreeMap;
 
-/// The result of executing a block.
+/// Consensus outputs produced by executing a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockExecutionResult {
-    /// All the receipts of the transactions in the block.
+    /// Transaction receipts in block order.
     pub receipts: Vec<Receipt>,
-    /// All the EIP-7685 requests in the block.
+    /// EIP-7685 requests produced by execution.
     pub requests: Requests,
-    /// The total gas used by the block.
+    /// Total execution gas used.
     pub gas_used: u64,
-    /// Blob gas used by the block.
+    /// Total blob gas used.
     pub blob_gas_used: u64,
 }
 
+/// Block execution result together with the resulting materialized state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockExecutionOutput {
-    /// All the receipts of the transactions in the block.
+    /// Consensus execution outputs.
     pub result: BlockExecutionResult,
-    /// The changed state of the block after execution.
+    /// Post-execution world state.
     pub state: BTreeMap<H160, MemoryAccount>,
 }

@@ -1,27 +1,16 @@
-//! [EIP-7685] execution-layer requests and their block-header commitment.
+//! [EIP-7685] execution-layer requests and their header commitment.
 //!
-//! From Prague onward a block carries *requests* — messages produced by execution and consumed
-//! by the consensus layer. Each request is a byte string `request_type || request_data`; the
-//! currently defined types (see [`request_type`]):
+//! Each request is `request_type || request_data`:
 //!
 //! - `0x00` — validator deposits, parsed from deposit-contract logs (EIP-6110);
 //! - `0x01` — validator withdrawal requests, returned by the EIP-7002 system contract;
 //! - `0x02` — validator consolidation requests, returned by the EIP-7251 system contract.
 //!
-//! The block header commits to them with a flat hash rather than a trie:
+//! The header commits to non-empty requests with a flat hash:
 //! `requests_hash = sha256(sha256(req_0) ++ sha256(req_1) ++ ...)`, where non-empty requests are
-//! ordered by type and each `req_i` includes its type byte. With no requests the value is
-//! `sha256("")` ([`EMPTY_REQUESTS_HASH`](crate::constants::EMPTY_REQUESTS_HASH)); pre-Prague
-//! headers have no such field.
-//!
-//! # Place in the execution pipeline
-//!
-//! Requests are gathered in the **post-execution** stage, after the transaction loop: deposits
-//! from the receipt logs, then the outputs of the two request-draining system calls. They are
-//! stored in [`BlockExecutionResult`](crate::execution_types::execution::BlockExecutionResult), and
-//! the computed
-//! [`Requests::requests_hash`] is compared against the header value during post-execution header
-//! validation.
+//! ordered by type. With no requests the value is
+//! [`EMPTY_REQUESTS_HASH`](crate::constants::EMPTY_REQUESTS_HASH). Requests are gathered after
+//! transaction execution and checked against the Prague-and-later header field.
 //!
 //! [EIP-7685]: https://eips.ethereum.org/EIPS/eip-7685
 
@@ -38,7 +27,7 @@ pub mod request_type {
     pub const CONSOLIDATION: u8 = 0x02;
 }
 
-/// Container of EIP-7685 requests. Each stored entry is `request_type || request_data`.
+/// EIP-7685 requests stored as `request_type || request_data`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Requests(Vec<Vec<u8>>);
 
@@ -62,8 +51,7 @@ impl Requests {
     }
 
     /// Raw request entries (`request_type || request_data`).
-    // `missing_const_for_fn` is a false positive here: returning `&self.0` as `&[Vec<u8>]`
-    // needs a deref coercion, which is not permitted in a `const fn`.
+    // The slice conversion requires a deref coercion, which is unavailable in a `const fn`.
     #[allow(clippy::missing_const_for_fn)]
     #[must_use]
     pub fn as_slice(&self) -> &[Vec<u8>] {
@@ -76,13 +64,11 @@ impl Requests {
         self.0.is_empty()
     }
 
-    /// EIP-7685 requests hash: `sha256( sha256(req_0) ++ sha256(req_1) ++ ... )`.
+    /// EIP-7685 requests hash: `sha256(sha256(req_0) ++ sha256(req_1) ++ ...)`.
     ///
     /// Entries with only a type byte (empty data) are skipped, and entries are ordered by their
-    /// request type. The canonical EIP-7685 form has exactly one request object per type; a
-    /// **stable** sort is used so the hash stays deterministic even if several entries share a
-    /// type (their relative insertion order is preserved). With no non-empty requests this is
-    /// `sha256("")` (i.e. `EMPTY_REQUESTS_HASH`).
+    /// request type. Stable sorting preserves insertion order for duplicate types. With no
+    /// non-empty requests this is [`crate::constants::EMPTY_REQUESTS_HASH`].
     #[must_use]
     pub fn requests_hash(&self) -> H256 {
         let mut entries: Vec<&Vec<u8>> = self.0.iter().filter(|req| req.len() > 1).collect();
@@ -110,9 +96,8 @@ mod tests {
     #[test]
     fn type_only_request_is_ignored() {
         let mut reqs = Requests::new();
-        // only the type byte
         reqs.push_request_with_type(request_type::WITHDRAWAL, []);
-        // The entry is stored, but contributes nothing to the hash.
+        // Stored for inspection, but excluded from the commitment.
         assert!(!reqs.is_empty());
         assert_eq!(reqs.requests_hash(), EMPTY_REQUESTS_HASH);
     }
@@ -121,7 +106,6 @@ mod tests {
     fn single_request_hash_matches_definition() {
         let mut reqs = Requests::new();
         reqs.push_request_with_type(request_type::WITHDRAWAL, [0xaa, 0xbb]);
-        // requests_hash = sha256(sha256(0x01 || 0xaa 0xbb))
         let inner = sha256(&[request_type::WITHDRAWAL, 0xaa, 0xbb]);
         let expected = sha256(inner.as_bytes());
         assert_eq!(reqs.requests_hash(), expected);
@@ -144,8 +128,7 @@ mod tests {
         let mut reqs = Requests::new();
         reqs.push_request_with_type(request_type::DEPOSIT, [0x0a, 0x0b, 0x0c]);
         reqs.push_request_with_type(request_type::WITHDRAWAL, [0x0d, 0x0e, 0x0f]);
-        // Independently reproduce the EIP-7685 definition: per-request sha256 (sorted by type),
-        // concatenated, then sha256 of the concatenation.
+        // Reproduce the commitment without calling `Requests::requests_hash`.
         let h0 = sha256(&[request_type::DEPOSIT, 0x0a, 0x0b, 0x0c]);
         let h1 = sha256(&[request_type::WITHDRAWAL, 0x0d, 0x0e, 0x0f]);
         let mut concatenated = Vec::with_capacity(64);

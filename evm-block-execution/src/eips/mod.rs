@@ -1,9 +1,7 @@
-//! Constants and formulas defined by the EIPs this crate implements, one module per EIP.
+//! Protocol constants and formulas, grouped by EIP.
 //!
-//! Protocol arithmetic and its numbers live here — base fees, blob gas, schedules, limits. The
-//! consensus *fields* an EIP adds to a transaction live with that transaction instead, in
-//! [`transaction::types`](crate::transaction::types), so EIP-4844 appears in both places: its blob
-//! gas maths here, its `blob_versioned_hashes` there.
+//! Transaction fields remain in [`transaction::types`](crate::transaction::types); this module owns
+//! shared arithmetic such as base fees, blob gas, schedules and limits.
 
 pub mod eip1559;
 pub mod eip4844;

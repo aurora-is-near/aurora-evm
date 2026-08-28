@@ -126,7 +126,7 @@ pub fn blob_hash<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     Control::Continue
 }
 
-/// NOTE: For EIP-7702 should return 2 (size of `0xEF01`)
+/// EIP-7702 returns 23 for a delegated account: the size of `0xef0100 || address`.
 pub fn extcodesize<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
     pop_h256!(runtime, address);
     push_u256!(runtime, handler.code_size(address.into()));
@@ -134,7 +134,7 @@ pub fn extcodesize<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
     Control::Continue
 }
 
-/// NOTE: For EIP-7702 should return  `keccak(0xEF01)`
+/// EIP-7702 hashes the complete 23-byte delegation indicator.
 pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
     pop_h256!(runtime, address);
     push_h256!(runtime, handler.code_hash(address.into()));
@@ -142,7 +142,7 @@ pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
     Control::Continue
 }
 
-/// NOTE: For EIP-7702 should not copy from designated address
+/// EIP-7702 copies the delegation indicator itself, not the target code.
 pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     pop_h256!(runtime, address);
     pop_u256!(runtime, memory_offset, code_offset, len);

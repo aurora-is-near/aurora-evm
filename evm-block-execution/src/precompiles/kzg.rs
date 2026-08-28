@@ -83,3 +83,93 @@ impl Precompile for Kzg {
         Ok(PrecompileOutput::without_logs(cost, output))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Kzg;
+    use aurora_engine_precompiles::{Context, EthGas, ExitError, Precompile};
+    use hex_literal::hex;
+    use primitive_types::{H160, U256};
+
+    /// c-kzg `verify_kzg_proof_case_correct_proof_4_4`, also used by REVM.
+    const VALID_INPUT: [u8; 192] = hex!(
+        "01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b"
+        "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000"
+        "1522a4a7f34e1ea350ae07c29c96c7e79655aa926122e95fe69fcbd932ca49e9"
+        "8f59a8d2a1a625a17f3fea0fe5eb8c896db3764f3185481bc22f91b4aaffcca2"
+        "5f26936857bc3a7c2539ea8ec3a952b7"
+        "a62ad71d14c5719385c0686f1871430475bf3a00f0aa3f7b8dd99a9abc216074"
+        "4faf0070725e00b60ad9a026a15b1a8c"
+    );
+
+    /// Invalid proof vector from REVM's EIP-4844 precompile tests.
+    const INVALID_PROOF_INPUT: [u8; 192] = hex!(
+        "010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c444014"
+        "0000000000000000000000000000000000000000000000000000000000000000"
+        "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
+        "c000000000000000000000000000000000000000000000000000000000000000"
+        "00000000000000000000000000000000"
+        "c000000000000000000000000000000000000000000000000000000000000000"
+        "00000000000000000000000000000000"
+    );
+
+    const EXPECTED_OUTPUT: [u8; 64] = hex!(
+        "0000000000000000000000000000000000000000000000000000000000001000"
+        "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
+    );
+
+    fn context() -> Context {
+        Context {
+            address: Kzg::ADDRESS,
+            caller: H160::zero(),
+            apparent_value: U256::zero(),
+        }
+    }
+
+    #[test]
+    fn official_vector_matches_address_gas_and_output() {
+        assert_eq!(
+            Kzg::ADDRESS,
+            H160(hex!("000000000000000000000000000000000000000a"))
+        );
+
+        let output = Kzg
+            .run(&VALID_INPUT, Some(EthGas::new(50_000)), &context(), true)
+            .unwrap();
+        assert_eq!(output.cost.as_u64(), 50_000);
+        assert_eq!(output.output, EXPECTED_OUTPUT);
+        assert!(output.logs.is_empty());
+    }
+
+    #[test]
+    fn insufficient_gas_is_rejected_before_evaluation() {
+        assert!(matches!(
+            Kzg.run(&VALID_INPUT, Some(EthGas::new(49_999)), &context(), true),
+            Err(ExitError::OutOfGas)
+        ));
+    }
+
+    #[test]
+    fn mismatched_versioned_hash_is_rejected() {
+        let mut input = VALID_INPUT;
+        input[0] ^= 0x01;
+
+        assert!(matches!(
+            Kzg.run(&input, Some(EthGas::new(50_000)), &context(), true),
+            Err(ExitError::Other(message)) if message == "BlobMismatchedVersion"
+        ));
+    }
+
+    #[test]
+    fn invalid_proof_is_rejected() {
+        assert!(matches!(
+            Kzg.run(
+                &INVALID_PROOF_INPUT,
+                Some(EthGas::new(50_000)),
+                &context(),
+                true
+            ),
+            Err(ExitError::Other(message)) if message == "BlobVerifyKzgProofFailed"
+        ));
+    }
+}

@@ -1,8 +1,7 @@
-//! Ethereum-mainnet precompiled contracts, selected per hardfork.
+//! Ethereum mainnet precompiled contracts, selected per hardfork.
 //!
-//! Precompiles are native contracts living at fixed low addresses; calling such an address runs
-//! the native implementation instead of EVM bytecode. The set (and some pricing) grows with
-//! hardforks — [`Precompiles::new`] builds the concrete set for a [`Spec`]:
+//! Precompiles run native implementations at fixed addresses instead of EVM bytecode.
+//! [`Precompiles::new`] selects the set and pricing for a [`Spec`]:
 //!
 //! | Hardfork | Addresses | Contents |
 //! |---|---|---|
@@ -12,14 +11,9 @@
 //! | Prague | + `0x0b`–`0x11` | BLS12-381 operations (EIP-2537) |
 //! | Osaka | + `0x100` | P256VERIFY (EIP-7951); modexp repriced per EIP-7883 |
 //!
-//! # Place in the execution pipeline
 //!
-//! One set is built per block and shared by reference with every `StackExecutor` the transaction
-//! loop creates. On each `CALL`-family opcode the executor consults the [`PrecompileSet`]
-//! interface implemented here: `is_precompile` classifies the target address, `execute` runs the
-//! contract. The private adapters at the bottom of this module bridge the
-//! `aurora-engine-precompiles` API (its own gas, context and error types) to that interface,
-//! recording gas on the executor handle and mapping exit errors.
+//! One set is shared by every transaction executor in a block. The adapters in this module bridge
+//! `aurora-engine-precompiles` to [`PrecompileSet`] and account for gas on the executor handle.
 
 mod kzg;
 
@@ -254,5 +248,20 @@ fn map_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError
         Src::MaxNonce => ExitError::MaxNonce,
         Src::UsizeOverflow => ExitError::UsizeOverflow,
         Src::CreateContractStartingWithEF => ExitError::CreateContractStartingWithEF,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Kzg, Precompiles};
+    use crate::spec::Spec;
+    use aurora_evm::executor::stack::PrecompileSet;
+
+    #[test]
+    fn kzg_activation_starts_at_cancun() {
+        assert!(!Precompiles::new(&Spec::Shanghai).is_precompile(Kzg::ADDRESS));
+        for spec in [Spec::Cancun, Spec::Prague, Spec::Osaka] {
+            assert!(Precompiles::new(&spec).is_precompile(Kzg::ADDRESS));
+        }
     }
 }

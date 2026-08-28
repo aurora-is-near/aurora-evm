@@ -1,15 +1,8 @@
 //! Sealed header and block: a block paired with its cached hash.
 //!
-//! Sealing separates *knowing* a block's hash from *computing* it. The hash is
-//! `keccak256(rlp(header))`, so it is a pure function of the header; a [`SealedHeader`] therefore
-//! caches it rather than adding information. Caching matters because the hash is read repeatedly
-//! (as a parent hash, in the `BLOCKHASH` window, when reporting a mismatch) while re-encoding the
-//! header each time is wasteful.
-//!
-//! The cache is **lazy**: [`SealedHeader::new_unhashed`] stores nothing and hashes on first use, so
-//! a caller that never needs the hash never pays for it, while
-//! [`SealedHeader::new_unchecked`] adopts a hash the caller already has (from a witness, say) without
-//! recomputing it.
+//! A block hash is `keccak256(rlp(header))`, so sealing caches a derived value rather than adding
+//! consensus data. [`SealedHeader::new_unhashed`] computes it lazily; `new_unchecked` constructors
+//! adopt a hash already established by the caller.
 
 use crate::block::Block;
 use crate::block::body::BlockBody;
@@ -234,7 +227,8 @@ mod tests {
 
     #[test]
     fn cached_hash_is_returned_verbatim() {
-        // `new` adopts the caller's hash without recomputing it, so a stale hash is returned as is.
+        // `new_unchecked` adopts the caller's hash without recomputing it, so a stale hash is
+        // returned as is.
         let stale = H256::repeat_byte(0xff);
         let sealed = SealedHeader::new_unchecked(header(), stale);
         assert_eq!(sealed.hash(), stale);

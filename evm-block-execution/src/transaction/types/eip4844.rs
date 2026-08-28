@@ -1,12 +1,11 @@
 //! [EIP-4844] blob transaction, type byte `0x03`.
 //!
-//! Only the **consensus** form is modelled: the versioned hashes a block commits to. The network
-//! form, which carries the blobs, commitments and proofs, exists for transaction gossip and never
-//! appears inside a block, so a validator never sees one.
+//! This module models the block's consensus form, not the gossip form with blobs, commitments and
+//! proofs.
 //!
 //! [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 
-use super::{
+use super::codec::{
     TxDecodeError, append_access_list, append_blob_hashes, append_signature, decode_access_list,
     decode_required_destination, decode_signature, decode_u128, expect_items,
 };
@@ -18,12 +17,18 @@ use primitive_types::{H160, H256, U256};
 
 /// The EIP-4844 type byte.
 pub const TYPE_BYTE: u8 = 0x03;
+const TRANSACTION_FIELDS: usize = 11;
+const SIGNATURE_FIELDS: usize = 3;
+const SIGNED_TRANSACTION_FIELDS: usize = TRANSACTION_FIELDS + SIGNATURE_FIELDS;
+const SIGNATURE_INDEX: usize = TRANSACTION_FIELDS;
+const ACCESS_LIST_INDEX: usize = 8;
+const BLOB_FEE_INDEX: usize = 9;
+const BLOB_HASHES_INDEX: usize = 10;
 
-/// A blob transaction's own fields.
+/// A normalized EIP-4844 blob transaction.
 ///
-/// `to` is an `H160` rather than a [`TxKind`]: a blob transaction has no creation form, so making it
-/// unrepresentable is cheaper than checking for it. `blob_versioned_hashes` are `H256` for the same
-/// reason — they are hashes, and the fixed width is what keeps their leading zeros.
+/// `H160` makes contract creation unrepresentable; `H256` preserves each versioned hash's fixed
+/// width and leading zeros.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxEip4844 {
     /// Chain this transaction is valid on.
@@ -51,7 +56,7 @@ pub struct TxEip4844 {
 }
 
 impl TxEip4844 {
-    /// The eleven fields, shared by the signed encoding and the signing preimage.
+    /// Appends the fields shared by the signed and signing encodings.
     fn append_fields(&self, stream: &mut rlp::RlpStream) {
         stream.append(&self.chain_id);
         stream.append(&self.nonce);
@@ -66,90 +71,16 @@ impl TxEip4844 {
         append_blob_hashes(stream, &self.blob_versioned_hashes);
     }
 
-    /// Writes the signing preimage — the type byte, then this type\'s fields — into `stream`.
-    ///
-    /// The type byte goes in as raw bytes ahead of the list, so the preimage is one contiguous buffer
-    /// rather than a list that then has to be copied to make room for a prefix. Takes the stream so a
-    /// caller hashing a whole block's transactions can reuse one buffer for all of them.
-    ///
-    /// The list is unbounded and finalised, so the stream counts the fields itself. A hand-written count
-    /// would be the field list repeated in a second place, and the two can disagree — a preimage read
-    /// back with `as_raw` does not check that its list was completed, so a wrong count would silently
-    /// produce a wrong signature hash and therefore a wrong sender.
-    pub(crate) fn append_signing_preimage(&self, stream: &mut rlp::RlpStream) {
+    /// Encodes this transaction for signing into `stream`, clearing it first.
+    pub(crate) fn encode_for_signing_in(&self, stream: &mut rlp::RlpStream) {
         stream.clear();
         stream.append_raw(&[TYPE_BYTE], 0);
-        stream.begin_unbounded_list();
+        stream.begin_list(TRANSACTION_FIELDS);
         self.append_fields(stream);
-        stream.finalize_unbounded_list();
     }
 
-    /// The signing preimage as its own buffer, for a one-off caller.
-    #[must_use]
-    pub fn signing_preimage(&self) -> Vec<u8> {
-        let mut stream = rlp::RlpStream::new();
-        self.append_signing_preimage(&mut stream);
-        stream.out().to_vec()
-    }
-}
-
-/// A signed blob transaction.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignedTxEip4844 {
-    /// The signed fields.
-    pub tx: TxEip4844,
-    /// The sender's signature.
-    pub signature: TxSignature,
-}
-
-impl rlp::Encodable for SignedTxEip4844 {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        stream.begin_list(14);
-        self.tx.append_fields(stream);
-        append_signature(stream, &self.signature);
-    }
-}
-
-impl SignedTxEip4844 {
-    /// Decodes the fourteen-item list that follows the type byte.
-    ///
-    /// # Errors
-    /// [`TxDecodeError`] if the list is not fourteen strictly-tiling items, the transaction is a
-    /// creation, `max_fee_per_blob_gas` overflows a `u128`, or `y_parity` is not 0 or 1.
-    pub fn decode_strict(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
-        expect_items(rlp, 14)?;
-        Ok(Self {
-            tx: TxEip4844 {
-                chain_id: rlp.val_at(0)?,
-                nonce: rlp.val_at(1)?,
-                max_priority_fee_per_gas: rlp.val_at(2)?,
-                max_fee_per_gas: rlp.val_at(3)?,
-                gas_limit: rlp.val_at(4)?,
-                to: decode_required_destination(rlp, 5, TxType::Eip4844)?,
-                value: rlp.val_at(6)?,
-                data: rlp.val_at(7)?,
-                access_list: decode_access_list(rlp, 8)?,
-                max_fee_per_blob_gas: decode_u128(rlp, 9)?,
-                blob_versioned_hashes: rlp_strict::checked_list_at(rlp, 10)?,
-            },
-            signature: decode_signature(rlp, 11)?,
-        })
-    }
-}
-
-impl TxEip4844 {
-    /// This transaction's contribution to the execution environment, **consuming** it.
-    ///
-    /// Consuming rather than borrowing so that the owned fields — the call data, the access list and
-    /// its storage keys — *move* instead of being copied. The executor takes them by value in the end,
-    /// so a borrowing conversion would copy them once here and then hand the copy on; nothing reads the
-    /// transaction after this point.
-    ///
-    /// `caller` is an argument because it is not a transaction field: it is what verifying the
-    /// signature established.
-    ///
-    /// Every field is destructured by name. That is deliberate — adding a field to this type breaks
-    /// this function, so a new consensus field cannot silently fail to reach execution.
+    /// Converts into the execution environment for `caller`, moving owned data.
+    /// Named destructuring makes new consensus fields compile-time update points.
     #[must_use]
     pub fn into_tx_env(self, caller: H160) -> TxEnv {
         let Self {
@@ -178,10 +109,9 @@ impl TxEip4844 {
             gas_price: None,
             max_fee_per_gas: Some(max_fee_per_gas),
             max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
-            access_list,
-            // The one conversion that cannot be a move: the hashes are `H256` here and `U256` in the
-            // environment, and no safe cast reuses a `Vec`'s storage across element types. Bounded by
-            // the per-transaction blob limit, so it is a handful of words.
+            access_list: access_list.into_flattened(),
+            // `H256` cannot move into `U256` without conversion; the per-transaction blob limit keeps
+            // this list small.
             blob_versioned_hashes: blob_versioned_hashes
                 .into_iter()
                 .map(|hash| U256::from_big_endian(hash.as_bytes()))
@@ -192,9 +122,56 @@ impl TxEip4844 {
     }
 }
 
+/// A signed blob transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedTxEip4844 {
+    /// The signed fields.
+    pub tx: TxEip4844,
+    /// The sender's signature.
+    pub signature: TxSignature,
+}
+
+impl SignedTxEip4844 {
+    /// Decodes the signed field list that follows the type byte.
+    ///
+    /// # Errors
+    /// [`TxDecodeError`] if the list has the wrong shape, the transaction is a
+    /// creation, `max_fee_per_blob_gas` overflows a `u128`, or `y_parity` is not 0 or 1.
+    pub fn decode_strict(rlp: &rlp::Rlp<'_>) -> Result<Self, TxDecodeError> {
+        expect_items(rlp, SIGNED_TRANSACTION_FIELDS)?;
+        Ok(Self {
+            tx: TxEip4844 {
+                chain_id: rlp.val_at(0)?,
+                nonce: rlp.val_at(1)?,
+                max_priority_fee_per_gas: rlp.val_at(2)?,
+                max_fee_per_gas: rlp.val_at(3)?,
+                gas_limit: rlp.val_at(4)?,
+                to: decode_required_destination(rlp, 5, TxType::Eip4844)?,
+                value: rlp.val_at(6)?,
+                data: rlp.val_at(7)?,
+                access_list: decode_access_list(rlp, ACCESS_LIST_INDEX)?,
+                max_fee_per_blob_gas: decode_u128(rlp, BLOB_FEE_INDEX)?,
+                blob_versioned_hashes: rlp_strict::checked_list_at(rlp, BLOB_HASHES_INDEX)?,
+            },
+            signature: decode_signature(rlp, SIGNATURE_INDEX)?,
+        })
+    }
+}
+
+impl rlp::Encodable for SignedTxEip4844 {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(SIGNED_TRANSACTION_FIELDS);
+        self.tx.append_fields(stream);
+        append_signature(stream, &self.signature);
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SignedTxEip4844, TYPE_BYTE};
+    use super::{
+        BLOB_FEE_INDEX, SIGNED_TRANSACTION_FIELDS, SignedTxEip4844, TRANSACTION_FIELDS, TYPE_BYTE,
+        TxEip4844,
+    };
     use crate::transaction::TxEnv;
     use crate::transaction::{TxKind, TxType};
     use hex_literal::hex;
@@ -215,8 +192,13 @@ mod tests {
         SignedTxEip4844::decode_strict(&rlp::Rlp::new(&RAW[1..])).unwrap()
     }
 
-    /// A versioned hash whose first byte is `0x01` and whose remaining bytes are zero: encoded as an
-    /// integer it would lose 31 leading zeros, so the fixed width is what makes the round trip work.
+    fn encoded_for_signing(tx: &TxEip4844) -> Vec<u8> {
+        let mut stream = rlp::RlpStream::new();
+        tx.encode_for_signing_in(&mut stream);
+        stream.out().to_vec()
+    }
+
+    /// Fixed-width decoding preserves all leading zeros in a versioned hash.
     #[test]
     fn blob_hashes_keep_their_leading_zeros() {
         let typed = decoded();
@@ -230,18 +212,22 @@ mod tests {
     }
 
     #[test]
-    fn the_signing_preimage_omits_the_signature() {
-        let preimage = decoded().tx.signing_preimage();
-        assert_eq!(preimage[0], TYPE_BYTE);
-        assert_eq!(rlp::Rlp::new(&preimage[1..]).item_count().unwrap(), 11);
+    fn the_encoding_for_signing_omits_the_signature() {
+        let typed = decoded();
+        let encoded = encoded_for_signing(&typed.tx);
+        assert_eq!(encoded[0], TYPE_BYTE);
+        assert_eq!(
+            rlp::Rlp::new(&encoded[1..]).item_count().unwrap(),
+            TRANSACTION_FIELDS
+        );
     }
 
     #[test]
     fn a_blob_fee_wider_than_a_u128_is_rejected() {
         let rlp = rlp::Rlp::new(&RAW[1..]);
-        let mut stream = rlp::RlpStream::new_list(14);
-        for i in 0..14usize {
-            if i == 9 {
+        let mut stream = rlp::RlpStream::new_list(SIGNED_TRANSACTION_FIELDS);
+        for i in 0..SIGNED_TRANSACTION_FIELDS {
+            if i == BLOB_FEE_INDEX {
                 stream.append(&H256::repeat_byte(0xff)); // 2^256 - 1, far past a u128
             } else {
                 stream.append_raw(rlp.at(i).unwrap().as_raw(), 1);
@@ -250,9 +236,7 @@ mod tests {
         assert!(SignedTxEip4844::decode_strict(&rlp::Rlp::new(&stream.out())).is_err());
     }
 
-    /// The projection into the execution payload: this type's own fields carried across, and every
-    /// field it does not have written as its absent value. There is no impl back, so this is the only
-    /// direction there is to check.
+    /// Projection preserves this type's fields and canonical absences for unsupported fields.
     #[test]
     fn the_projection_carries_its_own_fields_and_nothing_else() {
         let typed = decoded();
@@ -287,7 +271,7 @@ mod tests {
             max_priority_fee_per_gas,
             Some(typed.tx.max_priority_fee_per_gas)
         );
-        assert_eq!(access_list, typed.tx.access_list);
+        assert_eq!(access_list, typed.tx.access_list.flattened());
         assert_eq!(max_fee_per_blob_gas, typed.tx.max_fee_per_blob_gas);
         // Widened from `H256` to `U256`, and the leading zeros must survive it.
         assert_eq!(blob_versioned_hashes, vec![U256::from(1u64) << 248]);

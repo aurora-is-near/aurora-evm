@@ -1,31 +1,19 @@
-//! Block types: the header, the body, and the sealed / recovered forms execution consumes.
-//!
-//! The chain of types mirrors how a block is progressively refined on its way into execution:
+//! Block representations used from decoding through execution:
 //!
 //! 1. [`Header`] — the canonical header; its RLP encoding defines the block hash.
 //! 2. [`BlockBody`] — the transactions and withdrawals the header commits to.
 //! 3. [`Block`] — header + body.
-//! 4. [`SealedBlock`] — a block whose hash is cached ([`SealedHeader`] does the caching, lazily).
-//! 5. [`RecoveredBlock`] — a sealed block paired with the sender of every transaction, which
-//!    [`recover_block_with_public_keys`] establishes.
+//! 4. [`SealedBlock`] — a block with a lazily cached hash.
+//! 5. [`RecoveredBlock`] — a sealed block paired with each transaction's recovered sender.
 //!
-//! Each type dereferences to the one it wraps, so a `RecoveredBlock` reads its header fields
-//! directly (`block.state_root`) and its hash through [`SealedBlock::hash`].
+//! [`recover_block`] derives senders from signed envelopes;
+//! [`recover_block_with_public_keys`] also verifies caller-supplied keys. Execution consumes the
+//! resulting pairing as [`TxEnv`](crate::transaction::TxEnv) values.
 //!
-//! # Senders
-//!
-//! A block body carries transactions in their consensus form
-//! ([`SignedTxEnvelope`]): a signature, and no sender. The
-//! sender is established by [`recover_block`], or by [`recover_block_with_public_keys`] when the
-//! caller has the keys and wants them checked against the ones recovery yields. The result is a
-//! [`RecoveredBlock`]; the executor's transaction form,
-//! [`TxEnv`](crate::transaction::TxEnv), is that pairing of payload and sender.
-//!
-//! Only post-merge blocks are modelled, so ommers are absent from [`BlockBody`] entirely: the list
-//! is always empty and `ommers_hash` is the constant
-//! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), which is checkable on the
-//! header alone.
+//! Only post-merge bodies are modelled: the encoded ommers list is empty and `ommers_hash` must be
+//! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH).
 
+mod ancestors;
 mod body;
 mod codec;
 mod env;
@@ -35,6 +23,7 @@ mod recovered;
 mod sealed;
 
 use crate::transaction::SignedTxEnvelope;
+pub use ancestors::{AncestorChainError, Ancestors, derive_ancestors};
 pub use body::BlockBody;
 pub use codec::BlockDecodeError;
 pub use env::{BlobExcessGasAndPrice, BlockEnv};
@@ -47,12 +36,10 @@ pub use recovered::{BlockRecoveryError, RecoveredBlock};
 pub use sealed::{SealedBlock, SealedHeader};
 use std::ops::Deref;
 
-/// An Ethereum block: its [`Header`] and the [`BlockBody`] that header commits to.
+/// An Ethereum [`Header`] and its committed [`BlockBody`].
 ///
-/// Dereferences to the header, so header fields can be read straight off the block
-/// (`block.state_root`). Sealing it ([`Block::seal_slow`]) caches the block hash; pairing it with
-/// its senders — which [`recover_block_with_public_keys`]
-/// establishes — yields a [`RecoveredBlock`], the form execution consumes.
+/// Dereferences to the header. Sealing caches its hash; sender recovery produces the
+/// [`RecoveredBlock`] consumed by execution.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Block {
     /// The block header.
@@ -98,7 +85,7 @@ impl Block {
         SealedBlock::seal_slow(self)
     }
 
-    /// Seals the block with a hash the caller already knows, without recomputing it.
+    /// Seals the block with a trusted hash, without recomputing it.
     #[must_use]
     pub fn seal_unchecked(self, hash: H256) -> SealedBlock {
         SealedBlock::new_unchecked(self, hash)

@@ -1,5 +1,6 @@
-/// Represents the execution witness of a block. Contains lists of required preimages and
-/// headers used during execution and verification.
+//! Data revealed to a stateless block execution.
+
+/// Trie, code, key and ancestor preimages required to verify and execute a block.
 ///
 /// Every field is a *list of items*, not one concatenated buffer: each trie node is hashed
 /// individually to be matched against the pre-state root, each contract code against its code
@@ -7,23 +8,13 @@
 /// into those items.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionWitness {
-    /// List of all hashed trie nodes preimages that were required during the execution of
-    /// the block, including during state root recomputation.
+    /// Trie-node preimages required by execution and state-root recomputation.
     pub state: Vec<Vec<u8>>,
-    /// List of all contract codes (created / accessed) preimages that were required during
-    /// the execution of the block, including during state root recomputation.
+    /// Contract-code preimages required by execution and state-root recomputation.
     pub contract_codes: Vec<Vec<u8>>,
-    /// List of all hashed account and storage keys (addresses and slots) preimages
-    /// (unhashed account addresses and storage slots, respectively) that were required during
-    /// the execution of the block.
+    /// Account-address and storage-slot preimages required for trie lookups.
     pub storage_keys: Vec<Vec<u8>>,
-    /// RLP-encoded block headers required for proving correctness of stateless execution.
-    ///
-    /// This collection stores block headers needed to verify:
-    /// - State reads are correct (i.e. the code and accounts are correct wrt the pre-state root)
-    /// - `BLOCKHASH` opcode execution results are correct
-    ///
-    /// Kept as raw bytes rather than decoded [`Header`](crate::block::Header)s because the
-    /// ancestor hash is `keccak256` of exactly these bytes.
+    /// RLP-encoded ancestor headers used to establish the pre-state and serve `BLOCKHASH`.
+    /// Raw bytes are retained because their exact encoding determines each ancestor hash.
     pub headers: Vec<Vec<u8>>,
 }

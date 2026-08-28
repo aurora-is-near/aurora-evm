@@ -1,31 +1,13 @@
-//! A signed [EIP-7702] authorization tuple.
+//! Consensus representation of a signed [EIP-7702] authorization.
 //!
-//! This is the consensus form of an authorization: the six fields
-//! `[chain_id, address, nonce, y_parity, r, s]` that are RLP-encoded inside a set-code
-//! transaction's `authorization_list`, and therefore part of what that transaction's sender signs.
+//! The encoded tuple is `[chain_id, address, nonce, y_parity, r, s]`. It is distinct from the
+//! executor's [`Authorization`], which contains a
+//! recovered authority and a validity flag. Projection recovers that form from this signed input.
 //!
-//! It is distinct from [`Authorization`](aurora_evm::executor::stack::Authorization), the form the
-//! executor consumes: that one holds the *recovered* `authority` and a validity flag, which are
-//! products of checking a signed tuple, not inputs to it. This module performs that recovery when
-//! the consensus transaction is projected into the executor's environment; the canonical
-//! projection never accepts the recovered form alongside the signed tuple.
-//!
-//! # `y_parity` is not a parity here
-//!
-//! EIP-7702 bounds the field only at `< 2**8`, and its behaviour section says a tuple whose
-//! `ecrecover` fails is *skipped* while the transaction carrying it stays valid. So `y_parity = 27`
-//! is a well-formed tuple that simply yields no authority, and rejecting it at decode time rejects a
-//! canonical block. It is held as a [`u8`] for that reason, and the parity question is asked in
-//! exactly one place, [`SignedAuthorization::signature`].
-//!
-//! The byte must also survive re-encoding **verbatim**: the authorization list is inside the
-//! carrying transaction's signing preimage, so normalising the parity would change that
-//! transaction's signature hash and therefore its sender.
-//!
-//! The six field types are exactly EIP-7702's six bounds: `u64` rejects a `nonce >= 2**64`, [`H160`]
-//! requires 20 bytes, [`u8`] rejects a `y_parity >= 2**8`, and [`U256`] rejects a `chain_id`, `r` or
-//! `s` at `>= 2**256`. `rlp` accepts only the minimal form of an integer, so each value has exactly
-//! one encoding.
+//! EIP-7702 only requires `y_parity < 2**8`. Values other than 0 and 1 are validly encoded tuples
+//! whose recovery fails and which execution skips; rejecting or normalizing them would change the
+//! carrying transaction's signing preimage. [`SignedAuthorization::signature`] interprets the byte
+//! at recovery time.
 //!
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
@@ -69,59 +51,62 @@ impl SignedAuthorization {
         }
     }
 
-    /// The authority this tuple authorises, as the executor needs it.
+    /// Recovers the executor representation of this authorization.
     ///
-    /// **Never returns `None`, and that is the whole point.** EIP-7702 charges intrinsic gas per
-    /// *tuple*, valid or not, so a tuple that fails a check must still occupy its place in the list —
-    /// dropping it would undercharge the transaction and change the state root. A failure is therefore
-    /// `is_valid: false` with a zero authority, not an absence.
+    /// Applies EIP-7702 steps 1 and 3. Invalid tuples remain as `is_valid: false`, because intrinsic
+    /// gas is charged for every tuple. The executor applies step 2 and steps 4–9 against state.
+    /// `rlp_stream` is cleared and reused for the signing preimage.
     ///
-    /// Only the checks that need no state are made here: EIP-2 `s` normalisation, `chain_id` being
-    /// zero or the transaction's own, a `y_parity` that is a parity, and the recovery itself. The
-    /// nonce against the authority's account and the delegation rules need the world state and belong
-    /// to the executor, which reads `is_valid` and applies the rest.
-    ///
-    /// `scratch` is the projection's RLP buffer, cleared before use and reused across a whole list.
-    /// Both `MAGIC` and the three-field list are written into it, so recovery allocates no separate
-    /// preimage per tuple.
+    /// # Panics
+    /// Panics if the internal three-field signing-preimage encoder does not finish its bounded RLP
+    /// list. This signals a programming error, not an invalid authorization tuple.
     #[must_use]
     pub(crate) fn recover_authority(
         &self,
         tx_chain_id: u64,
-        scratch: &mut rlp::RlpStream,
+        rlp_stream: &mut rlp::RlpStream,
     ) -> Authorization {
-        let invalid = Authorization::new(H160::zero(), self.address, self.nonce, false);
+        let invalid_authorization =
+            Authorization::new(H160::zero(), self.address, self.nonce, false);
 
-        // `chain_id == 0` authorises on every chain; otherwise it must be this transaction's own.
+        // EIP-7702 step 1: zero authorizes on every chain; otherwise the tuple must use this
+        // transaction's chain ID. EvmContext later binds that ID to the trusted chain config.
         if !self.chain_id.is_zero() && self.chain_id != U256::from(tx_chain_id) {
-            return invalid;
+            return invalid_authorization;
         }
-        // `y_parity` outside `{0, 1}` yields no signature at all, which is a well-formed tuple that
-        // simply authorises nobody.
+        // EIP-7702 step 3: recover from MAGIC || rlp([chain_id, address, nonce]). A wire-valid
+        // y_parity outside {0, 1}, an EIP-2 high-s signature, or failed recovery invalidates only
+        // this tuple.
         let Some(signature) = self.signature() else {
-            return invalid;
+            return invalid_authorization;
         };
         if !signature.is_s_normalized() {
-            return invalid;
+            return invalid_authorization;
         }
 
-        scratch.clear();
+        rlp_stream.clear();
         // Not an RLP item: EIP-7702 hashes the raw magic byte followed by the encoded list.
-        scratch.append_raw(&[MAGIC], 0);
-        scratch.begin_list(3);
-        scratch.append(&self.chain_id);
-        scratch.append(&self.address);
-        scratch.append(&self.nonce);
-        let message = libsecp256k1::Message::parse(&keccak256(scratch.as_raw()).0);
+        rlp_stream.append_raw(&[MAGIC], 0);
+        rlp_stream.begin_list(3);
+        rlp_stream.append(&self.chain_id);
+        rlp_stream.append(&self.address);
+        rlp_stream.append(&self.nonce);
+        // `as_raw()` does not perform `RlpStream::out()`'s completion check; fail closed before an
+        // unfinished internal preimage can select the wrong authority.
+        assert!(
+            rlp_stream.is_finished(),
+            "EIP-7702 authorization signing preimage left an open list"
+        );
+        let message = libsecp256k1::Message::parse(&keccak256(rlp_stream.as_raw()).0);
         let Ok(parsed) = libsecp256k1::Signature::parse_standard_slice(&signature.rs_bytes())
         else {
-            return invalid;
+            return invalid_authorization;
         };
         let Ok(recovery_id) = libsecp256k1::RecoveryId::parse(u8::from(signature.y_parity)) else {
-            return invalid;
+            return invalid_authorization;
         };
         let Ok(key) = libsecp256k1::recover(&message, &parsed, &recovery_id) else {
-            return invalid;
+            return invalid_authorization;
         };
         // The address is the low 20 bytes of `keccak256` over the key without its `0x04` tag.
         let authority = H160::from_slice(&keccak256(&key.serialize()[1..]).as_bytes()[12..]);
@@ -266,12 +251,12 @@ mod tests {
     /// unexplained sender three layers up.
     #[test]
     fn the_signing_preimage_is_the_magic_byte_and_three_fields() {
-        let mut scratch = rlp::RlpStream::new();
-        let recovered = vector().recover_authority(1, &mut scratch);
+        let mut stream = rlp::RlpStream::new();
+        let recovered = vector().recover_authority(1, &mut stream);
 
         // `d7` is a 23-byte list: `80` (chain_id 0), `94 ‖ 20 zero bytes` (address), `80` (nonce 0).
         assert_eq!(
-            scratch.as_raw(),
+            stream.as_raw(),
             hex!("05d78094000000000000000000000000000000000000000080"),
             "MAGIC ‖ rlp([chain_id, address, nonce])"
         );
@@ -291,7 +276,7 @@ mod tests {
             vector().recover_authority(0xdead_beef, &mut other_chain),
             recovered
         );
-        assert_eq!(other_chain.as_raw(), scratch.as_raw());
+        assert_eq!(other_chain.as_raw(), stream.as_raw());
     }
 
     #[test]

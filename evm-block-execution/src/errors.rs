@@ -1,6 +1,7 @@
 //! Error types for block execution and validation.
 //!
 //! Errors are layered by scope:
+//!
 //! - [`InvalidHeader`] — the block environment is inconsistent with the active hardfork;
 //! - [`InvalidTransaction`] — a transaction fails pre-execution validation;
 //! - [`BlockExecutionError`] — the top level: wraps the two above (via [`InvalidEvmContext`])
@@ -31,10 +32,8 @@ pub enum InvalidHeader {
     /// A trailing-optional header field is present on a fork that has no such field, or absent on
     /// one that requires it.
     ///
-    /// The header's RLP is a mandatory prefix plus a trailing-optional tail, so its *length* alone
-    /// says which fields are present — and no fork produces every length in that range. Cancun, for
-    /// instance, adds three fields at once, so a 18- or 19-field header belongs to no fork at all
-    /// even though it decodes.
+    /// Header RLP uses a mandatory prefix and positional tail. A decodable field count can still be
+    /// invalid for the selected fork; Cancun, for example, adds three fields together.
     ForkFieldMismatch {
         /// Which field disagrees with the fork.
         field: HeaderField,
@@ -43,10 +42,8 @@ pub enum InvalidHeader {
     },
     /// A trailing-optional header field is present while an earlier one is absent.
     ///
-    /// The trailing fields are **positional** — the RLP carries a length, not names — so a gap has no
-    /// encoding at all: writing it shifts every later field one place earlier, and reading those bytes
-    /// back yields a different header. Unlike [`Self::ForkFieldMismatch`] this needs no fork to judge:
-    /// no fork, present or future, can produce it.
+    /// Positional RLP cannot represent a gap: encoding would shift every later field. Unlike
+    /// [`Self::ForkFieldMismatch`], this is invalid independently of the selected fork.
     TrailingFieldGap {
         /// The first field present while the one before it is absent.
         field: HeaderField,
@@ -122,9 +119,8 @@ impl fmt::Display for InvalidHeader {
 
 /// Transaction rejected by pre-execution validation.
 ///
-/// Produced when a transaction is checked against the block environment, the active spec and the
-/// sender account before execution. In block validation any such error makes the whole block
-/// invalid.
+/// Covers checks against the block, active spec and sender account. Any variant invalidates the
+/// containing block.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum InvalidTransaction {
     /// Transaction `chain_id` does not match the configured chain id.
@@ -287,9 +283,8 @@ impl fmt::Display for InvalidTransaction {
 
 /// Top-level error of block execution and post-execution header validation.
 ///
-/// Aggregates the per-transaction validation layer ([`InvalidEvmContext`]) with block-level
-/// execution errors and header-mismatch errors. Every mismatch variant carries the computed
-/// (`got`) and expected (`expected`) value for diagnostics.
+/// Combines transaction validation, execution failures and post-execution header mismatches.
+/// Mismatch variants carry computed (`got`) and header (`expected`) values.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockExecutionError {
     /// Per-transaction validation failed (header / transaction checks).
@@ -332,12 +327,8 @@ pub enum BlockExecutionError {
     InvalidBlockTimestamp,
     /// A transaction in the block is invalid, or its execution failed fatally.
     ///
-    /// A wrapper carrying the position, because every other variant answers *what* went wrong and
-    /// none of them answers *where*. A block is rejected as a whole, so the offending transaction is
-    /// the only thing that makes the rejection diagnosable — and the only thing that lets a
-    /// disagreement with another client be located. The position is used rather than the transaction
-    /// hash: it is free here, whereas the hash would mean re-encoding the transaction to report a
-    /// failure. Boxed to keep the enum small.
+    /// Adds the offending transaction's position to another error. Uses an index to avoid hashing
+    /// the transaction on the error path; boxed to keep the enum small.
     Transaction {
         /// Position of the transaction in the block.
         index: usize,
@@ -378,8 +369,7 @@ pub enum BlockExecutionError {
     },
     /// Computed requests hash does not match the header.
     ///
-    /// `Option` on both sides: a fork that has no requests hash and one that has a different value
-    /// are different failures, and collapsing them would hide which happened.
+    /// Both sides retain presence, distinguishing a missing field from a mismatched value.
     RequestsHashMismatch {
         /// Computed value.
         got: Option<H256>,
@@ -395,8 +385,7 @@ pub enum BlockExecutionError {
     },
     /// Computed withdrawals root does not match the header.
     ///
-    /// `Option` on both sides: an absent list and an empty one are different blocks with different
-    /// roots, so presence has to survive into the error.
+    /// Both sides retain presence because an absent list differs from an empty one.
     WithdrawalsRootMismatch {
         /// Computed value.
         got: Option<H256>,
@@ -408,8 +397,7 @@ pub enum BlockExecutionError {
 impl BlockExecutionError {
     /// Tags an error with the position of the transaction that produced it.
     ///
-    /// Idempotent by construction: an error already carrying a position keeps the inner one, so
-    /// wrapping twice cannot bury the real cause under a second layer.
+    /// Already-positioned errors are returned unchanged.
     #[must_use]
     pub fn at_transaction(index: usize, source: Self) -> Self {
         if matches!(source, Self::Transaction { .. }) {
@@ -431,8 +419,7 @@ impl From<InvalidEvmContext> for BlockExecutionError {
 impl core::error::Error for BlockExecutionError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            // The only variant that wraps another: the position is context, the inner error is the
-            // cause, so the chain stays walkable.
+            // Preserve the underlying cause through the positional wrapper.
             Self::Transaction { source, .. } => Some(source),
             _ => None,
         }

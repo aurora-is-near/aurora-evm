@@ -132,12 +132,11 @@ const fn is_empty_account(account: &MemoryAccount) -> bool {
     account.nonce.is_zero() && account.balance.is_zero() && account.code.is_empty()
 }
 
-/// Computes the world `state_root` over a full account map (standalone / full-state path).
+/// Computes the canonical Ethereum state root from a fully materialized account map.
 ///
-/// EIP-161 "empty" accounts are excluded here defensively, so the result is canonical even if the
-/// caller did not prune them (`MemoryBackend::apply` with `delete_empty = true` already prunes
-/// them during execution). Against a witness the root is instead computed by an external sparse trie,
-/// which sees only the revealed leaves.
+/// Addresses are secure-trie keys; storage roots and code hashes are derived from each account.
+/// EIP-161 empty accounts are omitted. A partial witness must instead update an authenticated sparse
+/// trie rooted at the parent state.
 #[must_use]
 pub fn state_root(accounts: &BTreeMap<H160, MemoryAccount>) -> H256 {
     sec_trie_root(
@@ -157,6 +156,7 @@ mod tests {
     use crate::crypto::keccak256;
     use aurora_evm::backend::MemoryAccount;
     use hash_db::Hasher;
+    use hex_literal::hex;
     use primitive_types::{H160, H256, U256};
     use std::collections::BTreeMap;
 
@@ -281,5 +281,48 @@ mod tests {
     fn receipts_root_of_empty_list_is_empty_root() {
         let items: Vec<Vec<u8>> = Vec::new();
         assert_eq!(ordered_trie_root(items), EMPTY_ROOT_HASH);
+    }
+
+    /// Two successful, log-free legacy receipts from EEST's Cancun `tstore_clear_after_tx` block.
+    fn eest_legacy_receipt(cumulative_gas_used: [u8; 2]) -> Vec<u8> {
+        let mut receipt = vec![0xf9, 0x01, 0x08, 0x01, 0x82];
+        receipt.extend_from_slice(&cumulative_gas_used);
+        receipt.extend_from_slice(&[0xb9, 0x01, 0x00]);
+        receipt.extend_from_slice(&[0; 256]);
+        receipt.push(0xc0);
+        receipt
+    }
+
+    #[test]
+    fn ordered_root_matches_a_multi_receipt_eest_block() {
+        let receipts = [
+            eest_legacy_receipt([0x5b, 0x74]),
+            eest_legacy_receipt([0xb6, 0xe8]),
+        ];
+
+        assert_eq!(
+            ordered_trie_root(receipts),
+            H256(hex!(
+                "8f668f8b9d0cafee86ca26ba619eda34bef9f00e8694ee97efa8d363bda58fe3"
+            ))
+        );
+    }
+
+    #[test]
+    fn secure_root_matches_the_ethereum_trie_vector() {
+        // Final key/value set of TrieTests/trietest_secureTrie.json::emptyValues after deletions.
+        let entries: [(&[u8], &[u8]); 4] = [
+            (b"do", b"verb"),
+            (b"horse", b"stallion"),
+            (b"doge", b"coin"),
+            (b"dog", b"puppy"),
+        ];
+
+        assert_eq!(
+            super::sec_trie_root(entries),
+            H256(hex!(
+                "29b235a58c3c25ab83010c327d5932bcf05324b7d6b1185e650798034783ca9d"
+            ))
+        );
     }
 }
