@@ -1,14 +1,10 @@
 //! The block body: the lists a header commits to.
 //!
-//! [`BlockBody`] holds the block's transactions in their consensus form
-//! ([`SignedTxEnvelope`]) and, from Shanghai on, its validator withdrawals. The header commits to
-//! both through a root — `transactions_root` and `withdrawals_root` — so the body is the pre-image
-//! those roots are re-derived from.
+//! [`BlockBody`] holds signed transactions and, from Shanghai onward, validator withdrawals. Their
+//! ordered encodings derive the header's `transactions_root` and `withdrawals_root`.
 //!
-//! Ommers are not modelled: this crate executes post-merge blocks only, where the list is always
-//! empty and `ommers_hash` is therefore the constant
-//! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH), checkable on the header
-//! alone.
+//! Ommers are not represented because this crate executes post-merge blocks only; the codec writes
+//! an empty ommers list and validation requires the corresponding constant header root.
 
 use crate::transaction::SignedTxEnvelope;
 use crate::withdrawal::Withdrawal;

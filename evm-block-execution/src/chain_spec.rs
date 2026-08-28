@@ -1,12 +1,7 @@
-//! Chain configuration and hardfork activation.
+//! Trusted chain configuration and Cancun-or-later hardfork activation.
 //!
-//! `Spec` takes precedence over timestamp-based activation: it defines the hardfork this
-//! configuration is explicitly bound to. A timestamp alone cannot advance the chain to a newer
-//! hardfork, even if that fork's activation time has passed. Moving to a newer hardfork requires
-//! explicitly reconfiguring `Spec`; timestamps only determine activation within that boundary.
-//!
-//! The zkEVM treats this configuration as trusted input and supports Cancun as its minimum
-//! hardfork. Activation conditions before Cancun are therefore deliberately not represented here.
+//! [`ChainSpec::spec`] is an explicit upper bound: timestamps select a fork within it but cannot
+//! advance beyond it. Pre-Cancun activation rules are omitted because Cancun is the zkEVM's minimum.
 
 use crate::eips::eip1559::BaseFeeParams;
 use crate::eips::eip7840::BlobParams;
@@ -18,7 +13,7 @@ use std::collections::BTreeMap;
 /// Activation timestamps for the Cancun-and-later hardforks supported by the zkEVM.
 pub type HardForkActivationTime = BTreeMap<Spec, u64>;
 
-/// Everything about the chain a block belongs to.
+/// Trusted chain parameters used to validate and execute a block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChainSpec {
     /// EIP-155 chain id.
@@ -27,26 +22,23 @@ pub struct ChainSpec {
     pub spec: Spec,
     /// Activation timestamps for supported timestamp-activated hardforks.
     pub hard_forks_timestamps: HardForkActivationTime,
-    /// Block deposit contract address
+    /// Deposit contract address, when configured.
     pub deposit_contract_address: Option<H160>,
-    /// Block base fee
+    /// EIP-1559 base-fee parameters.
     pub base_fee_params: BaseFeeParams,
     /// Blob-parameter schedule (EIP-7840 / EIP-7892 BPO forks).
     pub blob_schedule: BlobScheduleBlobParams,
 }
 
 impl ChainSpec {
-    /// The [`BlobParams`] active at `timestamp`, or `None` before Cancun.
+    /// Returns the [`BlobParams`] active at `timestamp`, bounded by [`Self::spec`].
     ///
-    /// `None` means no supported hardfork within the configured boundary is active, including when
-    /// its activation timestamp is missing. A trusted Cancun-and-later configuration therefore gets
-    /// `Some`: the latest timestamp-scheduled BPO entry for active Osaka, or the active fork's
-    /// default otherwise.
+    /// Returns `None` when Cancun is inactive or its activation timestamp is unavailable. Osaka uses
+    /// the latest active scheduled update, falling back to its fork defaults.
     #[must_use]
     pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
-        // Timestamp-scheduled BPO parameters belong to Osaka and later. Checking them inside the
-        // Osaka branch is what prevents a late timestamp from advancing a Cancun/Prague-pinned
-        // configuration on its own.
+        // BPO updates are reachable only from Osaka, so a late timestamp cannot advance a spec-pinned
+        // Cancun or Prague configuration.
         if self.is_osaka_active_at_timestamp(timestamp) {
             self.blob_schedule
                 .active_scheduled_params_at_timestamp(timestamp)
@@ -61,27 +53,25 @@ impl ChainSpec {
         }
     }
 
-    /// Checks whether the Cancun hardfork is active at the given timestamp.
+    /// Whether Cancun is active within the configured boundary.
     #[must_use]
     fn is_cancun_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.spec >= Spec::Cancun && self.active_at_timestamp(Spec::Cancun, timestamp)
     }
 
-    /// Checks whether the Prague hardfork is active at the given timestamp.
+    /// Whether Prague is active within the configured boundary.
     #[must_use]
     fn is_prague_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.spec >= Spec::Prague && self.active_at_timestamp(Spec::Prague, timestamp)
     }
 
-    /// Checks whether the Osaka hardfork is active at the given timestamp.
+    /// Whether Osaka is active within the configured boundary.
     #[must_use]
     fn is_osaka_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.spec >= Spec::Osaka && self.active_at_timestamp(Spec::Osaka, timestamp)
     }
 
-    /// Checks whether the fork condition is satisfied at the given timestamp.
-    ///
-    /// This will return false for any condition that is not timestamp-based or activation time unknown.
+    /// Whether the configured activation timestamp has been reached.
     #[must_use]
     fn active_at_timestamp(&self, spec: Spec, timestamp: u64) -> bool {
         self.hard_forks_timestamps
@@ -151,9 +141,7 @@ mod tests {
         assert_eq!(cancun.blob_params_at_timestamp(BPO_TIMESTAMP), None);
     }
 
-    /// The other half of `timestamp_does_not_advance_past_the_configured_spec`: once `spec` stops
-    /// limiting anything, the timestamp alone chooses — and each boundary is inclusive at its own
-    /// activation, so every `>=` is checked from both sides.
+    /// Once `spec` permits every supported fork, timestamps select among them inclusively.
     #[test]
     fn within_the_configured_spec_the_timestamp_picks_the_fork() {
         let osaka = chain_spec(Spec::Osaka);
@@ -175,8 +163,7 @@ mod tests {
         }
     }
 
-    /// Before Cancun there is no blob market to parameterise, and the boundary alone must say so:
-    /// every activation timestamp here is configured and long past.
+    /// A pre-Cancun boundary disables blob parameters even after every configured timestamp.
     #[test]
     fn a_spec_below_cancun_has_no_blob_market() {
         for spec in [
@@ -194,15 +181,12 @@ mod tests {
         }
     }
 
-    /// A fork with no activation timestamp cannot activate, but it must not take the chain down with
-    /// it: the answer is the newest fork that *can* activate. Removing the entries from the newest
-    /// down walks the whole chain, which removing only Cancun's cannot distinguish from a hard stop.
+    /// Missing timestamps skip their fork and fall back to the latest active predecessor.
     #[test]
     fn a_fork_without_an_activation_timestamp_is_skipped_not_fatal() {
         let mut osaka = chain_spec(Spec::Osaka);
 
-        // Osaka is out, so the BPO entry goes out of reach with it — scheduled parameters belong to
-        // Osaka and later, never to the fork that answers in its place.
+        // Without Osaka, its scheduled updates are also unreachable.
         osaka.hard_forks_timestamps.remove(&Spec::Osaka);
         assert_eq!(
             osaka.blob_params_at_timestamp(BPO_TIMESTAMP),
@@ -215,13 +199,12 @@ mod tests {
             Some(BlobParams::cancun())
         );
 
-        // An empty schedule is the fail-closed end of the chain, whatever `spec` claims.
+        // No Cancun timestamp means no blob market, whatever `spec` permits.
         osaka.hard_forks_timestamps.remove(&Spec::Cancun);
         assert_eq!(osaka.blob_params_at_timestamp(BPO_TIMESTAMP), None);
     }
 
-    /// With one scheduled entry, "latest active wins" is indistinguishable from "first active wins".
-    /// Two entries are the smallest case that tells them apart.
+    /// Two active entries distinguish "latest active" from "first active".
     #[test]
     fn the_latest_active_bpo_entry_wins() {
         let mut osaka = chain_spec(Spec::Osaka);

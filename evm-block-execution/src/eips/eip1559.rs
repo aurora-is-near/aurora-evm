@@ -1,12 +1,6 @@
 //! [EIP-1559] base-fee constants and the base-fee / gas-limit transition rules.
 //!
-//! # What this module deliberately leaves out
-//!
-//! # Arithmetic
-//!
-//! The base-fee formula multiplies a fee by a gas amount, so it is computed in `u128` and narrowed
-//! back with a checked conversion rather than a truncating cast, so the boundary has a stated outcome
-//! instead of a silent one.
+//! Intermediate fee arithmetic uses `u128` and narrows to `u64` with checked conversions.
 //!
 //! [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 
@@ -19,10 +13,7 @@ pub const ETHEREUM_BLOCK_GAS_LIMIT_36M: u64 = 36_000_000;
 /// The bound divisor of the gas limit, used in the parent-relative gas-limit rule.
 pub const GAS_LIMIT_BOUND_DIVISOR: u64 = 1024;
 
-/// The lowest base fee reachable under mainnet EIP-1559 parameters.
-///
-/// With a max-change denominator of `8` (12.5 %), once the base fee has fallen to `7` Wei it cannot
-/// fall further, because 12.5 % of 7 is less than 1.
+/// Lowest base fee reachable with the mainnet denominator of 8: 12.5% of 7 Wei rounds to zero.
 pub const MIN_PROTOCOL_BASE_FEE: u64 = 7;
 
 /// Initial base fee at the London fork.
@@ -34,10 +25,7 @@ pub const DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 8;
 /// Elasticity multiplier: the block gas limit divided by this is the gas target.
 pub const DEFAULT_ELASTICITY_MULTIPLIER: u64 = 2;
 
-/// The two parameters that control how the base fee moves between blocks.
-///
-/// `u64` rather than the`u128`: the real values are `8` and `2`, and the narrower type
-/// removes a cast at every use.
+/// Parameters controlling parent-to-child base-fee changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BaseFeeParams {
     /// The base-fee max-change denominator.
@@ -65,7 +53,7 @@ impl BaseFeeParams {
         }
     }
 
-    /// The base fee the next block must carry, given this block's usage.
+    /// Returns the base fee required for the next block.
     ///
     /// See [`calc_next_block_base_fee`].
     ///
@@ -78,16 +66,12 @@ impl BaseFeeParams {
     }
 }
 
-/// The base fee the next block must carry, from this block's gas usage.
+/// Calculates the next block's base fee from the parent's gas usage.
 ///
-/// The gas target is the block gas limit divided by the elasticity multiplier. Above target the base
-/// fee rises, below target it falls, at target it stays; the movement is capped at
-/// `1 / max_change_denominator` of the current fee, and the whole fee is burned rather than paid to
-/// the beneficiary.
+/// Usage above the elasticity-adjusted target raises the fee; usage below it lowers the fee.
 ///
 /// # Errors
-/// `None` if `elasticity_multiplier` or `max_change_denominator` is zero — a parameter set that makes
-/// the formula undefined — or if the resulting fee does not fit in a `u64`.
+/// `None` if either parameter makes the formula undefined or the result exceeds `u64`.
 ///
 /// See the [EIP-1559 spec](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-1559.md).
 #[must_use]
@@ -99,15 +83,11 @@ pub fn calc_next_block_base_fee(
 ) -> Option<u64> {
     let gas_target = gas_limit.checked_div(base_fee_params.elasticity_multiplier)?;
     if base_fee_params.max_change_denominator == 0 {
-        // The movement is `base_fee * shoot / (gas_target * denominator)`, so a zero denominator makes
-        // it a division by zero. Reported for every block rather than answered for the ones at target:
-        // a degenerate parameter set is a configuration bug, and answering exactly where the formula
-        // happens not to need the denominator is where it would go unnoticed.
+        // Reject the invalid parameter set even when an at-target block would avoid the division.
         return None;
     }
     if gas_target == 0 {
-        // With a zero target no block is below it, and every non-empty block overshoots by its whole
-        // gas usage divided by nothing. Only an unused block has an answer.
+        // With a zero target, only an unused block has a defined transition.
         return (gas_used == gas_target).then_some(base_fee);
     }
 
@@ -127,18 +107,13 @@ pub fn calc_next_block_base_fee(
         core::cmp::Ordering::Less => {
             let undershoot = u128::from(gas_target.checked_sub(gas_used)?);
             let delta = base_fee_wide.checked_mul(undershoot)? / denominator;
-            // Saturating, not checked: the fee floor is zero, and a decrease larger than the fee
-            // itself simply means the fee bottoms out.
+            // A decrease larger than the fee reaches the protocol floor of zero.
             Some(base_fee.saturating_sub(u64::try_from(delta).unwrap_or(u64::MAX)))
         }
     }
 }
 
-/// The gas limit the next block may carry, clamped to the parent-relative bound.
-///
-/// A block may move the gas limit by at most `parent / GAS_LIMIT_BOUND_DIVISOR - 1` in either
-/// direction. Validating that bound is a parent-relative header rule; this crate does not run those
-/// yet, so nothing calls this — it is the rule stated where the fork defines it.
+/// Clamps a desired gas limit to the parent-relative EIP-1559 bound.
 ///
 /// See [go-ethereum's `block_validator.go`](https://github.com/ethereum/go-ethereum/blob/88cbfab332c96edfbe99d161d9df6a40721bd786/core/block_validator.go#L166).
 #[must_use]
@@ -153,7 +128,7 @@ pub fn calculate_block_gas_limit(parent_gas_limit: u64, desired_gas_limit: u64) 
 mod tests {
     use super::{BaseFeeParams, calc_next_block_base_fee};
 
-    /// The published transition vectors: at target, above it, below it, and at the floor.
+    /// Published vectors spanning target, increase, decrease and floor cases.
     #[test]
     fn base_fee_transition_matches_the_published_vectors() {
         for &(gas_used, gas_limit, base_fee, expected) in &[
@@ -182,7 +157,7 @@ mod tests {
         }
     }
 
-    /// Degenerate parameter sets are reported, not truncated into a plausible-looking fee.
+    /// Invalid parameters fail instead of producing a plausible fee.
     #[test]
     fn degenerate_parameters_are_reported() {
         let zero_elasticity = BaseFeeParams::new(8, 0);
@@ -195,8 +170,7 @@ mod tests {
         assert_eq!(calc_next_block_base_fee(0, 0, 100, params), Some(100));
         assert_eq!(calc_next_block_base_fee(1, 0, 100, params), None);
 
-        // A zero denominator is reported for every block, including the ones exactly at target where
-        // the formula would not have divided by it.
+        // A zero denominator is invalid even for an at-target block.
         let zero_denominator = BaseFeeParams::new(0, 2);
         assert_eq!(zero_denominator.max_change_denominator, 0);
         for (gas_used, gas_limit) in [(5_000_000, 10_000_000), (1, 10_000_000), (0, 0), (1, 0)] {

@@ -1,9 +1,8 @@
-//! # Aurora EVM block execution
+//! Ethereum block validation and execution on top of [`aurora_evm`].
 //!
-//! Self-contained block-execution layer on top of the high-performance Aurora EVM core.
-//! It wraps single-transaction execution (`aurora_evm::StackExecutor`) into a full block
-//! execution pipeline (pre-execution system calls, transaction loop with receipts and gas
-//! accounting, post-execution withdrawals/requests, block roots and header checks).
+//! The crate provides consensus block and transaction types, strict RLP codecs, sender recovery,
+//! transaction validation and execution, receipts, and protocol helpers. Stateless witness
+//! execution and the remaining pre- and post-execution stages are still being assembled.
 
 #![forbid(unsafe_code)]
 

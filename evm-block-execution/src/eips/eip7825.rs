@@ -1,15 +1,6 @@
-//! Contains constants for [EIP-7825](https://eips.ethereum.org/EIPS/eip-7825): Transaction Gas Limit Cap
+//! [EIP-7825] per-transaction gas limit introduced in Osaka.
 //!
-//! Introduced in the `Osaka` hard fork. Caps the gas a single transaction may declare, so that no one
-//! transaction can claim a whole block's capacity.
+//! [EIP-7825]: https://eips.ethereum.org/EIPS/eip-7825
 
-/// Transaction gas limit cap.
-///
-/// # Rationale from EIP
-///
-/// The proposed cap of 16,777,216 gas (2^24) provides a clean power-of-two boundary that simplifies
-/// implementation while still being large enough to accommodate most complex transactions,
-/// including contract deployments and advanced `DeFi` interactions. This value represents
-/// approximately half of typical block sizes (30-40 million gas), ensuring multiple transactions
-/// can fit within each block.
+/// Maximum gas a transaction may declare (`2^24`).
 pub const TX_GAS_LIMIT_CAP: u64 = 16_777_216;

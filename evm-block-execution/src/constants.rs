@@ -3,6 +3,9 @@
 use hex_literal::hex;
 use primitive_types::H256;
 
+/// Number of recent ancestors available to the `BLOCKHASH` opcode.
+pub const BLOCKHASH_WINDOW: usize = 256;
+
 /// `keccak256("")` — the code hash of an account with empty code.
 pub const KECCAK_EMPTY: H256 = H256(hex!(
     "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
