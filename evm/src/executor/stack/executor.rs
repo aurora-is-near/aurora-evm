@@ -63,7 +63,8 @@ pub enum StackExitKind {
 /// The transaction layer creates exactly one value for every signed authorization, including an
 /// invalid one, because intrinsic gas is charged for every list entry:
 ///
-/// - `authority` is the address recovered by EIP-7702 step 3, or zero when steps 1 or 3 fail;
+/// - `authority` is the address recovered by EIP-7702 step 3 when `is_valid` is true; the executor
+///   does not read it for an invalid entry;
 /// - `address` is the signed delegation target;
 /// - `nonce` is the account nonce to which the authorization is bound;
 /// - `is_valid` records whether the transaction layer completed steps 1 and 3 successfully.
