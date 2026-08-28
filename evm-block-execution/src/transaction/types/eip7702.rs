@@ -104,7 +104,8 @@ impl TxEip7702 {
             value,
             data,
             access_list,
-            authorization_list: _tuples,
+            // Keep the discarded unrecovered list explicit.
+            authorization_list: _unrecovered_authorization_list,
         } = self;
 
         TxEnv {

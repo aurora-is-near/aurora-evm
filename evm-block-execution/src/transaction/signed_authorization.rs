@@ -66,21 +66,22 @@ impl SignedAuthorization {
         tx_chain_id: u64,
         rlp_stream: &mut rlp::RlpStream,
     ) -> Authorization {
-        let invalid = Authorization::new(H160::zero(), self.address, self.nonce, false);
+        let invalid_authorization =
+            Authorization::new(H160::zero(), self.address, self.nonce, false);
 
-        // EIP-7702 step 1: zero authorises on every chain; otherwise the tuple must use this
+        // EIP-7702 step 1: zero authorizes on every chain; otherwise the tuple must use this
         // transaction's chain ID. EvmContext later binds that ID to the trusted chain config.
         if !self.chain_id.is_zero() && self.chain_id != U256::from(tx_chain_id) {
-            return invalid;
+            return invalid_authorization;
         }
         // EIP-7702 step 3: recover from MAGIC || rlp([chain_id, address, nonce]). A wire-valid
         // y_parity outside {0, 1}, an EIP-2 high-s signature, or failed recovery invalidates only
         // this tuple.
         let Some(signature) = self.signature() else {
-            return invalid;
+            return invalid_authorization;
         };
         if !signature.is_s_normalized() {
-            return invalid;
+            return invalid_authorization;
         }
 
         rlp_stream.clear();
@@ -99,13 +100,13 @@ impl SignedAuthorization {
         let message = libsecp256k1::Message::parse(&keccak256(rlp_stream.as_raw()).0);
         let Ok(parsed) = libsecp256k1::Signature::parse_standard_slice(&signature.rs_bytes())
         else {
-            return invalid;
+            return invalid_authorization;
         };
         let Ok(recovery_id) = libsecp256k1::RecoveryId::parse(u8::from(signature.y_parity)) else {
-            return invalid;
+            return invalid_authorization;
         };
         let Ok(key) = libsecp256k1::recover(&message, &parsed, &recovery_id) else {
-            return invalid;
+            return invalid_authorization;
         };
         // The address is the low 20 bytes of `keccak256` over the key without its `0x04` tag.
         let authority = H160::from_slice(&keccak256(&key.serialize()[1..]).as_bytes()[12..]);

@@ -5,8 +5,8 @@
 //! block checks are still marked as `TODO` in the recovered path.
 
 use crate::block::{
-    Block, RecoveredBlock, SenderRecoveryError, UncompressedPublicKey,
-    recover_block_with_public_keys,
+    AncestorChainError, Block, RecoveredBlock, SenderRecoveryError, UncompressedPublicKey,
+    derive_ancestors, recover_block_with_public_keys,
 };
 use crate::errors::{BlockExecutionError, InvalidHeader};
 use crate::execution_types::execution::BlockExecutionOutput;
@@ -29,8 +29,7 @@ pub struct StatelessValidationOutput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatelessValidationError {
     /// The ancestor headers in the witness do not form a chain ending at this block's parent.
-    // TODO
-    // AncestorChain(AncestorChainError),
+    AncestorChain(AncestorChainError),
     /// The header's fields do not match the fork it is being validated against.
     InvalidHeader(InvalidHeader),
     /// A transaction's sender could not be established from the supplied public key.
@@ -39,12 +38,11 @@ pub enum StatelessValidationError {
     Execution(BlockExecutionError),
 }
 
-// TODO: add after Ancestors
-// impl From<AncestorChainError> for StatelessValidationError {
-//     fn from(error: AncestorChainError) -> Self {
-//         Self::AncestorChain(error)
-//     }
-// }
+impl From<AncestorChainError> for StatelessValidationError {
+    fn from(error: AncestorChainError) -> Self {
+        Self::AncestorChain(error)
+    }
+}
 
 impl From<InvalidHeader> for StatelessValidationError {
     fn from(error: InvalidHeader) -> Self {
@@ -67,8 +65,7 @@ impl From<BlockExecutionError> for StatelessValidationError {
 impl fmt::Display for StatelessValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // TODO
-            // Self::AncestorChain(error) => write!(f, "ancestor chain is invalid: {error}"),
+            Self::AncestorChain(error) => write!(f, "ancestor chain is invalid: {error}"),
             Self::InvalidHeader(error) => write!(f, "header does not match its fork: {error}"),
             Self::SenderRecovery(error) => write!(f, "sender recovery failed: {error}"),
             Self::Execution(error) => write!(f, "block execution failed: {error}"),
@@ -79,8 +76,7 @@ impl fmt::Display for StatelessValidationError {
 impl core::error::Error for StatelessValidationError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
-            // TODO
-            // Self::AncestorChain(error) => Some(error),
+            Self::AncestorChain(error) => Some(error),
             Self::InvalidHeader(error) => Some(error),
             Self::SenderRecovery(error) => Some(error),
             Self::Execution(error) => Some(error),
@@ -112,20 +108,63 @@ pub fn stateless_validation(
 }
 
 /// Validates a block whose senders are already established.
+// Ownership matches the completed path, which will consume these execution inputs.
+#[allow(clippy::needless_pass_by_value)]
 fn stateless_validation_recovered(
-    _block: RecoveredBlock,
-    _witness: ExecutionWitness,
+    current_block: RecoveredBlock,
+    witness: ExecutionWitness,
     _chain_spec: ChainSpec,
 ) -> Result<StatelessValidationOutput, StatelessValidationError> {
-    // Before any state is touched: bind the pre-state root to this block. Nothing downstream can
-    // establish it, because a block hash commits to its parent's *hash* and to its own post-state
-    // root, never to the state root it started from.
-    //-> let ancestors = derive_ancestors(block.header(), &witness.headers)?;
+    // Bind the witness to the state root of the verified parent before state is accessed.
+    let ancestors = derive_ancestors(current_block.header(), &witness.headers)?;
 
-    // The parent belongs to a fork too, and a parent that does not is not a parent this block can
-    // follow — its `state_root` would be read out of a header no chain produced.
-    //-> validate_header_fork_fields(ancestors.parent().header(), chain_spec)?;
-    //-> let (_parent, _ancestor_hashes) = ancestors.split();
+    // TODO: enable once parent-relative consensus validation is implemented.
+    // validate_block_consensus(&chain_spec, &current_block, ancestors.parent())?;
 
-    todo!("execution against the witness-revealed state; see the module docs")
+    let pre_state_root = ancestors.pre_state_root();
+    let (_parent_header, ancestor_hashes) = ancestors.split();
+
+    todo!(
+        "execution against pre-state root {pre_state_root:?} with {} verified ancestor hashes; see the module docs",
+        ancestor_hashes.len()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StatelessValidationError, stateless_validation};
+    use crate::block::{AncestorChainError, Block};
+    use crate::chain_spec::ChainSpec;
+    use crate::eips::eip1559::BaseFeeParams;
+    use crate::eips::eip7892::BlobScheduleBlobParams;
+    use crate::execution_types::witness::ExecutionWitness;
+    use crate::spec::Spec;
+    use std::collections::BTreeMap;
+
+    fn chain_spec() -> ChainSpec {
+        ChainSpec {
+            chain_id: 1,
+            spec: Spec::Cancun,
+            hard_forks_timestamps: BTreeMap::new(),
+            deposit_contract_address: None,
+            base_fee_params: BaseFeeParams::ethereum(),
+            blob_schedule: BlobScheduleBlobParams::mainnet(),
+        }
+    }
+
+    #[test]
+    fn missing_ancestor_is_returned_before_unimplemented_execution() {
+        let error = stateless_validation(
+            Block::default(),
+            &[],
+            ExecutionWitness::default(),
+            chain_spec(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            StatelessValidationError::AncestorChain(AncestorChainError::MissingParent)
+        );
+    }
 }

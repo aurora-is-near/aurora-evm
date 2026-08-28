@@ -13,6 +13,7 @@
 //! Only post-merge bodies are modelled: the encoded ommers list is empty and `ommers_hash` must be
 //! [`EMPTY_OMMER_ROOT_HASH`](crate::constants::EMPTY_OMMER_ROOT_HASH).
 
+mod ancestors;
 mod body;
 mod codec;
 mod env;
@@ -22,6 +23,7 @@ mod recovered;
 mod sealed;
 
 use crate::transaction::SignedTxEnvelope;
+pub use ancestors::{AncestorChainError, Ancestors, derive_ancestors};
 pub use body::BlockBody;
 pub use codec::BlockDecodeError;
 pub use env::{BlobExcessGasAndPrice, BlockEnv};
