@@ -22,17 +22,6 @@ pub const BPO2_MAX_BLOBS_PER_BLOCK: u64 = 21;
 /// Blob-fee update fraction from BPO2.
 pub const BPO2_BASE_UPDATE_FRACTION: u64 = 11_684_671;
 
-/// A scheduled blob parameter update entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlobScheduleEntry {
-    /// Cancun blob parameters.
-    Cancun(BlobParams),
-    /// Prague blob parameters.
-    Prague(BlobParams),
-    /// Parameters activated at a specific timestamp.
-    TimestampUpdate(u64, BlobParams),
-}
-
 /// Fork defaults and timestamp-scheduled blob-parameter updates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobScheduleBlobParams {

@@ -65,7 +65,8 @@ impl StateTestCase {
     ///
     /// ## Panics
     /// Panics if a pre-London transaction has no `gas_price`, or if the transaction's secret key is
-    /// missing or fails to parse (see `get_caller_from_secret_key`).
+    /// missing or fails to parse (see `get_caller_from_secret_key`). At London and later, also
+    /// panics on an unknown `tx_type`.
     pub fn get_memory_vicinity(
         &self,
         spec: &Spec,
