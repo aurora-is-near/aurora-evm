@@ -37,17 +37,29 @@ impl ChainSpec {
     /// the latest active scheduled update, falling back to its fork defaults.
     #[must_use]
     pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
-        // BPO updates are reachable only from Osaka, so a late timestamp cannot advance a spec-pinned
-        // Cancun or Prague configuration.
-        if self.is_osaka_active_at_timestamp(timestamp) {
-            self.blob_schedule
+        match self.active_spec_at_timestamp(timestamp)? {
+            // BPO updates are reachable only from Osaka, so a late timestamp cannot advance a
+            // spec-pinned Cancun or Prague configuration.
+            Spec::Osaka => self
+                .blob_schedule
                 .active_scheduled_params_at_timestamp(timestamp)
                 .copied()
-                .or(Some(self.blob_schedule.osaka))
+                .or(Some(self.blob_schedule.osaka)),
+            Spec::Prague => Some(self.blob_schedule.prague),
+            Spec::Cancun => Some(self.blob_schedule.cancun),
+            Spec::Istanbul | Spec::Berlin | Spec::London | Spec::Merge | Spec::Shanghai => None,
+        }
+    }
+
+    /// Latest active Cancun-or-later fork permitted by [`Self::spec`].
+    #[must_use]
+    pub(crate) fn active_spec_at_timestamp(&self, timestamp: u64) -> Option<Spec> {
+        if self.is_osaka_active_at_timestamp(timestamp) {
+            Some(Spec::Osaka)
         } else if self.is_prague_active_at_timestamp(timestamp) {
-            Some(self.blob_schedule.prague)
+            Some(Spec::Prague)
         } else if self.is_cancun_active_at_timestamp(timestamp) {
-            Some(self.blob_schedule.cancun)
+            Some(Spec::Cancun)
         } else {
             None
         }
