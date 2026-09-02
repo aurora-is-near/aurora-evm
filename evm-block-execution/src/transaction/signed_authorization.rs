@@ -11,7 +11,7 @@
 //!
 //! [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
 
-use crate::crypto::keccak256;
+use crate::crypto::{address_from_uncompressed_public_key, keccak256};
 use crate::transaction::signature::TxSignature;
 use aurora_evm::executor::stack::Authorization;
 use primitive_types::{H160, U256};
@@ -28,10 +28,7 @@ fn recover_address_from_prehash(prehash: [u8; 32], signature: &TxSignature) -> O
         libsecp256k1::Signature::parse_standard_slice(&signature.rs_bytes()).ok()?;
     let recovery_id = libsecp256k1::RecoveryId::parse(u8::from(signature.y_parity)).ok()?;
     let key = libsecp256k1::recover(&message, &parsed_signature, &recovery_id).ok()?;
-    // Ethereum addresses use the low 20 bytes of the untagged public-key hash.
-    Some(H160::from_slice(
-        &keccak256(&key.serialize()[1..]).as_bytes()[12..],
-    ))
+    Some(address_from_uncompressed_public_key(&key.serialize()))
 }
 
 /// A signed EIP-7702 authorization: the delegation this signer authorizes, plus the signature.

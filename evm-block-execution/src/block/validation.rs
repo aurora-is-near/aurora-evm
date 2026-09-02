@@ -47,13 +47,8 @@ fn validate_header(
     chain_spec: &ChainSpec,
     header: &Header,
 ) -> Result<(Spec, BlobParams), BlockValidationError> {
-    let active_spec = chain_spec
-        .active_spec_at_timestamp(header.timestamp)
-        .ok_or(BlockValidationError::CancunNotActive {
-            timestamp: header.timestamp,
-        })?;
-    let blob_params = chain_spec
-        .blob_params_at_timestamp(header.timestamp)
+    let (active_spec, blob_params) = chain_spec
+        .active_spec_and_blob_params_at_timestamp(header.timestamp)
         .ok_or(BlockValidationError::CancunNotActive {
             timestamp: header.timestamp,
         })?;
