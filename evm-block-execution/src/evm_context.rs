@@ -455,8 +455,13 @@ impl<'block, 'tx> EvmContext<'block, 'tx> {
 
     /// Validates the transaction-level EIP-7702 rules.
     ///
+    /// An empty authorization list is valid RLP but makes the transaction invalid under [EIP-7702],
+    /// so the rule belongs here rather than in decoding or tuple recovery.
+    ///
     /// # Errors
     /// Returns [`InvalidEvmContext`] if the fork, fee, authorization list or destination is invalid.
+    ///
+    /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702#set-code-transaction
     pub fn validate_eip7702_tx(&self) -> Result<(), InvalidEvmContext> {
         if self.spec < Spec::Prague {
             return Err(InvalidEvmContext::InvalidTransaction(

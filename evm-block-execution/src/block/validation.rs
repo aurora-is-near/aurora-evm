@@ -715,6 +715,21 @@ mod tests {
         }
     }
 
+    /// A configured upper fork must not bypass Cancun's activation timestamp.
+    #[test]
+    fn pre_cancun_timestamps_are_rejected() {
+        for spec in [Spec::Cancun, Spec::Prague, Spec::Osaka] {
+            let fixture = Fixture::new(spec, CANCUN_TIMESTAMP - 1);
+            assert_eq!(
+                fixture.validate(),
+                Err(BlockValidationError::CancunNotActive {
+                    timestamp: CANCUN_TIMESTAMP - 1,
+                }),
+                "{spec:?}"
+            );
+        }
+    }
+
     #[test]
     fn first_cancun_block_accepts_a_parent_without_blob_fields() {
         let fixture = Fixture::new(Spec::Cancun, CANCUN_TIMESTAMP);

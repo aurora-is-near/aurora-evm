@@ -20,6 +20,20 @@ use primitive_types::{H160, U256};
 /// authorization signature can never be mistaken for a transaction signature.
 const MAGIC: u8 = 0x05;
 
+/// Recovers the Ethereum address for `signature` over an already hashed message.
+#[inline]
+fn recover_address_from_prehash(prehash: [u8; 32], signature: &TxSignature) -> Option<H160> {
+    let message = libsecp256k1::Message::parse(&prehash);
+    let parsed_signature =
+        libsecp256k1::Signature::parse_standard_slice(&signature.rs_bytes()).ok()?;
+    let recovery_id = libsecp256k1::RecoveryId::parse(u8::from(signature.y_parity)).ok()?;
+    let key = libsecp256k1::recover(&message, &parsed_signature, &recovery_id).ok()?;
+    // Ethereum addresses use the low 20 bytes of the untagged public-key hash.
+    Some(H160::from_slice(
+        &keccak256(&key.serialize()[1..]).as_bytes()[12..],
+    ))
+}
+
 /// A signed EIP-7702 authorization: the delegation this signer authorizes, plus the signature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SignedAuthorization {
@@ -57,9 +71,15 @@ impl SignedAuthorization {
     /// gas is charged for every tuple. The executor applies step 2 and steps 4–9 against state.
     /// `rlp_stream` is cleared and reused for the signing preimage.
     ///
+    /// This method is tuple-scoped. [EIP-7702] makes an empty list invalid at the transaction level,
+    /// so [`EvmContext::validate_eip7702_tx`] enforces that rule separately.
+    ///
     /// # Panics
     /// Panics if the internal three-field signing-preimage encoder does not finish its bounded RLP
     /// list. This signals a programming error, not an invalid authorization tuple.
+    ///
+    /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702#set-code-transaction
+    /// [`EvmContext::validate_eip7702_tx`]: crate::evm_context::EvmContext::validate_eip7702_tx
     #[must_use]
     pub(crate) fn recover_authority(
         &self,
@@ -71,7 +91,8 @@ impl SignedAuthorization {
 
         // EIP-7702 step 1: zero authorizes on every chain; otherwise the tuple must use this
         // transaction's chain ID. EvmContext later binds that ID to the trusted chain config.
-        if !self.chain_id.is_zero() && self.chain_id != U256::from(tx_chain_id) {
+        let chain_id_is_valid = self.chain_id.is_zero() || self.chain_id == U256::from(tx_chain_id);
+        if !chain_id_is_valid {
             return invalid_authorization;
         }
         // EIP-7702 step 3: recover from MAGIC || rlp([chain_id, address, nonce]). A wire-valid
@@ -97,19 +118,13 @@ impl SignedAuthorization {
             rlp_stream.is_finished(),
             "EIP-7702 authorization signing preimage left an open list"
         );
-        let message = libsecp256k1::Message::parse(&keccak256(rlp_stream.as_raw()).0);
-        let Ok(parsed) = libsecp256k1::Signature::parse_standard_slice(&signature.rs_bytes())
+
+        let Some(authority) =
+            recover_address_from_prehash(keccak256(rlp_stream.as_raw()).0, &signature)
         else {
             return invalid_authorization;
         };
-        let Ok(recovery_id) = libsecp256k1::RecoveryId::parse(u8::from(signature.y_parity)) else {
-            return invalid_authorization;
-        };
-        let Ok(key) = libsecp256k1::recover(&message, &parsed, &recovery_id) else {
-            return invalid_authorization;
-        };
-        // The address is the low 20 bytes of `keccak256` over the key without its `0x04` tag.
-        let authority = H160::from_slice(&keccak256(&key.serialize()[1..]).as_bytes()[12..]);
+
         Authorization::new(authority, self.address, self.nonce, true)
     }
 }

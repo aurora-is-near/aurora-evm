@@ -76,7 +76,8 @@ impl TxEip7702 {
     ///
     /// This applies EIP-7702 steps 1 and 3. The executor applies step 2 and steps 4–9 after
     /// incrementing the sender nonce. Invalid tuples remain in place because intrinsic gas is
-    /// charged for every tuple. One RLP buffer is reused for all signing preimages.
+    /// charged for every tuple. Projection stays total for an empty list; transaction validation
+    /// enforces the EIP-7702 non-empty-list rule. One RLP buffer is reused for all signing preimages.
     #[must_use]
     pub fn recovered_authorizations(&self) -> Vec<Authorization> {
         let mut stream = rlp::RlpStream::new();
