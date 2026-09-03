@@ -15,7 +15,6 @@ workspace = true
 [dependencies]
 aurora-engine-precompiles = "2.1.0"
 aurora-evm = { workspace = true, features = ["with-serde"] }
-bytecount = "0.6"
 clap = { version = "4.5", features = ["cargo"] }
 c-kzg = "1.0"
 derive_more = { version = "2", features = ["full"] }
