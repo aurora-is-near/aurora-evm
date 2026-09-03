@@ -8,12 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.0.0] - 2026-09-03
 > **Osaka Hard Fork Release**
 >
-> The primary purpose of this release is support for the **Osaka** hard fork.
->
-> **Scope**: Osaka support here covers **EIP-7939** (`CLZ`) in the EVM core and the
-> **EIP-7823** / **EIP-7883** `MODEXP` repricing in the test precompile set. The remaining
-> Osaka EIPs are not implemented yet — notably **EIP-7825** (transaction gas limit cap),
-> **EIP-7907** (contract code size limit) and **EIP-7951** (`P256VERIFY` precompile).
+> The primary purpose of this release is support for the **Osaka** hard fork: **EIP-7939**
+> (`CLZ`) in the EVM core, and the **EIP-7823** / **EIP-7883** `MODEXP` rules through the
+> Osaka precompile set — precompiles are supplied by the host, not by this crate.
 >
 > **History**: the Osaka work [[#99]] branched off `v2.2.0` and landed on the mainline
 > *before* the `v2.2.1` gasometer line, which was merged afterwards via [[#104]].
