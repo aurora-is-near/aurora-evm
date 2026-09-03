@@ -118,14 +118,15 @@ fn stateless_validation_recovered(
     // Bind the witness to the state root of the verified parent before state is accessed.
     let ancestors = derive_ancestors(current_block.header(), &witness.headers)?;
 
-    validate_block_consensus(&chain_spec, &current_block, ancestors.parent())?;
+    let (active_spec, blob_params) =
+        validate_block_consensus(&chain_spec, &current_block, ancestors.parent())?;
 
     let pre_state_root = ancestors.pre_state_root();
     let (_parent_header, ancestor_hashes) = ancestors.split();
 
     todo!(
-        "execution against pre-state root {pre_state_root:?} with {} verified ancestor hashes; see the module docs",
-        ancestor_hashes.len()
+        "{active_spec:?} execution with {blob_params:?} against pre-state root {pre_state_root:?} and {} verified ancestor hashes; see the module docs",
+        ancestor_hashes.len(),
     )
 }
 

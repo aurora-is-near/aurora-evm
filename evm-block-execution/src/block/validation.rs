@@ -29,6 +29,7 @@ const MAX_RLP_BLOCK_SIZE: usize = 8_388_608;
 /// Validates a recovered block before execution.
 ///
 /// The supplied parent must be the verified parent derived from the execution witness.
+/// On success, returns the timestamp-resolved fork and blob parameters execution must use.
 ///
 /// # Errors
 /// [`BlockValidationError`] if the header, parent transition or body commitments are invalid.
@@ -36,13 +37,18 @@ pub fn validate_block_consensus(
     chain_spec: &ChainSpec,
     block: &RecoveredBlock,
     parent: &SealedHeader,
-) -> Result<(), BlockValidationError> {
+) -> Result<(Spec, BlobParams), BlockValidationError> {
     let (active_spec, blob_params) = validate_header(chain_spec, block.header())?;
     validate_header_against_parent(block.sealed_header(), parent, chain_spec, blob_params)?;
-    validate_block_pre_execution(block, active_spec)
+    validate_block_pre_execution(block, active_spec)?;
+    Ok((active_spec, blob_params))
 }
 
-/// Validates rules that need only the current header.
+/// Resolves the Cancun-or-later execution context and validates standalone header rules.
+///
+/// Checks post-Merge constants, generic bounds, fork-specific fields, and EIP-4844 blob limits in
+/// consensus error order. Parent transitions and body commitments are validated separately.
+#[inline]
 fn validate_header(
     chain_spec: &ChainSpec,
     header: &Header,
@@ -53,33 +59,67 @@ fn validate_header(
             timestamp: header.timestamp,
         })?;
 
+    validate_post_merge_fields(header)?;
+    validate_header_extra_data(header)?;
+    validate_header_gas(header)?;
+    validate_header_base_fee(header)?;
+    validate_header_withdrawals_root(header)?;
+    validate_header_cancun_fields(header)?;
+    validate_header_requests_hash(header, active_spec >= Spec::Prague)?;
+    validate_unsupported_header_fields(header)?;
+    validate_blob_header(header, blob_params)?;
+    Ok((active_spec, blob_params))
+}
+
+/// Validates the fixed post-Merge fields required by EIP-3675.
+///
+/// Proof-of-stake headers have zero difficulty and nonce, and commit to an empty ommers list.
+#[inline]
+fn validate_post_merge_fields(header: &Header) -> Result<(), BlockValidationError> {
     if !header.difficulty.is_zero() {
         return Err(BlockValidationError::DifficultyNotZero {
             difficulty: header.difficulty,
         });
     }
+
     if header.nonce != [0; 8] {
         return Err(BlockValidationError::NonceNotZero {
             nonce: header.nonce,
         });
     }
+
     if header.ommers_hash != EMPTY_OMMER_ROOT_HASH {
         return Err(BlockValidationError::OmmersHashNotEmpty {
             found: header.ommers_hash,
         });
     }
+    Ok(())
+}
+
+/// Validates the Yellow Paper's 32-byte `extra_data` limit.
+#[inline]
+const fn validate_header_extra_data(header: &Header) -> Result<(), BlockValidationError> {
     if header.extra_data.len() > MAX_EXTRA_DATA_SIZE {
         return Err(BlockValidationError::ExtraDataTooLong {
             len: header.extra_data.len(),
             max: MAX_EXTRA_DATA_SIZE,
         });
     }
+    Ok(())
+}
+
+/// Validates the standalone header gas bounds.
+///
+/// Reported gas use must fit the block limit; equality with executed gas is checked post-execution.
+#[inline]
+const fn validate_header_gas(header: &Header) -> Result<(), BlockValidationError> {
     if header.gas_used > header.gas_limit {
         return Err(BlockValidationError::GasUsedExceedsGasLimit {
             gas_used: header.gas_used,
             gas_limit: header.gas_limit,
         });
     }
+
     if header.gas_limit > MAXIMUM_GAS_LIMIT {
         return Err(BlockValidationError::GasLimitExceedsMaximum {
             gas_limit: header.gas_limit,
@@ -87,52 +127,90 @@ fn validate_header(
         });
     }
 
-    validate_fork_fields(header, active_spec)?;
-    validate_blob_header(header, blob_params)?;
-    Ok((active_spec, blob_params))
+    Ok(())
 }
 
-/// Validates the positional header tail selected by the active fork.
-fn validate_fork_fields(header: &Header, active_spec: Spec) -> Result<(), BlockValidationError> {
+/// Requires the EIP-1559 base fee introduced by London.
+///
+/// This validator accepts Cancun-or-later blocks, so the field is always required.
+#[inline]
+const fn validate_header_base_fee(header: &Header) -> Result<(), BlockValidationError> {
     validate_fork_field(
         HeaderField::BaseFeePerGas,
         header.base_fee_per_gas.is_some(),
         true,
-    )?;
+    )
+}
+
+/// Requires the EIP-4895 withdrawals root introduced by Shanghai.
+///
+/// This validator accepts Cancun-or-later blocks, so the field is always required.
+#[inline]
+const fn validate_header_withdrawals_root(header: &Header) -> Result<(), BlockValidationError> {
     validate_fork_field(
         HeaderField::WithdrawalsRoot,
         header.withdrawals_root.is_some(),
         true,
-    )?;
-    validate_fork_field(
-        HeaderField::BlobGasUsed,
-        header.blob_gas_used.is_some(),
-        true,
-    )?;
-    validate_fork_field(
-        HeaderField::ExcessBlobGas,
-        header.excess_blob_gas.is_some(),
-        true,
-    )?;
-    validate_fork_field(
-        HeaderField::ParentBeaconBlockRoot,
-        header.parent_beacon_block_root.is_some(),
-        true,
-    )?;
+    )
+}
+
+/// Requires the EIP-4844 blob fields and EIP-4788 parent beacon root introduced by Cancun.
+#[inline]
+const fn validate_header_cancun_fields(header: &Header) -> Result<(), BlockValidationError> {
+    if header.blob_gas_used.is_none() {
+        return Err(BlockValidationError::ForkFieldMismatch {
+            field: HeaderField::BlobGasUsed,
+            present: false,
+        });
+    }
+    if header.excess_blob_gas.is_none() {
+        return Err(BlockValidationError::ForkFieldMismatch {
+            field: HeaderField::ExcessBlobGas,
+            present: false,
+        });
+    }
+    if header.parent_beacon_block_root.is_none() {
+        return Err(BlockValidationError::ForkFieldMismatch {
+            field: HeaderField::ParentBeaconBlockRoot,
+            present: false,
+        });
+    }
+    Ok(())
+}
+
+/// Validates the EIP-7685 requests hash, introduced by Prague.
+#[inline]
+const fn validate_header_requests_hash(
+    header: &Header,
+    required: bool,
+) -> Result<(), BlockValidationError> {
     validate_fork_field(
         HeaderField::RequestsHash,
         header.requests_hash.is_some(),
-        active_spec >= Spec::Prague,
-    )?;
-    validate_fork_field(
-        HeaderField::BlockAccessListHash,
-        header.block_access_list_hash.is_some(),
-        false,
-    )?;
-    validate_fork_field(HeaderField::SlotNumber, header.slot_number.is_some(), false)
+        required,
+    )
+}
+
+/// Rejects EIP-7928 and EIP-7843 fields, which activate after the latest supported fork.
+#[inline]
+const fn validate_unsupported_header_fields(header: &Header) -> Result<(), BlockValidationError> {
+    if header.block_access_list_hash.is_some() {
+        return Err(BlockValidationError::ForkFieldMismatch {
+            field: HeaderField::BlockAccessListHash,
+            present: true,
+        });
+    }
+    if header.slot_number.is_some() {
+        return Err(BlockValidationError::ForkFieldMismatch {
+            field: HeaderField::SlotNumber,
+            present: true,
+        });
+    }
+    Ok(())
 }
 
 /// Validates one optional fork field.
+#[inline]
 const fn validate_fork_field(
     field: HeaderField,
     present: bool,
@@ -145,18 +223,19 @@ const fn validate_fork_field(
     }
 }
 
-/// Validates EIP-4844 fields that do not depend on the parent or body.
-fn validate_blob_header(
+/// Validates EIP-4844 blob-gas granularity and the active block maximum.
+#[inline]
+const fn validate_blob_header(
     header: &Header,
     blob_params: BlobParams,
 ) -> Result<(), BlockValidationError> {
-    let blob_gas_used = header
-        .blob_gas_used
-        .ok_or(BlockValidationError::ForkFieldMismatch {
+    let Some(blob_gas_used) = header.blob_gas_used else {
+        return Err(BlockValidationError::ForkFieldMismatch {
             field: HeaderField::BlobGasUsed,
             present: false,
-        })?;
-    if !blob_gas_used.is_multiple_of(DATA_GAS_PER_BLOB) {
+        });
+    };
+    if blob_gas_used % DATA_GAS_PER_BLOB != 0 {
         return Err(BlockValidationError::BlobGasUsedNotMultiple { blob_gas_used });
     }
 
@@ -272,60 +351,81 @@ struct BodyMetrics {
 }
 
 /// Derives body commitments and the canonical block RLP length in one encoding pass.
+///
+/// On Osaka, the growing encoded body is size-checked before either trie is built.
 fn calculate_body_metrics(
     header: &Header,
     body: &BlockBody,
+    active_spec: Spec,
 ) -> Result<BodyMetrics, BlockValidationError> {
-    let mut scratch = rlp::RlpStream::new();
-    let mut transactions_payload_length = 0usize;
-    let mut blob_count = 0u64;
+    let header_length = rlp::encode(header).len();
 
-    let transaction_values = body.transactions.iter().map(|transaction| {
-        let envelope = transaction.encode_2718_in(&mut scratch);
-        let block_item_length = if transaction.tx_type() == TxType::Legacy {
-            envelope.len()
-        } else {
-            rlp_container_length(envelope.len()).unwrap_or(usize::MAX)
-        };
-        // Saturation is detected by the checked container-length calculation below. Keeping this
-        // iterator streaming avoids a second attacker-sized vector before trie construction.
-        transactions_payload_length = transactions_payload_length.saturating_add(block_item_length);
-
-        if let SignedTxEnvelope::Eip4844(transaction) = transaction {
-            let count =
-                u64::try_from(transaction.tx.blob_versioned_hashes.len()).unwrap_or(u64::MAX);
-            blob_count = blob_count.saturating_add(count);
-        }
-        envelope.to_vec()
-    });
-
-    let transactions_root = ordered_trie_root(transaction_values);
-    let transactions_length = rlp_container_length(transactions_payload_length)?;
-
-    let (withdrawals_root, withdrawals_length) = match body.withdrawals() {
+    let (withdrawal_values, withdrawals_length) = match body.withdrawals() {
         Some(withdrawals) => {
             let mut payload_length = 0usize;
-            let values = withdrawals.iter().map(|withdrawal| {
+            let mut values = Vec::with_capacity(withdrawals.len());
+            for withdrawal in withdrawals {
                 let value = rlp::encode(withdrawal);
-                payload_length = payload_length.saturating_add(value.len());
-                value
-            });
-            (
-                Some(ordered_trie_root(values)),
-                rlp_container_length(payload_length)?,
-            )
+                payload_length = payload_length
+                    .checked_add(value.len())
+                    .ok_or(BlockValidationError::ArithmeticOverflow)?;
+
+                if active_spec >= Spec::Osaka {
+                    let withdrawals_length = rlp_container_length(payload_length)?;
+                    let rlp_length =
+                        calculate_block_rlp_length(header_length, 0, withdrawals_length)?;
+                    validate_block_size(rlp_length, active_spec)?;
+                }
+                values.push(value);
+            }
+            (Some(values), rlp_container_length(payload_length)?)
         }
         None => (None, 0),
     };
 
-    let block_payload_length = rlp::encode(header)
-        .len()
-        .checked_add(transactions_length)
-        // The body model has no ommers, so its encoded list is the one-byte empty list.
-        .and_then(|length| length.checked_add(1))
-        .and_then(|length| length.checked_add(withdrawals_length))
-        .ok_or(BlockValidationError::ArithmeticOverflow)?;
-    let block_rlp_length = rlp_container_length(block_payload_length)?;
+    let mut scratch = rlp::RlpStream::new();
+    let mut transactions_payload_length = 0usize;
+    let mut blob_count = 0u64;
+    // The count is already backed by the materialized body, so exact reservation avoids leaking
+    // growth allocations in a bump-allocated guest. Values reach `triehash` only after EIP-7934.
+    let mut transaction_values = Vec::with_capacity(body.transactions.len());
+    for transaction in &body.transactions {
+        let envelope = transaction.encode_2718_in(&mut scratch);
+        let block_item_length = if transaction.tx_type() == TxType::Legacy {
+            envelope.len()
+        } else {
+            rlp_container_length(envelope.len())?
+        };
+        transactions_payload_length = transactions_payload_length
+            .checked_add(block_item_length)
+            .ok_or(BlockValidationError::ArithmeticOverflow)?;
+
+        if let SignedTxEnvelope::Eip4844(transaction) = transaction {
+            let count =
+                u64::try_from(transaction.tx.blob_versioned_hashes.len()).unwrap_or(u64::MAX);
+            blob_count = blob_count
+                .checked_add(count)
+                .ok_or(BlockValidationError::ArithmeticOverflow)?;
+        }
+        if active_spec >= Spec::Osaka {
+            let rlp_length = calculate_block_rlp_length(
+                header_length,
+                transactions_payload_length,
+                withdrawals_length,
+            )?;
+            validate_block_size(rlp_length, active_spec)?;
+        }
+        transaction_values.push(envelope.to_vec());
+    }
+
+    let block_rlp_length = calculate_block_rlp_length(
+        header_length,
+        transactions_payload_length,
+        withdrawals_length,
+    )?;
+
+    let transactions_root = ordered_trie_root(transaction_values);
+    let withdrawals_root = withdrawal_values.map(ordered_trie_root);
     let blob_gas_used = blob_count
         .checked_mul(DATA_GAS_PER_BLOB)
         .ok_or(BlockValidationError::ArithmeticOverflow)?;
@@ -336,6 +436,22 @@ fn calculate_body_metrics(
         blob_gas_used,
         block_rlp_length,
     })
+}
+
+/// Calculates the canonical block-list length from already measured body components.
+fn calculate_block_rlp_length(
+    header_length: usize,
+    transactions_payload_length: usize,
+    withdrawals_length: usize,
+) -> Result<usize, BlockValidationError> {
+    let transactions_length = rlp_container_length(transactions_payload_length)?;
+    let block_payload_length = header_length
+        .checked_add(transactions_length)
+        // The body model has no ommers, so its encoded list is the one-byte empty list.
+        .and_then(|length| length.checked_add(1))
+        .and_then(|length| length.checked_add(withdrawals_length))
+        .ok_or(BlockValidationError::ArithmeticOverflow)?;
+    rlp_container_length(block_payload_length)
 }
 
 /// Returns the encoded length of an RLP list or non-single-byte string with this payload length.
@@ -363,8 +479,7 @@ fn validate_block_pre_execution(
     active_spec: Spec,
 ) -> Result<(), BlockValidationError> {
     let header = block.header();
-    let metrics = calculate_body_metrics(header, block.body())?;
-
+    let metrics = calculate_body_metrics(header, block.body(), active_spec)?;
     validate_block_size(metrics.block_rlp_length, active_spec)?;
 
     if metrics.transactions_root != header.transactions_root {
@@ -468,7 +583,12 @@ pub enum BlockValidationError {
     /// Blob-count or RLP-length arithmetic overflowed.
     ArithmeticOverflow,
     /// The canonical block RLP exceeds the EIP-7934 limit.
-    BlockTooLarge { rlp_length: usize, max: usize },
+    BlockTooLarge {
+        /// Length lower bound observed when the limit was crossed; exact after a complete scan.
+        rlp_length: usize,
+        /// Maximum canonical block RLP length.
+        max: usize,
+    },
 }
 
 impl fmt::Display for BlockValidationError {
@@ -570,7 +690,7 @@ impl fmt::Display for BlockValidationError {
             Self::ArithmeticOverflow => f.write_str("block validation arithmetic overflowed"),
             Self::BlockTooLarge { rlp_length, max } => write!(
                 f,
-                "block RLP is {rlp_length} bytes, exceeding the maximum {max}"
+                "block RLP is at least {rlp_length} bytes, exceeding the maximum {max}"
             ),
         }
     }
@@ -590,6 +710,7 @@ mod tests {
     use crate::constants::{EMPTY_REQUESTS_HASH, EMPTY_ROOT_HASH};
     use crate::eips::eip1559::{BaseFeeParams, GAS_LIMIT_BOUND_DIVISOR};
     use crate::eips::eip4844::DATA_GAS_PER_BLOB;
+    use crate::eips::eip7840::BlobParams;
     use crate::eips::eip7892::BlobScheduleBlobParams;
     use crate::errors::HeaderField;
     use crate::spec::Spec;
@@ -674,6 +795,7 @@ mod tests {
                 &recovered,
                 &self.parent.clone().seal_slow(),
             )
+            .map(|_| ())
         }
 
         fn relink(&mut self) {
@@ -681,7 +803,12 @@ mod tests {
         }
 
         fn sync_body_commitments(&mut self) {
-            let metrics = calculate_body_metrics(&self.block.header, &self.block.body).unwrap();
+            let active_spec = self
+                .chain_spec
+                .active_spec_at_timestamp(self.block.timestamp)
+                .unwrap();
+            let metrics =
+                calculate_body_metrics(&self.block.header, &self.block.body, active_spec).unwrap();
             self.block.header.transactions_root = metrics.transactions_root;
             self.block.header.withdrawals_root = metrics.withdrawals_root;
         }
@@ -708,6 +835,22 @@ mod tests {
         ] {
             assert_eq!(Fixture::new(spec, timestamp).validate(), Ok(()), "{spec:?}");
         }
+    }
+
+    #[test]
+    fn consensus_validation_returns_the_timestamp_resolved_context() {
+        let fixture = Fixture::new(Spec::Osaka, PRAGUE_TIMESTAMP + 1);
+        let recovered =
+            RecoveredBlock::try_new_unhashed(fixture.block.clone(), Vec::new()).unwrap();
+
+        assert_eq!(
+            validate_block_consensus(
+                &fixture.chain_spec,
+                &recovered,
+                &fixture.parent.clone().seal_slow(),
+            ),
+            Ok((Spec::Prague, BlobParams::prague()))
+        );
     }
 
     /// A configured upper fork must not bypass Cancun's activation timestamp.
@@ -942,6 +1085,31 @@ mod tests {
     }
 
     #[test]
+    fn block_validation_accepts_parent_derived_base_fee_increases_and_decreases() {
+        for (parent_gas_used, expected_base_fee) in [(GAS_LIMIT, 112), (0, 88)] {
+            let mut fixture = Fixture::new(Spec::Cancun, CANCUN_TIMESTAMP + 1);
+            fixture.parent.gas_used = parent_gas_used;
+            fixture.block.header.base_fee_per_gas = Some(expected_base_fee);
+            fixture.relink();
+            assert_eq!(
+                fixture.validate(),
+                Ok(()),
+                "parent gas used {parent_gas_used}"
+            );
+
+            fixture.block.header.base_fee_per_gas = Some(expected_base_fee + 1);
+            assert_eq!(
+                fixture.validate(),
+                Err(BlockValidationError::BaseFeeMismatch {
+                    header: expected_base_fee + 1,
+                    expected: expected_base_fee,
+                }),
+                "parent gas used {parent_gas_used}"
+            );
+        }
+    }
+
+    #[test]
     fn body_commitments_are_rederived() {
         let mut transactions = Fixture::new(Spec::Cancun, CANCUN_TIMESTAMP + 1);
         transactions.block.header.transactions_root = H256::repeat_byte(0x33);
@@ -988,12 +1156,41 @@ mod tests {
     }
 
     #[test]
-    fn calculated_block_length_matches_eest_vectors() {
+    fn body_metrics_match_eest_vectors() {
         for vector in vectors() {
             let block = Block::decode_exact(vector.rlp).unwrap();
-            let metrics = calculate_body_metrics(&block.header, &block.body).unwrap();
+            let metrics = calculate_body_metrics(&block.header, &block.body, Spec::Osaka).unwrap();
             assert_eq!(metrics.block_rlp_length, vector.rlp.len());
+            assert_eq!(metrics.transactions_root, block.header.transactions_root);
+            assert_eq!(metrics.withdrawals_root, block.header.withdrawals_root);
         }
+    }
+
+    #[test]
+    fn oversized_osaka_body_stops_at_the_first_proven_oversized_length() {
+        let mut fixture = Fixture::new(Spec::Osaka, OSAKA_TIMESTAMP + 1);
+        let mut transaction = blob_transaction();
+        match &mut transaction {
+            SignedTxEnvelope::Eip4844(signed) => {
+                signed.tx.data = vec![0; MAX_RLP_BLOCK_SIZE];
+            }
+            _ => unreachable!("blob_transaction always returns EIP-4844"),
+        }
+        fixture.block.body.transactions.push(transaction);
+        // Use the block codec as an independent oracle for the checked prefix and complete body.
+        let checked_length = rlp::encode(&fixture.block).len();
+        fixture.block.body.transactions.push(blob_transaction());
+        let full_length = rlp::encode(&fixture.block).len();
+        assert!(checked_length > MAX_RLP_BLOCK_SIZE);
+        assert!(checked_length < full_length);
+
+        assert_eq!(
+            fixture.validate(),
+            Err(BlockValidationError::BlockTooLarge {
+                rlp_length: checked_length,
+                max: MAX_RLP_BLOCK_SIZE,
+            })
+        );
     }
 
     #[test]

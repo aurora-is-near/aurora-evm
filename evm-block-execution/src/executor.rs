@@ -36,6 +36,8 @@ const MAX_INITCODE_SIZE: usize = 2 * 0x6000;
 pub struct BlockExecutor {
     block: BlockEnv,
     chain: ChainSpec,
+    /// Execution fork resolved from the block timestamp within the configured boundary.
+    active_spec: Spec,
     precompiles: Precompiles,
     /// The [`BlobParams`] resolved once from the chain schedule for this block.
     blob_params: Option<BlobParams>,
@@ -86,22 +88,24 @@ struct ValidatedTransaction {
 }
 
 impl BlockExecutor {
-    /// Builds an executor and resolves the block's active [`BlobParams`] from the trusted chain
-    /// configuration.
+    /// Builds an executor and resolves the active fork and [`BlobParams`] from the block timestamp.
     ///
     /// # Errors
-    /// [`BlockExecutionError::InvalidBlockTimestamp`] if the block timestamp does not fit in `u64`.
+    /// [`BlockExecutionError::InvalidBlockTimestamp`] if the timestamp does not fit in `u64`, or
+    /// [`BlockExecutionError::ActiveSpecUnavailable`] if a Cancun-or-later configuration has no
+    /// supported fork active at that timestamp.
     pub fn new(
         chain: ChainSpec,
         block: BlockEnv,
         transactions: Vec<TxEnv>,
         state: BTreeMap<H160, MemoryAccount>,
     ) -> Result<Self, BlockExecutionError> {
-        let blob_params = resolve_blob_params(&chain, &block)?;
-        let precompiles = Precompiles::new(&chain.spec);
+        let (active_spec, blob_params) = resolve_execution_context(&chain, &block)?;
+        let precompiles = Precompiles::new(&active_spec);
         Ok(Self {
             block,
             chain,
+            active_spec,
             precompiles,
             blob_params,
             state,
@@ -186,7 +190,7 @@ impl BlockExecutor {
         let sender_balance = sender.map(|account| account.balance).unwrap_or_default();
         let sender_code_empty = sender.is_none_or(|account| account.code.is_empty());
         let sender_is_delegated =
-            sender.is_some_and(|account| is_delegated_sender(&account.code, self.chain.spec));
+            sender.is_some_and(|account| is_delegated_sender(&account.code, self.active_spec));
 
         // 2. Nonce equality.
         if tx.nonce != sender_nonce {
@@ -203,7 +207,7 @@ impl BlockExecutor {
 
         // 4. EIP-3860 (Shanghai+): a contract-creation transaction's init code is size-capped. This is
         //    a transaction-validity rule, distinct from the in-EVM `CREATE` init-code halt.
-        if self.chain.spec >= Spec::Shanghai
+        if self.active_spec >= Spec::Shanghai
             && tx.tx_kind.is_create()
             && tx.data.len() > MAX_INITCODE_SIZE
         {
@@ -232,7 +236,7 @@ impl BlockExecutor {
             self.chain.chain_id,
             &self.block,
             &tx,
-            &self.chain.spec,
+            &self.active_spec,
             None,
         );
         ctx.validate_tx()?;
@@ -332,7 +336,7 @@ impl BlockExecutor {
             data_fee,
             base_fee: self.block.block_base_fee_per_gas,
             coinbase: self.block.block_coinbase,
-            spec: self.chain.spec,
+            spec: self.active_spec,
             precompiles: &self.precompiles,
         };
 
@@ -349,17 +353,25 @@ impl BlockExecutor {
     }
 }
 
-/// Resolves blob parameters after narrowing the [`U256`] block timestamp without truncation.
+/// Resolves the execution fork and blob parameters without truncating the block timestamp.
 ///
 /// # Errors
-/// [`BlockExecutionError::InvalidBlockTimestamp`] if the timestamp does not fit in `u64`.
-fn resolve_blob_params(
+/// [`BlockExecutionError::InvalidBlockTimestamp`] if the timestamp does not fit in `u64`, or
+/// [`BlockExecutionError::ActiveSpecUnavailable`] when a Cancun-or-later configuration has no
+/// supported fork active at that timestamp.
+fn resolve_execution_context(
     chain: &ChainSpec,
     block: &BlockEnv,
-) -> Result<Option<BlobParams>, BlockExecutionError> {
+) -> Result<(Spec, Option<BlobParams>), BlockExecutionError> {
     let timestamp = u64::try_from(block.block_timestamp)
         .map_err(|_| BlockExecutionError::InvalidBlockTimestamp)?;
-    Ok(chain.blob_params_at_timestamp(timestamp))
+    if chain.spec < Spec::Cancun {
+        return Ok((chain.spec, None));
+    }
+    chain
+        .active_spec_and_blob_params_at_timestamp(timestamp)
+        .map(|(spec, params)| (spec, Some(params)))
+        .ok_or(BlockExecutionError::ActiveSpecUnavailable { timestamp })
 }
 
 /// Whether Prague permits the sender's EIP-7702 delegation code (`0xef0100 || address`).
@@ -534,6 +546,7 @@ mod tests {
     use crate::spec::Spec;
     use crate::transaction::{SignedTxEnvelope, TxEnv, TxKind, TxType};
     use aurora_evm::backend::MemoryAccount;
+    use aurora_evm::executor::stack::PrecompileSet as _;
     use hex_literal::hex;
     use primitive_types::{H160, H256, U256};
     use std::collections::BTreeMap;
@@ -1148,6 +1161,71 @@ mod tests {
     }
 
     #[test]
+    fn execution_fork_is_resolved_from_the_block_timestamp() {
+        let mut chain = chain_spec(Spec::Osaka, empty_blob_schedule());
+        chain.hard_forks_timestamps =
+            BTreeMap::from([(Spec::Cancun, 100), (Spec::Prague, 200), (Spec::Osaka, 300)]);
+        let mut blk = block(0, addr(0xcb));
+        blk.block_timestamp = U256::from(250u64);
+        blk.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::default());
+
+        let executor =
+            BlockExecutor::new(chain.clone(), blk.clone(), vec![], BTreeMap::new()).unwrap();
+        assert_eq!(executor.active_spec, Spec::Prague);
+        assert_eq!(executor.blob_params, Some(BlobParams::prague()));
+        assert!(
+            !executor
+                .precompiles
+                .is_precompile(H160::from_low_u64_be(0x100))
+        );
+
+        let caller = addr(0xca);
+        let mut state = BTreeMap::new();
+        state.insert(caller, account(u64::MAX, 0, vec![]));
+        let mut tx = eip1559_transfer(caller, addr(0x2e), U256::zero(), 0, 0, 0);
+        tx.gas_limit = 20_000_000;
+        assert!(
+            BlockExecutor::new(chain.clone(), blk, vec![], state.clone())
+                .unwrap()
+                .validate_transaction_for_block(tx.clone(), BlockExecutionCounters::default())
+                .is_ok()
+        );
+
+        let mut osaka_block = block(0, addr(0xcb));
+        osaka_block.block_timestamp = U256::from(300u64);
+        osaka_block.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::default());
+        let executor = BlockExecutor::new(chain, osaka_block, vec![], state).unwrap();
+        assert_eq!(executor.active_spec, Spec::Osaka);
+        assert!(
+            executor
+                .precompiles
+                .is_precompile(H160::from_low_u64_be(0x100))
+        );
+        assert!(matches!(
+            executor.validate_transaction_for_block(tx, BlockExecutionCounters::default()),
+            Err(BlockExecutionError::InvalidContext(
+                InvalidEvmContext::InvalidTransaction(
+                    InvalidTransaction::TxGasLimitGreaterThanCap { .. }
+                )
+            ))
+        ));
+    }
+
+    #[test]
+    fn cancun_or_later_execution_fails_when_no_supported_fork_is_active() {
+        let mut chain = chain_spec(Spec::Osaka, empty_blob_schedule());
+        chain.hard_forks_timestamps =
+            BTreeMap::from([(Spec::Cancun, 100), (Spec::Prague, 200), (Spec::Osaka, 300)]);
+        let mut blk = block(0, addr(0xcb));
+        blk.block_timestamp = U256::from(99u64);
+
+        assert!(matches!(
+            BlockExecutor::new(chain, blk, vec![], BTreeMap::new()),
+            Err(BlockExecutionError::ActiveSpecUnavailable { timestamp: 99 })
+        ));
+    }
+
+    #[test]
     fn a_blob_tx_uses_the_fork_default_when_nothing_is_scheduled() {
         // An active Cancun-or-later fork falls back to its per-fork default when no BPO entry is
         // scheduled.
@@ -1182,7 +1260,8 @@ mod tests {
         // Cancun context validation accepts the transaction, but the missing schedule parameters
         // must still make the block-level limit fail closed.
         let executor = BlockExecutor {
-            precompiles: Precompiles::new(&chain.spec),
+            active_spec: Spec::Cancun,
+            precompiles: Precompiles::new(&Spec::Cancun),
             blob_params: None,
             block: blk,
             chain,

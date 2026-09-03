@@ -307,6 +307,11 @@ pub enum BlockExecutionError {
     },
     /// The block timestamp does not fit in a `u64`.
     InvalidBlockTimestamp,
+    /// No Cancun-or-later fork is active at the block timestamp.
+    ActiveSpecUnavailable {
+        /// Timestamp whose execution fork could not be resolved.
+        timestamp: u64,
+    },
     /// A transaction in the block is invalid, or its execution failed fatally.
     ///
     /// Adds the offending transaction's position to another error. Uses an index to avoid hashing
@@ -435,6 +440,12 @@ impl fmt::Display for BlockExecutionError {
                 "transaction gas limit {tx_gas_limit} exceeds the block's remaining gas {available_gas}"
             ),
             Self::InvalidBlockTimestamp => write!(f, "block timestamp does not fit in u64"),
+            Self::ActiveSpecUnavailable { timestamp } => {
+                write!(
+                    f,
+                    "no supported execution fork is active at timestamp {timestamp}"
+                )
+            }
             Self::Transaction { index, source } => {
                 write!(
                     f,
