@@ -21,8 +21,8 @@ mod header;
 mod recover;
 mod recovered;
 mod sealed;
+mod validation;
 
-use crate::transaction::SignedTxEnvelope;
 pub use ancestors::{AncestorChainError, Ancestors, derive_ancestors};
 pub use body::BlockBody;
 pub use codec::BlockDecodeError;
@@ -34,6 +34,10 @@ pub use recover::{
 };
 pub use recovered::{BlockRecoveryError, RecoveredBlock};
 pub use sealed::{SealedBlock, SealedHeader};
+pub use validation::BlockValidationError;
+pub(crate) use validation::validate_block_consensus;
+
+use crate::transaction::SignedTxEnvelope;
 use std::ops::Deref;
 
 /// An Ethereum [`Header`] and its committed [`BlockBody`].

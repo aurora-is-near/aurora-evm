@@ -105,28 +105,12 @@ impl Precompiles {
     /// Berlin..Shanghai precompile set (Istanbul set with the Berlin modexp pricing).
     #[must_use]
     pub fn new_berlin() -> Self {
-        let mut map: BTreeMap<H160, Box<dyn Precompile>> = BTreeMap::new();
-        map.insert(ECRecover::ADDRESS.raw(), Box::new(ECRecover));
-        map.insert(SHA256::ADDRESS.raw(), Box::new(SHA256));
-        map.insert(RIPEMD160::ADDRESS.raw(), Box::new(RIPEMD160));
-        map.insert(Identity::ADDRESS.raw(), Box::new(Identity));
+        let mut map = Self::new_istanbul().0;
+        // EIP-2565 replaces the Byzantium-priced entry at the same address.
         map.insert(
             ModExp::<Berlin, AuroraModExp>::ADDRESS.raw(),
             Box::new(ModExp::<Berlin, AuroraModExp>::new()),
         );
-        map.insert(
-            Bn256Add::<Istanbul>::ADDRESS.raw(),
-            Box::new(Bn256Add::<Istanbul>::new()),
-        );
-        map.insert(
-            Bn256Mul::<Istanbul>::ADDRESS.raw(),
-            Box::new(Bn256Mul::<Istanbul>::new()),
-        );
-        map.insert(
-            Bn256Pair::<Istanbul>::ADDRESS.raw(),
-            Box::new(Bn256Pair::<Istanbul>::new()),
-        );
-        map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
         Self(map)
     }
 
@@ -156,36 +140,12 @@ impl Precompiles {
     /// `0x100`, EIP-7951).
     #[must_use]
     pub fn new_osaka() -> Self {
-        let mut map: BTreeMap<H160, Box<dyn Precompile>> = BTreeMap::new();
-        map.insert(ECRecover::ADDRESS.raw(), Box::new(ECRecover));
-        map.insert(SHA256::ADDRESS.raw(), Box::new(SHA256));
-        map.insert(RIPEMD160::ADDRESS.raw(), Box::new(RIPEMD160));
-        map.insert(Identity::ADDRESS.raw(), Box::new(Identity));
+        let mut map = Self::new_prague().0;
+        // EIP-7883 replaces the Berlin-priced entry at the same address.
         map.insert(
             ModExp::<Osaka, AuroraModExp>::ADDRESS.raw(),
             Box::new(ModExp::<Osaka, AuroraModExp>::new()),
         );
-        map.insert(
-            Bn256Add::<Istanbul>::ADDRESS.raw(),
-            Box::new(Bn256Add::<Istanbul>::new()),
-        );
-        map.insert(
-            Bn256Mul::<Istanbul>::ADDRESS.raw(),
-            Box::new(Bn256Mul::<Istanbul>::new()),
-        );
-        map.insert(
-            Bn256Pair::<Istanbul>::ADDRESS.raw(),
-            Box::new(Bn256Pair::<Istanbul>::new()),
-        );
-        map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
-        map.insert(Kzg::ADDRESS, Box::new(Kzg));
-        map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
-        map.insert(BlsG1Msm::ADDRESS.raw(), Box::new(BlsG1Msm));
-        map.insert(BlsG2Add::ADDRESS.raw(), Box::new(BlsG2Add));
-        map.insert(BlsG2Msm::ADDRESS.raw(), Box::new(BlsG2Msm));
-        map.insert(BlsPairingCheck::ADDRESS.raw(), Box::new(BlsPairingCheck));
-        map.insert(BlsMapFpToG1::ADDRESS.raw(), Box::new(BlsMapFpToG1));
-        map.insert(BlsMapFp2ToG2::ADDRESS.raw(), Box::new(BlsMapFp2ToG2));
         // EIP-7951: secp256r1 (P256VERIFY) at address 0x100, introduced in Osaka/Fusaka.
         map.insert(Secp256r1::ADDRESS.raw(), Box::new(Secp256r1));
         Self(map)
@@ -253,9 +213,46 @@ fn map_exit_error(exit_error: aurora_engine_precompiles::ExitError) -> ExitError
 
 #[cfg(test)]
 mod tests {
-    use super::{Kzg, Precompiles};
+    use super::{
+        AuroraModExp, Berlin, BlsG1Add, BlsG1Msm, BlsG2Add, BlsG2Msm, BlsMapFp2ToG2, BlsMapFpToG1,
+        BlsPairingCheck, EthGas, Kzg, ModExp, Precompiles, Secp256r1,
+    };
     use crate::spec::Spec;
     use aurora_evm::executor::stack::PrecompileSet;
+    use primitive_types::{H160, U256};
+    use std::collections::BTreeSet;
+
+    /// Smallest well-formed modexp call: three 32-byte lengths of 1, then `base, exp, mod`.
+    const TRIVIAL_MODEXP: [u8; 99] = {
+        let mut input = [0u8; 99];
+        input[31] = 1;
+        input[63] = 1;
+        input[95] = 1;
+        input[96] = 1;
+        input[97] = 1;
+        input[98] = 1;
+        input
+    };
+
+    fn addresses(set: &Precompiles) -> BTreeSet<H160> {
+        set.0.keys().copied().collect()
+    }
+
+    /// Cost of `0x05` on a trivial input, which lands on each pricing's floor.
+    fn modexp_cost(set: &Precompiles) -> u64 {
+        // `0x05` is one address across all pricings, so composition replaces rather than adds.
+        let address = ModExp::<Berlin, AuroraModExp>::ADDRESS.raw();
+        let context = aurora_engine_precompiles::Context {
+            address,
+            caller: H160::zero(),
+            apparent_value: U256::zero(),
+        };
+        set.0[&address]
+            .run(&TRIVIAL_MODEXP, Some(EthGas::new(100_000)), &context, false)
+            .unwrap()
+            .cost
+            .as_u64()
+    }
 
     #[test]
     fn kzg_activation_starts_at_cancun() {
@@ -263,5 +260,59 @@ mod tests {
         for spec in [Spec::Cancun, Spec::Prague, Spec::Osaka] {
             assert!(Precompiles::new(&spec).is_precompile(Kzg::ADDRESS));
         }
+    }
+
+    /// Each fork adds exactly its own addresses — a superset check would miss a stray entry.
+    #[test]
+    fn each_fork_adds_exactly_its_own_addresses() {
+        let istanbul = addresses(&Precompiles::new_istanbul());
+        let berlin = addresses(&Precompiles::new_berlin());
+        let cancun = addresses(&Precompiles::new_cancun());
+        let prague = addresses(&Precompiles::new_prague());
+        let osaka = addresses(&Precompiles::new_osaka());
+
+        // Berlin only reprices `0x05`, so the address set is unchanged.
+        assert_eq!(berlin, istanbul);
+        assert_eq!(
+            cancun.difference(&berlin).copied().collect::<Vec<_>>(),
+            vec![Kzg::ADDRESS]
+        );
+        assert_eq!(
+            prague.difference(&cancun).copied().collect::<Vec<_>>(),
+            vec![
+                BlsG1Add::ADDRESS.raw(),
+                BlsG1Msm::ADDRESS.raw(),
+                BlsG2Add::ADDRESS.raw(),
+                BlsG2Msm::ADDRESS.raw(),
+                BlsPairingCheck::ADDRESS.raw(),
+                BlsMapFpToG1::ADDRESS.raw(),
+                BlsMapFp2ToG2::ADDRESS.raw(),
+            ]
+        );
+        assert_eq!(
+            osaka.difference(&prague).copied().collect::<Vec<_>>(),
+            vec![Secp256r1::ADDRESS.raw()]
+        );
+        assert_eq!(
+            [
+                istanbul.len(),
+                berlin.len(),
+                cancun.len(),
+                prague.len(),
+                osaka.len()
+            ],
+            [9, 9, 10, 17, 18]
+        );
+    }
+
+    /// The repricings are invisible to the address set, so they are pinned by cost: EIP-198 charges
+    /// nothing at the floor, EIP-2565 charges 200, EIP-7883 charges 500.
+    #[test]
+    fn modexp_is_repriced_at_berlin_and_osaka() {
+        assert_eq!(modexp_cost(&Precompiles::new_istanbul()), 0);
+        assert_eq!(modexp_cost(&Precompiles::new_berlin()), 200);
+        assert_eq!(modexp_cost(&Precompiles::new_cancun()), 200);
+        assert_eq!(modexp_cost(&Precompiles::new_prague()), 200);
+        assert_eq!(modexp_cost(&Precompiles::new_osaka()), 500);
     }
 }

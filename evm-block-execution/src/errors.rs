@@ -29,28 +29,17 @@ pub enum InvalidHeader {
     BlobVersionedHashesNotSupported,
     /// `max_fee_per_blob_gas` not supported for pre-Cancun spec.
     MaxFeePerBlobGasNotSupported,
-    /// A trailing-optional header field is present on a fork that has no such field, or absent on
-    /// one that requires it.
-    ///
-    /// Header RLP uses a mandatory prefix and positional tail. A decodable field count can still be
-    /// invalid for the selected fork; Cancun, for example, adds three fields together.
-    ForkFieldMismatch {
-        /// Which field disagrees with the fork.
-        field: HeaderField,
-        /// Whether the header carries it.
-        present: bool,
-    },
     /// A trailing-optional header field is present while an earlier one is absent.
     ///
-    /// Positional RLP cannot represent a gap: encoding would shift every later field. Unlike
-    /// [`Self::ForkFieldMismatch`], this is invalid independently of the selected fork.
+    /// Positional RLP cannot represent a gap: encoding would shift every later field. This is
+    /// invalid independently of the selected fork.
     TrailingFieldGap {
         /// The first field present while the one before it is absent.
         field: HeaderField,
     },
 }
 
-/// A trailing-optional header field, named for reporting a fork disagreement.
+/// A trailing-optional header field, named for validation errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeaderField {
     /// EIP-1559 base fee (London onward).
@@ -99,13 +88,6 @@ impl fmt::Display for InvalidHeader {
             }
             Self::BlobVersionedHashesNotSupported => {
                 write!(f, "`blob_versioned_hashes` not supported for this spec")
-            }
-            Self::ForkFieldMismatch { field, present } => {
-                if *present {
-                    write!(f, "`{field}` is set on a fork that has no such field")
-                } else {
-                    write!(f, "`{field}` is missing on a fork that requires it")
-                }
             }
             Self::TrailingFieldGap { field } => {
                 write!(f, "`{field}` is set while an earlier trailing field is not")
@@ -325,6 +307,11 @@ pub enum BlockExecutionError {
     },
     /// The block timestamp does not fit in a `u64`.
     InvalidBlockTimestamp,
+    /// No Cancun-or-later fork is active at the block timestamp.
+    ActiveSpecUnavailable {
+        /// Timestamp whose execution fork could not be resolved.
+        timestamp: u64,
+    },
     /// A transaction in the block is invalid, or its execution failed fatally.
     ///
     /// Adds the offending transaction's position to another error. Uses an index to avoid hashing
@@ -453,6 +440,12 @@ impl fmt::Display for BlockExecutionError {
                 "transaction gas limit {tx_gas_limit} exceeds the block's remaining gas {available_gas}"
             ),
             Self::InvalidBlockTimestamp => write!(f, "block timestamp does not fit in u64"),
+            Self::ActiveSpecUnavailable { timestamp } => {
+                write!(
+                    f,
+                    "no supported execution fork is active at timestamp {timestamp}"
+                )
+            }
             Self::Transaction { index, source } => {
                 write!(
                     f,
