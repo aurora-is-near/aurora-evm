@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-09-03
+> **Osaka Hard Fork Release**
+>
+> The primary purpose of this release is support for the **Osaka** hard fork: **EIP-7939**
+> (`CLZ`) in the EVM core, and the **EIP-7823** / **EIP-7883** `MODEXP` rules through the
+> Osaka precompile set — precompiles are supplied by the host, not by this crate.
+>
+> **History**: the Osaka work [[#99]] branched off `v2.2.0` and landed on the mainline
+> *before* the `v2.2.1` gasometer line, which was merged afterwards via [[#104]].
+> Consequently **`v3.0.0` contains every change of `v2.2.1`**, even though Osaka carries a
+> lower pull request number.
+
+### Added
+- **Osaka Hard Fork Support** [[#99]]:
+  - Added the `Config::osaka()` configuration — Prague plus the new `has_clz` flag.
+  - **EIP-7939**: Implemented the `CLZ` (Count Leading Zeros) opcode `0x1E`, priced at `G_low` (5 gas), with unit tests. For pre-Osaka configurations the opcode is rejected with `ExitError::InvalidCode`.
+  - Added the Osaka precompile set to the test runner, which activates the `MODEXP` rules of **EIP-7823** (input size bounds) and **EIP-7883** (increased gas cost).
+- **System calls**: Added `StackExecutor::system_call` to execute the protocol-level calls required by **EIP-4788**, **EIP-2935**, **EIP-7002** and **EIP-7251** [[#111]].
+  - The caller is supplied by the host, which is expected to pass the protocol-defined `SYSTEM_ADDRESS`; the executor does not enforce it.
+  - The call carries zero value and performs no transfer, so the caller balance is not checked, the nonce is not incremented, no base transaction cost is recorded, and the context is not static. The gas limit is inherited from the executor's `StackSubstateMetadata` — per the EIPs the host must construct the executor with `30_000_000` gas.
+- Extended the `with-serde` feature: `Authorization` now derives `serde::Serialize` and `serde::Deserialize` [[#106]].
+- Enabled **Osaka** state test coverage by moving the CI fixtures to `execution-spec-tests` **v5.4.0** [[#105]].
+- Added transaction validation reasons to the test suite: `AccessListNotSupported` and `AuthorizationListNotSupportedForCreate` [[#105]].
+- Added new CLI options to the `state` subcommand of `aurora-evm-jsontests` [[#108]]:
+  - `--dump_successful_tx <FILE_NAME>` — dumps every executed and applied transaction to a JSON file.
+  - `--slow_tests` — prints a benchmark report of the slowest tests.
+- Added unit tests covering the account `is_empty` logic against both the substate cache and the backend [[#110]].
+- Added this `CHANGELOG.md` [[#107]].
+
+### Changed
+- Merged the **v2.2.1** gasometer refactoring line into the mainline, together with a comment typo fix [[#104]]. See the `2.2.1` section below for its contents.
+- **Toolchain**: Pinned Rust to **1.97.0** in `rust-toolchain.toml`, up from 1.86.0 [[#115]].
+  - **Breaking**: building the workspace now requires Rust 1.97.0. No `rust-version` key is declared, so the minimum version is not enforced by Cargo.
+  - Moved the `rust` and `clippy` lint configuration into `[workspace.lints]` — out of the crate-level attributes in `evm/src/lib.rs` and out of the `[lints.clippy]` block of `evm-tests/Cargo.toml` — and simplified the CI clippy invocations accordingly.
+- **Breaking**: `Config` gained the public field `has_clz`; code constructing `Config` with a struct literal must be updated [[#99]].
+- Replaced the git dependencies `aurora-engine-modexp` and `aurora-engine-precompiles` (tag `3.10.0-rc.1`) with the published `aurora-engine-precompiles` **2.1.0** crate in the test suite [[#99]].
+- The test suite now derives intrinsic gas and the EIP-7623 gas floor from `Gasometer::calculate_intrinsic_gas_and_gas_floor` instead of its own implementation [[#105]].
+- Consolidated the CI test fixtures into that single **v5.4.0** stable bundle, replacing the former `pectra-devnet-6@v1.0.0`, `v4.5.0` stable and `v4.5.0` static bundles [[#105]].
+- Refactored the `MemoryStackSubstate` lookups (`known_account`, `deleted`, `is_created`, `recursive_is_cold`) into flatter combinator form and added doc comments to its public accessors [[#109]].
+- `aurora-evm-jsontests` now depends on `aurora-evm` with the `with-serde` feature enabled [[#108]].
+- Simplified path handling and test skipping in the test runner [[#102]].
+- Corrected doc comments to use angle-bracketed intra-doc URLs, and applied assorted clippy-driven cleanups [[#115]].
+
+### Removed
+- **Breaking**: Removed `MemoryStackSubstate::known_empty`; the emptiness logic now lives entirely in `MemoryStackState::is_empty` [[#110]].
+- Removed the test suite EIP-7623 helper module `types::eip_7623` in favour of the gasometer API [[#105]].
+
+### Fixed
+- **Account emptiness check** (EIP-161 state clearing): for an account already cached in the substate, `MemoryStackState::is_empty` now reads `balance` and `nonce` from that cache and consults the backend only for the account code [[#110]].
+  Previously, a cached account with zero balance and nonce but without cached code made the whole check fall through to the backend, so balance and nonce changes performed during execution were discarded and account emptiness could be reported incorrectly. On that fall-through path `Backend::basic` was also queried twice; it is now queried once.
+- Transaction validation in the test suite now rejects a type-4 (`TxType::EOAAccountCode`, EIP-7702) transaction used for contract creation, and a type-1 (access list) transaction before Berlin [[#105]].
+- Accepted the `execution-spec-tests` v5.4.0 exception names `TransactionException.TYPE_1_TX_PRE_FORK`, `TransactionException.TYPE_2_TX_PRE_FORK`, `TransactionException.TYPE_4_TX_PRE_FORK`, `TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST` and the composite `TransactionException.INTRINSIC_GAS_TOO_LOW|TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST` [[#105]].
+
 ## [2.2.1] - 2026-01-23
 ### Added
 - Utilities for consolidated gas calculation and verification: `intrinsic_gas_and_gas_floor` and `calculate_intrinsic_gas_and_gas_floor` [[#100]].
@@ -110,6 +163,7 @@ This release marks the final transformation of the project from a SputnikVM fork
 
 [//]: # (Link Definitions)
 
+[3.0.0]: https://github.com/aurora-is-near/aurora-evm/compare/v2.2.1...v3.0.0
 [2.2.1]: https://github.com/aurora-is-near/aurora-evm/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/aurora-is-near/aurora-evm/compare/v2.1.3...v2.2.0
 [2.1.3]: https://github.com/aurora-is-near/aurora-evm/compare/v2.1.2...v2.1.3
@@ -119,7 +173,18 @@ This release marks the final transformation of the project from a SputnikVM fork
 [2.0.0]: https://github.com/aurora-is-near/aurora-evm/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/aurora-is-near/aurora-evm/releases/tag/v1.0.0
 
+[#115]: https://github.com/aurora-is-near/aurora-evm/pull/115
+[#111]: https://github.com/aurora-is-near/aurora-evm/pull/111
+[#110]: https://github.com/aurora-is-near/aurora-evm/pull/110
+[#109]: https://github.com/aurora-is-near/aurora-evm/pull/109
+[#108]: https://github.com/aurora-is-near/aurora-evm/pull/108
+[#107]: https://github.com/aurora-is-near/aurora-evm/pull/107
+[#106]: https://github.com/aurora-is-near/aurora-evm/pull/106
+[#105]: https://github.com/aurora-is-near/aurora-evm/pull/105
+[#104]: https://github.com/aurora-is-near/aurora-evm/pull/104
+[#102]: https://github.com/aurora-is-near/aurora-evm/pull/102
 [#100]: https://github.com/aurora-is-near/aurora-evm/pull/100
+[#99]: https://github.com/aurora-is-near/aurora-evm/pull/99
 [#96]: https://github.com/aurora-is-near/aurora-evm/pull/96
 [#95]: https://github.com/aurora-is-near/aurora-evm/pull/95
 [#94]: https://github.com/aurora-is-near/aurora-evm/pull/94
