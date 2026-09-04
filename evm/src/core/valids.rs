@@ -1,5 +1,5 @@
-use super::prelude::*;
 use super::Opcode;
+use super::prelude::*;
 
 /// Mapping of valid jump destination from code.
 #[derive(Clone, Debug, Eq, PartialEq)]

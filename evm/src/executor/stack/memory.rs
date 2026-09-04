@@ -1,5 +1,5 @@
 use crate::backend::{Apply, Backend, Basic, Log};
-use crate::core::utils::{U256_ONE, U256_ZERO, U64_MAX};
+use crate::core::utils::{U64_MAX, U256_ONE, U256_ZERO};
 use crate::executor::stack::executor::{
     Accessed, Authorization, StackState, StackSubstateMetadata,
 };
@@ -71,8 +71,8 @@ impl<'config> MemoryStackSubstate<'config> {
         mut self,
         backend: &B,
     ) -> (
-        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
-        impl IntoIterator<Item = Log>,
+        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)> + use<B>>> + use<B>,
+        impl IntoIterator<Item = Log> + use<B>,
     ) {
         assert!(self.parent.is_none());
 
@@ -248,18 +248,17 @@ impl<'config> MemoryStackSubstate<'config> {
         self.known_account(address).and_then(|acc| acc.code.clone())
     }
 
-    /// Get known empty status of the account from the current accounts state.
-    /// If it's `None` just take a look.
+    /// Get a known storage value from the current substate or its parents.
     #[must_use]
     pub fn known_storage(&self, address: H160, key: H256) -> Option<H256> {
         if let Some(value) = self.storages.get(&(address, key)) {
             return Some(*value);
         }
 
-        if let Some(account) = self.accounts.get(&address) {
-            if account.reset {
-                return Some(H256::default());
-            }
+        if let Some(account) = self.accounts.get(&address)
+            && account.reset
+        {
+            return Some(H256::default());
         }
 
         if let Some(parent) = self.parent.as_ref() {
@@ -271,10 +270,10 @@ impl<'config> MemoryStackSubstate<'config> {
 
     #[must_use]
     pub fn known_original_storage(&self, address: H160) -> Option<H256> {
-        if let Some(account) = self.accounts.get(&address) {
-            if account.reset {
-                return Some(H256::default());
-            }
+        if let Some(account) = self.accounts.get(&address)
+            && account.reset
+        {
+            return Some(H256::default());
         }
 
         if let Some(parent) = self.parent.as_ref() {
@@ -719,8 +718,8 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
     pub fn deconstruct(
         self,
     ) -> (
-        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)>>>,
-        impl IntoIterator<Item = Log>,
+        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)> + use<B>>> + use<B>,
+        impl IntoIterator<Item = Log> + use<B>,
     ) {
         self.substate.deconstruct(self.backend)
     }
@@ -738,12 +737,12 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
 
 #[cfg(test)]
 mod tests {
+    use crate::Config;
     use crate::backend::{Backend, MemoryAccount, MemoryBackend, MemoryVicinity};
+    use crate::executor::stack::StackState;
     use crate::executor::stack::executor::StackSubstateMetadata;
     use crate::executor::stack::memory::MemoryStackState;
-    use crate::executor::stack::StackState;
     use crate::prelude::*;
-    use crate::Config;
     use primitive_types::{H160, U256};
 
     fn memory_vicinity() -> MemoryVicinity {

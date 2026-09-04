@@ -2,12 +2,13 @@
 resolver = "3"
 members = [
     "evm",
-    "evm-tests"
+    "evm-tests",
+    "evm-block-execution"
 ]
 
 [workspace.package]
 authors = ["Aurora Labs <hello@aurora.dev>"]
-edition = "2021"
+edition = "2024"
 version = "3.0.0"
 description = "Aurora Ethereum Virtual Machine implementation written in pure Rust"
 categories = ["no-std", "compilers", "cryptography::cryptocurrencies"]
@@ -27,11 +28,16 @@ as_conversions = "deny"
 module_name_repetitions = "allow"
 
 [workspace.dependencies]
+aurora-engine-precompiles = "2.1"
 aurora-evm = { path = "evm" }
 auto_impl = "1.0"
+hex = "0.4"
+hex-literal = "1.1"
+libsecp256k1 = "0.7"
 primitive-types = { version = "0.13", default-features = false }
-rlp = { version = "0.6", default-features = false, features = ["derive"] }
-sha3 = { version = "0.10", default-features = false }
+rlp = { version = "0.6", default-features = false }
+sha2 = "0.10.0"
+sha3 = { version = "0.10.0", default-features = false }
 serde = { version = "1.0", default-features = false }
 
 [patch.crates-io]

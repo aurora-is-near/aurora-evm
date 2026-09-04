@@ -407,16 +407,18 @@ pub fn check_create_exit_reason(
                     ExitError::MaxNonce => {
                         let check_result = exception == "TR_NonceHasMaxValue"
                             || exception == "TransactionException.NONCE_IS_MAX";
-                        assert!(check_result,
-                                "unexpected exception {exception:?} for MaxNonce error for test: {name}"
+                        assert!(
+                            check_result,
+                            "unexpected exception {exception:?} for MaxNonce error for test: {name}"
                         );
                         return true;
                     }
                     ExitError::OutOfGas => {
                         let check_result =
                             exception == "TransactionException.INTRINSIC_GAS_TOO_LOW";
-                        assert!(check_result,
-                                "unexpected exception {exception:?} for OutOfGas error for test: {name}"
+                        assert!(
+                            check_result,
+                            "unexpected exception {exception:?} for OutOfGas error for test: {name}"
                         );
                         return true;
                     }
