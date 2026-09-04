@@ -1,6 +1,6 @@
-mod kzg;
+// mod kzg;
 
-use crate::precompiles::kzg::Kzg;
+// use crate::precompiles::kzg::Kzg;
 use crate::types::Spec;
 use aurora_engine_precompiles::modexp::AuroraModExp;
 use aurora_engine_precompiles::{
@@ -40,6 +40,7 @@ impl PrecompileSet for Precompiles {
 }
 
 impl Precompiles {
+    #[must_use]
     pub fn new(spec: &Spec) -> Self {
         match *spec {
             Spec::Frontier
@@ -57,6 +58,7 @@ impl Precompiles {
         }
     }
 
+    #[must_use]
     pub fn new_istanbul() -> Self {
         let mut map = BTreeMap::new();
         map.insert(
@@ -86,6 +88,7 @@ impl Precompiles {
         Self(map)
     }
 
+    #[must_use]
     pub fn new_berlin() -> Self {
         let mut map = BTreeMap::new();
         map.insert(
@@ -115,12 +118,14 @@ impl Precompiles {
         Self(map)
     }
 
+    #[must_use]
     pub fn new_cancun() -> Self {
-        let mut map = Self::new_berlin().0;
-        map.insert(Kzg::ADDRESS, Box::new(Kzg));
+        let map = Self::new_berlin().0;
+        // map.insert(Kzg::ADDRESS, Box::new(Kzg));
         Self(map)
     }
 
+    #[must_use]
     pub fn new_prague() -> Self {
         let mut map = Self::new_cancun().0;
         map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
@@ -133,6 +138,7 @@ impl Precompiles {
         Self(map)
     }
 
+    #[must_use]
     pub fn new_osaka() -> Self {
         let mut map = BTreeMap::new();
         map.insert(
@@ -160,7 +166,7 @@ impl Precompiles {
         );
         map.insert(Blake2F::ADDRESS.raw(), Box::new(Blake2F));
 
-        map.insert(Kzg::ADDRESS, Box::new(Kzg));
+        // map.insert(Kzg::ADDRESS, Box::new(Kzg));
         map.insert(BlsG1Add::ADDRESS.raw(), Box::new(BlsG1Add));
         map.insert(BlsG1Msm::ADDRESS.raw(), Box::new(BlsG1Msm));
         map.insert(BlsG2Add::ADDRESS.raw(), Box::new(BlsG2Add));
