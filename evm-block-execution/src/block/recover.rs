@@ -9,7 +9,7 @@
 
 use crate::block::Block;
 use crate::block::recovered::RecoveredBlock;
-use crate::crypto::keccak256;
+use crate::crypto::address_from_uncompressed_public_key;
 use crate::transaction::SignedTxEnvelope;
 use core::fmt;
 use core::ops::Deref;
@@ -48,9 +48,7 @@ impl UncompressedPublicKey {
         if self.0[0] != UNCOMPRESSED_TAG {
             return Err(SenderRecoveryError::InvalidPublicKey { index });
         }
-        // The tag is not part of the hashed key material.
-        let hash = keccak256(&self.0[1..]);
-        Ok(H160::from_slice(&hash[12..]))
+        Ok(address_from_uncompressed_public_key(&self.0))
     }
 }
 

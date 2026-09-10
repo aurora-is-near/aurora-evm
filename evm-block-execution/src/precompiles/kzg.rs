@@ -91,7 +91,7 @@ mod tests {
     use hex_literal::hex;
     use primitive_types::{H160, U256};
 
-    /// c-kzg `verify_kzg_proof_case_correct_proof_4_4`, also used by REVM.
+    /// c-kzg `verify_kzg_proof_case_correct_proof_4_4`.
     const VALID_INPUT: [u8; 192] = hex!(
         "01e798154708fe7789429634053cbf9f99b619f9f084048927333fce637f549b"
         "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000000"
@@ -102,7 +102,7 @@ mod tests {
         "4faf0070725e00b60ad9a026a15b1a8c"
     );
 
-    /// Invalid proof vector from REVM's EIP-4844 precompile tests.
+    /// Invalid proof vector for EIP-4844 precompile tests.
     const INVALID_PROOF_INPUT: [u8; 192] = hex!(
         "010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c444014"
         "0000000000000000000000000000000000000000000000000000000000000000"

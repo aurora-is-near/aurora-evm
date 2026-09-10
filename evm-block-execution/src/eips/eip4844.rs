@@ -81,7 +81,7 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01;
 /// (`calc_excess_blob_gas`).
 ///
 /// # Errors
-/// `None` if the blob fee cannot be computed; see the module docs on arithmetic.
+/// `None` if adding the parent excess and used blob gas overflows `u64`.
 #[inline]
 #[must_use]
 pub fn calc_excess_blob_gas(parent_excess_blob_gas: u64, parent_blob_gas_used: u64) -> Option<u64> {

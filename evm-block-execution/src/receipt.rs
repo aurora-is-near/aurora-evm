@@ -174,7 +174,6 @@ mod tests {
         }
     }
 
-    /// Published EIP-2481 vector, also used by Reth's Ethereum receipt tests.
     #[test]
     fn legacy_receipt_matches_eip2481_vector() {
         let mut expected = vec![0xf9, 0x01, 0x66, 0x80, 0x01, 0xb9, 0x01, 0x00];

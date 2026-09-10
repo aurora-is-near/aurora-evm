@@ -217,7 +217,7 @@ impl core::error::Error for BlockDecodeError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::{Block, BlockBody, BlockDecodeError, decode_body_items};
     use crate::rlp_strict;
     use crate::transaction::{SignedTxEnvelope, TxType};
@@ -260,15 +260,15 @@ mod tests {
     ///
     /// Together the vectors cover every transaction type, nested access and authorization lists,
     /// empty and mixed bodies, and both absent and present withdrawals.
-    pub(super) struct Vector {
+    pub(in crate::block) struct Vector {
         name: &'static str,
-        pub(super) rlp: &'static [u8],
+        pub(in crate::block) rlp: &'static [u8],
         hash: [u8; 32],
         tx_types: &'static [TxType],
         withdrawals: Option<usize>,
     }
 
-    pub(super) fn vectors() -> Vec<Vector> {
+    pub(in crate::block) fn vectors() -> Vec<Vector> {
         vec![
             Vector {
                 name: "Prague, empty body (eip7251_consolidations)",

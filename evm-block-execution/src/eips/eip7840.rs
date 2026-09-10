@@ -135,7 +135,8 @@ impl BlobParams {
     /// Per EIP-7918, usage below target clamps to zero before the reserve-price branch.
     ///
     /// # Errors
-    /// `None` if fee arithmetic fails or `max_blob_count` is zero.
+    /// `None` if arithmetic overflows, blob-fee calculation fails, or the active reserve branch has
+    /// a zero maximum or a target above that maximum.
     ///
     /// [EIP-7918]: https://eips.ethereum.org/EIPS/eip-7918
     #[inline]
@@ -153,10 +154,11 @@ impl BlobParams {
         }
 
         // EIP-7918 scales excess while blob fees remain below the execution-gas reserve price.
-        let reserve = u128::from(self.blob_base_cost).checked_mul(u128::from(base_fee_per_gas))?;
-        let blob_side =
-            u128::from(DATA_GAS_PER_BLOB).checked_mul(self.calc_blob_fee(excess_blob_gas)?)?;
-        if reserve > blob_side {
+        let reserve = u128::from(self.blob_base_cost) * u128::from(base_fee_per_gas);
+        if reserve != 0
+            && reserve
+                > u128::from(DATA_GAS_PER_BLOB).checked_mul(self.calc_blob_fee(excess_blob_gas)?)?
+        {
             let headroom = self.max_blob_count.checked_sub(self.target_blob_count)?;
             let scaled_excess = blob_gas_used
                 .checked_mul(headroom)?
@@ -176,5 +178,51 @@ impl BlobParams {
     #[must_use]
     pub fn calc_blob_fee(&self, excess_blob_gas: u64) -> Option<u128> {
         eip4844::fake_exponential(self.min_blob_fee, excess_blob_gas, self.update_fraction)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BlobParams;
+
+    fn assert_zero_blob_base_cost_skips_blob_fee(params: BlobParams, expected: u64) {
+        let excess_blob_gas = u64::MAX;
+        assert_eq!(params.blob_base_cost, 0);
+        assert_eq!(params.calc_blob_fee(excess_blob_gas), None);
+        assert_eq!(
+            params.next_block_excess_blob_gas(excess_blob_gas, 0, u64::MAX),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn cancun_transition_does_not_need_the_inactive_reserve_price() {
+        assert_zero_blob_base_cost_skips_blob_fee(BlobParams::cancun(), u64::MAX - 393_216);
+    }
+
+    #[test]
+    fn prague_transition_does_not_need_the_inactive_reserve_price() {
+        assert_zero_blob_base_cost_skips_blob_fee(BlobParams::prague(), u64::MAX - 786_432);
+    }
+
+    #[test]
+    fn osaka_reserve_price_scales_excess_when_execution_gas_is_expensive() {
+        let params = BlobParams::osaka();
+        // At zero excess the blob fee is 1; `8_192 * 17` exceeds one blob's 131_072 gas.
+        assert_eq!(
+            params.next_block_excess_blob_gas(0, 786_432, 17),
+            Some(262_144)
+        );
+    }
+
+    #[test]
+    fn zero_base_fee_disables_the_osaka_reserve_price() {
+        let params = BlobParams::osaka();
+        let excess_blob_gas = u64::MAX;
+        assert_eq!(params.calc_blob_fee(excess_blob_gas), None);
+        assert_eq!(
+            params.next_block_excess_blob_gas(excess_blob_gas, 0, 0),
+            Some(u64::MAX - 786_432)
+        );
     }
 }

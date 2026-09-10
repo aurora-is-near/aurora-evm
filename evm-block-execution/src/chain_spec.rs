@@ -13,6 +13,29 @@ use std::collections::BTreeMap;
 /// Activation timestamps for the Cancun-and-later hardforks supported by the zkEVM.
 pub type HardForkActivationTime = BTreeMap<Spec, u64>;
 
+/// Timestamp-resolved execution fork and its matching blob-market parameters.
+///
+/// Values are produced by [`ChainSpec`], keeping the fork and schedule entry consistent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActiveSpec {
+    spec: Spec,
+    blob_params: BlobParams,
+}
+
+impl ActiveSpec {
+    /// The active execution fork.
+    #[must_use]
+    pub const fn spec(&self) -> Spec {
+        self.spec
+    }
+
+    /// The blob parameters active at the same timestamp.
+    #[must_use]
+    pub const fn blob_params(&self) -> BlobParams {
+        self.blob_params
+    }
+}
+
 /// Trusted chain parameters used to validate and execute a block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChainSpec {
@@ -37,17 +60,40 @@ impl ChainSpec {
     /// the latest active scheduled update, falling back to its fork defaults.
     #[must_use]
     pub fn blob_params_at_timestamp(&self, timestamp: u64) -> Option<BlobParams> {
-        // BPO updates are reachable only from Osaka, so a late timestamp cannot advance a spec-pinned
-        // Cancun or Prague configuration.
-        if self.is_osaka_active_at_timestamp(timestamp) {
-            self.blob_schedule
+        self.active_spec_at_timestamp(timestamp)
+            .map(|active| active.blob_params())
+    }
+
+    /// Resolves the active Cancun-or-later fork and its blob parameters together.
+    #[must_use]
+    pub(crate) fn active_spec_at_timestamp(&self, timestamp: u64) -> Option<ActiveSpec> {
+        let spec = self.active_fork_at_timestamp(timestamp)?;
+        let blob_params = match spec {
+            // BPO updates are reachable only from Osaka, so a late timestamp cannot advance a
+            // spec-pinned Cancun or Prague configuration.
+            Spec::Osaka => self
+                .blob_schedule
                 .active_scheduled_params_at_timestamp(timestamp)
                 .copied()
-                .or(Some(self.blob_schedule.osaka))
+                .unwrap_or(self.blob_schedule.osaka),
+            Spec::Prague => self.blob_schedule.prague,
+            Spec::Cancun => self.blob_schedule.cancun,
+            Spec::Istanbul | Spec::Berlin | Spec::London | Spec::Merge | Spec::Shanghai => {
+                return None;
+            }
+        };
+        Some(ActiveSpec { spec, blob_params })
+    }
+
+    /// Latest active Cancun-or-later fork permitted by [`Self::spec`].
+    #[must_use]
+    fn active_fork_at_timestamp(&self, timestamp: u64) -> Option<Spec> {
+        if self.is_osaka_active_at_timestamp(timestamp) {
+            Some(Spec::Osaka)
         } else if self.is_prague_active_at_timestamp(timestamp) {
-            Some(self.blob_schedule.prague)
+            Some(Spec::Prague)
         } else if self.is_cancun_active_at_timestamp(timestamp) {
-            Some(self.blob_schedule.cancun)
+            Some(Spec::Cancun)
         } else {
             None
         }
@@ -82,7 +128,7 @@ impl ChainSpec {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChainSpec, HardForkActivationTime};
+    use super::{ActiveSpec, ChainSpec, HardForkActivationTime};
     use crate::eips::eip1559::BaseFeeParams;
     use crate::eips::eip7840::BlobParams;
     use crate::eips::eip7892::BlobScheduleBlobParams;
@@ -141,24 +187,72 @@ mod tests {
         assert_eq!(cancun.blob_params_at_timestamp(BPO_TIMESTAMP), None);
     }
 
-    /// Once `spec` permits every supported fork, timestamps select among them inclusively.
+    /// Once `spec` permits every supported fork, timestamp resolution keeps fork and blob
+    /// parameters aligned across every activation boundary.
     #[test]
-    fn within_the_configured_spec_the_timestamp_picks_the_fork() {
+    fn timestamp_resolves_the_active_fork_and_its_blob_params_together() {
         let osaka = chain_spec(Spec::Osaka);
         for (timestamp, expected) in [
             (CANCUN_TIMESTAMP - 1, None),
-            (CANCUN_TIMESTAMP, Some(BlobParams::cancun())),
-            (PRAGUE_TIMESTAMP - 1, Some(BlobParams::cancun())),
-            (PRAGUE_TIMESTAMP, Some(BlobParams::prague())),
-            (OSAKA_TIMESTAMP - 1, Some(BlobParams::prague())),
-            (OSAKA_TIMESTAMP, Some(BlobParams::osaka())),
-            (BPO_TIMESTAMP - 1, Some(BlobParams::osaka())),
-            (BPO_TIMESTAMP, Some(BlobParams::bpo1())),
+            (
+                CANCUN_TIMESTAMP,
+                Some(ActiveSpec {
+                    spec: Spec::Cancun,
+                    blob_params: BlobParams::cancun(),
+                }),
+            ),
+            (
+                PRAGUE_TIMESTAMP - 1,
+                Some(ActiveSpec {
+                    spec: Spec::Cancun,
+                    blob_params: BlobParams::cancun(),
+                }),
+            ),
+            (
+                PRAGUE_TIMESTAMP,
+                Some(ActiveSpec {
+                    spec: Spec::Prague,
+                    blob_params: BlobParams::prague(),
+                }),
+            ),
+            (
+                OSAKA_TIMESTAMP - 1,
+                Some(ActiveSpec {
+                    spec: Spec::Prague,
+                    blob_params: BlobParams::prague(),
+                }),
+            ),
+            (
+                OSAKA_TIMESTAMP,
+                Some(ActiveSpec {
+                    spec: Spec::Osaka,
+                    blob_params: BlobParams::osaka(),
+                }),
+            ),
+            (
+                BPO_TIMESTAMP - 1,
+                Some(ActiveSpec {
+                    spec: Spec::Osaka,
+                    blob_params: BlobParams::osaka(),
+                }),
+            ),
+            (
+                BPO_TIMESTAMP,
+                Some(ActiveSpec {
+                    spec: Spec::Osaka,
+                    blob_params: BlobParams::bpo1(),
+                }),
+            ),
         ] {
             assert_eq!(
-                osaka.blob_params_at_timestamp(timestamp),
+                osaka.active_spec_at_timestamp(timestamp),
                 expected,
                 "at {timestamp}"
+            );
+            assert_eq!(
+                osaka.blob_params_at_timestamp(timestamp),
+                expected.map(|active| active.blob_params()),
+                "public blob params at {timestamp}"
             );
         }
     }

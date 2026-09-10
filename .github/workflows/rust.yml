@@ -33,18 +33,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # A plain `docker run` rather than run-on-arch-action: that action ships one Dockerfile per
+      # distro and has none past `i386.bullseye`, and bullseye is EOL -- its `-security` Release
+      # file has expired and its pool is pruned, so hiding that suite leaves the image's installed
+      # packages unresolvable while keeping it 404s `libc6-dev`. Choosing the image directly gets
+      # us a supported release. i386 needs no emulation on an amd64 host, only `--platform`, which
+      # also makes the container report `i686` to `uname`.
       - name: Run tests 32 bit
-        uses: vxcontrol/run-on-arch-action@0.9.0
-        id: tests
-        with:
-          arch: i386
-          distro: bullseye
-          githubToken: ${{ github.token }}
-          run: |
-            apt-get update && apt-get install -y curl clang llvm
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            export PATH="$PATH:$HOME/.cargo/bin"
-            cargo test --all --verbose
+        run: |
+          docker run --rm --platform linux/386 -v "$PWD":/work -w /work \
+            i386/debian:bookworm sh -eux -c '
+              apt-get -qq update
+              apt-get install -y curl clang llvm
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --profile minimal --default-host i686-unknown-linux-gnu
+              . "$HOME/.cargo/env"
+              cargo test --all --verbose
+            '
 
   ethereum-tests:
     runs-on: ubuntu-latest
@@ -109,37 +114,37 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      # A plain `docker run` for the same reasons as `unit-tests-32-bit` above.
       - name: Run Ethereum state tests 32 bit
-        uses: vxcontrol/run-on-arch-action@0.9.0
-        id: tests
-        with:
-          arch: i386
-          distro: bullseye
-          githubToken: ${{ github.token }}
-          run: |
-            apt-get update && apt-get install -y curl wget clang llvm
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            export PATH="$PATH:$HOME/.cargo/bin"
+        run: |
+          docker run --rm --platform linux/386 -v "$PWD":/work -w /work \
+            i386/debian:bookworm sh -eux -c '
+              apt-get -qq update
+              apt-get install -y curl wget clang llvm
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --profile minimal --default-host i686-unknown-linux-gnu
+              . "$HOME/.cargo/env"
 
-            curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
-            mkdir ethereum-spec-tests
-            tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
+              curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
+              mkdir -p ethereum-spec-tests
+              tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
-            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
-              ethtests/GeneralStateTests/ \
-              ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-              ethereum-spec-tests/fixtures/state_tests/
+              cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
+                ethtests/GeneralStateTests/ \
+                ethtests/LegacyTests/Cancun/GeneralStateTests/ \
+                ethereum-spec-tests/fixtures/state_tests/
 
-            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
-              ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
-              ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
-              ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
-              ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
-              ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
-              ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
-              ethtests/LegacyTests/Constantinople/VMTests/vmTests
+              cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
+                ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
+                ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
+                ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
+                ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
+                ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
+                ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
+                ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
+                ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
+                ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
+                ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
+                ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
+                ethtests/LegacyTests/Constantinople/VMTests/vmTests
+            '
