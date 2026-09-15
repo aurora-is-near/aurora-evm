@@ -486,7 +486,9 @@ fn calculate_body_metrics(
         };
         transactions_payload_length = transactions_payload_length
             .checked_add(block_item_length)
-            .ok_or(BlockValidationError::TransactionsLengthOverflow { transaction_index })?;
+            .ok_or(BlockValidationError::TransactionListPayloadLengthOverflow {
+                transaction_index,
+            })?;
 
         if let SignedTxEnvelope::Eip4844(transaction) = transaction {
             blob_count = add_blob_count(
@@ -669,6 +671,7 @@ fn validate_block_size(rlp_length: usize, active_spec: Spec) -> Result<(), Block
 /// Why a block fails pre-execution consensus validation.
 ///
 /// Transaction and withdrawal indices are zero-based positions in the block body.
+/// Wrapped transaction-length details are available through [`core::error::Error::source`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlockValidationError {
     /// Cancun is not active at the block timestamp under the configured fork boundary.
@@ -731,7 +734,7 @@ pub enum BlockValidationError {
         envelope_length: usize,
     },
     /// Appending a transaction overflows the transaction-list payload length.
-    TransactionsLengthOverflow { transaction_index: usize },
+    TransactionListPayloadLengthOverflow { transaction_index: usize },
     /// Appending a withdrawal makes its containing list length unrepresentable.
     WithdrawalsLengthOverflow { withdrawal_index: usize },
     /// Combining body components or adding an RLP prefix overflows the block length.
@@ -852,9 +855,11 @@ impl fmt::Display for BlockValidationError {
                 "blob gas used is {header}, but the body derives {computed}"
             ),
             Self::TransactionLengthOverflow {
-                transaction_index,
-                source,
-            } => write!(f, "transaction {transaction_index}: {source}"),
+                transaction_index, ..
+            } => write!(
+                f,
+                "encoded length calculation failed for transaction {transaction_index}"
+            ),
             Self::TransactionItemLengthOverflow {
                 transaction_index,
                 envelope_length,
@@ -862,7 +867,7 @@ impl fmt::Display for BlockValidationError {
                 f,
                 "transaction {transaction_index}: block RLP wrapper overflows envelope length {envelope_length}"
             ),
-            Self::TransactionsLengthOverflow { transaction_index } => write!(
+            Self::TransactionListPayloadLengthOverflow { transaction_index } => write!(
                 f,
                 "transaction {transaction_index}: transaction-list payload length exceeds usize"
             ),

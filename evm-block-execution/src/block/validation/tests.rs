@@ -714,10 +714,27 @@ fn transaction_length_error_preserves_source_and_index() {
             transaction_index: 17,
             source,
         };
-        assert_eq!(error.to_string(), format!("transaction 17: {source}"));
+        let context = "encoded length calculation failed for transaction 17";
+        assert_eq!(error.to_string(), context);
         assert_eq!(
             error.source().unwrap().downcast_ref::<TxLengthError>(),
             Some(&source)
+        );
+
+        let outer = crate::stateless::StatelessValidationError::Consensus(error);
+        let mut current: Option<&dyn Error> = Some(&outer);
+        let mut messages = Vec::new();
+        while let Some(error) = current {
+            messages.push(error.to_string());
+            current = error.source();
+        }
+        assert_eq!(
+            messages,
+            [
+                "block consensus validation failed".to_owned(),
+                context.to_owned(),
+                source.to_string(),
+            ],
         );
     }
     assert!(

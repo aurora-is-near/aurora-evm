@@ -27,6 +27,8 @@ pub struct StatelessValidationOutput {
 }
 
 /// Errors of the stateless validation of a block.
+///
+/// Display reports the failed stage; details are available through [`core::error::Error::source`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatelessValidationError {
     /// The ancestor headers in the witness do not form a chain ending at this block's parent.
@@ -66,10 +68,10 @@ impl From<BlockExecutionError> for StatelessValidationError {
 impl fmt::Display for StatelessValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AncestorChain(error) => write!(f, "ancestor chain is invalid: {error}"),
-            Self::Consensus(error) => write!(f, "block consensus validation failed: {error}"),
-            Self::SenderRecovery(error) => write!(f, "sender recovery failed: {error}"),
-            Self::Execution(error) => write!(f, "block execution failed: {error}"),
+            Self::AncestorChain(_) => f.write_str("ancestor chain is invalid"),
+            Self::Consensus(_) => f.write_str("block consensus validation failed"),
+            Self::SenderRecovery(_) => f.write_str("sender recovery failed"),
+            Self::Execution(_) => f.write_str("block execution failed"),
         }
     }
 }
@@ -149,6 +151,46 @@ mod tests {
             deposit_contract_address: None,
             base_fee_params: BaseFeeParams::ethereum(),
             blob_schedule: BlobScheduleBlobParams::mainnet(),
+        }
+    }
+
+    #[test]
+    fn every_stage_keeps_details_only_in_its_source() {
+        use crate::block::SenderRecoveryError;
+        use crate::errors::BlockExecutionError;
+        use core::error::Error;
+
+        let cases = [
+            (
+                StatelessValidationError::AncestorChain(AncestorChainError::MissingParent),
+                "ancestor chain is invalid",
+                "the block's parent header is missing",
+            ),
+            (
+                StatelessValidationError::Consensus(BlockValidationError::CancunNotActive {
+                    timestamp: 17,
+                }),
+                "block consensus validation failed",
+                "Cancun is not active at timestamp 17",
+            ),
+            (
+                StatelessValidationError::SenderRecovery(SenderRecoveryError::InvalidPublicKey {
+                    index: 17,
+                }),
+                "sender recovery failed",
+                "public key for transaction 17 is not a valid point",
+            ),
+            (
+                StatelessValidationError::Execution(BlockExecutionError::SenderHasCode),
+                "block execution failed",
+                "sender has non-delegation code (EIP-3607)",
+            ),
+        ];
+        for (error, context, details) in cases {
+            assert_eq!(error.to_string(), context);
+            let source = error.source().unwrap();
+            assert_eq!(source.to_string(), details);
+            assert!(source.source().is_none());
         }
     }
 

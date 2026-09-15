@@ -117,3 +117,64 @@ set `RISC0_DEV_MODE` for a proof measurement.
 Region cycles exclude input decoding. Session cycles include it; summed segment
 sizes include padding but are not a wall-clock proving-time model. See
 [RESULTS.md](RESULTS.md) for measured results and their limits.
+
+## Command reference
+
+Run these commands from `evm-trie-bench/`. Local Makefiles are untracked conveniences;
+the commands below cover every target without requiring one. Guest commands require
+the toolchain and runtime described above. Sizes are positional arguments and can be
+replaced with `--boundary 2 127 128 129 255 256 257 4096 65535 65536 65537`.
+
+### Checks, timing and allocations
+
+```sh
+# check
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all --manifest-path guest/Cargo.toml -- --check
+
+# bench
+cargo run --release --features tiny --bin bench
+
+# allocations
+cargo run --release --features tiny,allocations --bin bench
+```
+
+### Export the official corpus
+
+This overwrites the pinned corpus only after the differential checks succeed.
+Set `EEST_PATH` to the unpacked fixture directory before running it.
+
+```sh
+# corpus
+test -n "${EEST_PATH:?Set EEST_PATH to the unpacked EEST fixture directory}"
+cargo run --release --bin corpus -- \
+  "$EEST_PATH" ../evm-block-execution/testdata/ordered-roots.json
+```
+
+### Build and execute guests
+
+Each execution rebuilds its matching ELF first, as the local `guest-run` and
+`guest-tiny-run` targets do. The build commands alone correspond to `guest` and
+`guest-tiny`.
+
+```sh
+# guest-run: software backend
+(cd guest && cargo build --release)
+cargo run --release --features guest-host --bin guest-host -- \
+  guest/target/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
+
+# guest-tiny-run: accelerated backend
+(cd guest && cargo build --release --features tiny --target-dir target/tiny)
+cargo run --release --features guest-host,tiny --bin guest-host -- \
+  guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
+```
+
+### Generate and verify a proof
+
+```sh
+# prove: rebuild the accelerated guest before proving
+(cd guest && cargo build --release --features tiny --target-dir target/tiny)
+cargo run --release --features guest-host,tiny --bin guest-host -- \
+  guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest --prove 16
+```

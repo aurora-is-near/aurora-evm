@@ -70,7 +70,9 @@ fn baseline_metrics(
         };
         transactions_payload_length = transactions_payload_length
             .checked_add(block_item_length)
-            .ok_or(BlockValidationError::TransactionsLengthOverflow { transaction_index })?;
+            .ok_or(BlockValidationError::TransactionListPayloadLengthOverflow {
+                transaction_index,
+            })?;
 
         if let SignedTxEnvelope::Eip4844(transaction) = transaction {
             blob_count = add_blob_count(
