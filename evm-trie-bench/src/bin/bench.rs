@@ -1,6 +1,6 @@
 //! Time and allocation runs are separate builds; input preparation is outside both measurements.
 
-use aurora_evm_trie_bench::{cases, IMPLEMENTATIONS};
+use aurora_evm_trie_bench::{IMPLEMENTATIONS, cases};
 use std::hint::black_box;
 #[cfg(not(feature = "allocations"))]
 use std::time::{Duration, Instant};

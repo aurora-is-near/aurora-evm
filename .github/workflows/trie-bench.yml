@@ -20,6 +20,9 @@ on:
       - '.github/workflows/trie-bench.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -75,7 +78,14 @@ jobs:
 
       - name: Install the RISC Zero toolchain
         run: |
-          curl -L https://risczero.com/install | bash
+          # Verify the published rzup source archive before unpacking or building it.
+          archive="$RUNNER_TEMP/rzup-0.5.2.crate"
+          curl --fail --location --silent --show-error \
+            https://static.crates.io/crates/rzup/rzup-0.5.2.crate -o "$archive"
+          echo "96909a7ea8fdf7e18da727d7facbc43eea8a4f77635e7ec75a69794dede16fb6  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          cargo install --locked --path "$RUNNER_TEMP/rzup-0.5.2" \
+            --no-default-features --features cli,install --root "$HOME/.risc0"
           echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
           "$HOME/.risc0/bin/rzup" install rust 1.91.1
           "$HOME/.risc0/bin/rzup" install r0vm 3.0.4

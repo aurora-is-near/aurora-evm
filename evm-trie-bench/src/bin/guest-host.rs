@@ -1,7 +1,7 @@
 //! Runs each algorithm in a fresh guest; optional proving uses the same ELF and inputs.
 
-use aurora_evm_trie_bench::{cases, IMPLEMENTATIONS};
-use risc0_zkvm::{default_executor, default_prover, ExecutorEnv};
+use aurora_evm_trie_bench::{IMPLEMENTATIONS, cases};
+use risc0_zkvm::{ExecutorEnv, default_executor, default_prover};
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {

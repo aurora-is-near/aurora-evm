@@ -1,4 +1,4 @@
-//! Strict RLP input checks and checked lengths of canonical encodings.
+//! Strict RLP input checks and lengths of canonical encodings.
 //!
 //! The upstream accessors are intentionally lenient in ways this crate cannot accept:
 //!
@@ -74,24 +74,33 @@ pub fn declared_item_len(bytes: &[u8]) -> Result<usize, rlp::DecoderError> {
         .ok_or(rlp::DecoderError::RlpInvalidLength)
 }
 
+/// Length of the RLP prefix for a list or a string without the single-byte exception.
+#[inline]
+fn length_prefix_length(payload: usize) -> usize {
+    if payload < 56 {
+        1
+    } else {
+        // The width is at most size_of::<usize>(), so conversion cannot fail.
+        let width = (usize::BITS - payload.leading_zeros()).div_ceil(8);
+        1 + usize::try_from(width).expect("byte width fits usize")
+    }
+}
+
 /// Length of an RLP list (also a string longer than one byte).
 #[inline]
 pub fn list_length(payload: usize) -> Option<usize> {
-    let prefix = if payload < 56 {
-        1
-    } else {
-        1 + usize::try_from((usize::BITS - payload.leading_zeros()).div_ceil(8)).ok()?
-    };
-    payload.checked_add(prefix)
+    // An arbitrary aggregate length is not bounded by a single live allocation.
+    payload.checked_add(length_prefix_length(payload))
 }
 
 /// Length of a byte string, including the single-byte RLP exception.
 #[inline]
-pub fn bytes_length(bytes: &[u8]) -> Option<usize> {
+pub fn bytes_length(bytes: &[u8]) -> usize {
     if bytes.len() == 1 && bytes[0] < 0x80 {
-        Some(1)
+        1
     } else {
-        list_length(bytes.len())
+        // A byte slice is at most isize::MAX bytes; adding its RLP prefix fits usize.
+        bytes.len() + length_prefix_length(bytes.len())
     }
 }
 
@@ -291,7 +300,7 @@ mod tests {
         for length in [0, 1, 2, 55, 56, 255, 256, 65535, 65536] {
             for byte in [0, 0x7f, 0x80, 0xff] {
                 let bytes = vec![byte; length];
-                assert_eq!(bytes_length(&bytes), Some(rlp::encode(&bytes).len()));
+                assert_eq!(bytes_length(&bytes), rlp::encode(&bytes).len());
             }
         }
         assert_eq!(list_length(usize::MAX), None);

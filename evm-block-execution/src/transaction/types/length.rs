@@ -1,4 +1,7 @@
 //! Allocation-free EIP-2718 length calculation for the pre-hashing block-size check.
+//!
+//! Fixed scalar groups have bounded lengths and use plain addition; dynamic aggregates use
+//! checked arithmetic because individual allocation bounds do not bound their encoded sum.
 
 use super::SignedTxEnvelope;
 use crate::rlp_strict::{bytes_length, integer_length, list_length};
@@ -35,7 +38,7 @@ fn base_length(nonce: U256, gas_limit: u64, to: TxKind, value: U256, data: &[u8]
         + integer_length(gas_limit.into())
         + if to.is_create() { 1 } else { 21 }
         + integer_length(value);
-    fixed.checked_add(bytes_length(data)?)
+    fixed.checked_add(bytes_length(data))
 }
 
 impl SignedTxEnvelope {
