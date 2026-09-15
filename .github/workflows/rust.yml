@@ -25,6 +25,10 @@ jobs:
       - name: Test aurora-evm-block-execution
         run: cargo test -p aurora-evm-block-execution
 
+      # `--all` builds aurora-evm-trie with default features only; the optional backend needs its own run.
+      - name: Test aurora-evm-trie with the tiny-keccak backend
+        run: cargo test -p aurora-evm-trie --all-features --verbose
+
   unit-tests-32-bit:
     runs-on: ubuntu-latest
     steps:
@@ -96,6 +100,14 @@ jobs:
             ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
             ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
             ethtests/LegacyTests/Constantinople/VMTests/vmTests
+
+      # Decodes every positive EEST blockchain fixture and compares computed transaction lengths,
+      # block RLP lengths and transaction/withdrawal roots with the fixture headers.
+      - name: Run EEST block body differential
+        run: |
+          EEST_PATH="$PWD/ethereum-spec-tests/fixtures" \
+            cargo test -r -p aurora-evm-block-execution \
+              eest_body_lengths_and_roots_match_every_positive_block -- --ignored --nocapture
 
   ethereum-tests-32-bit:
     runs-on: ubuntu-latest

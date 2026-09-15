@@ -1,4 +1,4 @@
-//! Strict RLP guards for untrusted consensus input.
+//! Strict RLP input checks and checked lengths of canonical encodings.
 //!
 //! The upstream accessors are intentionally lenient in ways this crate cannot accept:
 //!
@@ -10,6 +10,11 @@
 //! [`checked_len`] verifies a complete list, [`checked_list_at`] applies that check to a nested list,
 //! and [`declared_item_len`] computes an item's extent with checked arithmetic. Canonical scalar and
 //! fixed-width decoding uses `Rlp::decoder().decode_value`; ordinary decoding remains with `rlp`.
+//!
+//! [`list_length`], [`bytes_length`], and [`integer_length`] measure canonical encodings without
+//! allocating or copying payloads. These size calculations do not validate encoded input.
+
+use primitive_types::U256;
 
 /// Number of items in `rlp`, requiring it to be a list whose items exactly tile its payload.
 ///
@@ -69,6 +74,37 @@ pub fn declared_item_len(bytes: &[u8]) -> Result<usize, rlp::DecoderError> {
         .ok_or(rlp::DecoderError::RlpInvalidLength)
 }
 
+/// Length of an RLP list (also a string longer than one byte).
+#[inline]
+pub fn list_length(payload: usize) -> Option<usize> {
+    let prefix = if payload < 56 {
+        1
+    } else {
+        1 + usize::try_from((usize::BITS - payload.leading_zeros()).div_ceil(8)).ok()?
+    };
+    payload.checked_add(prefix)
+}
+
+/// Length of a byte string, including the single-byte RLP exception.
+#[inline]
+pub fn bytes_length(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() == 1 && bytes[0] < 0x80 {
+        Some(1)
+    } else {
+        list_length(bytes.len())
+    }
+}
+
+/// Length of a minimally encoded unsigned integer (zero is the empty string).
+#[inline]
+pub fn integer_length(value: U256) -> usize {
+    if value < U256::from(0x80) {
+        1
+    } else {
+        1 + value.bits().div_ceil(8)
+    }
+}
+
 /// Builds a long-form RLP header whose declared extent overflows `usize`.
 ///
 /// `list` picks the long-list form (`0xf8..=0xff`) over the long-string form (`0xb8..=0xbf`).
@@ -85,8 +121,12 @@ pub fn overflowing_header(list: bool) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{checked_len, checked_list_at, declared_item_len, overflowing_header};
+    use super::{
+        bytes_length, checked_len, checked_list_at, declared_item_len, integer_length, list_length,
+        overflowing_header,
+    };
     use hex_literal::hex;
+    use primitive_types::U256;
 
     #[test]
     fn a_genuine_list_is_accepted_with_its_item_count() {
@@ -236,6 +276,29 @@ mod tests {
         assert_eq!(
             rlp.decoder().decode_value(borrow).unwrap_err(),
             rlp::DecoderError::RlpInvalidIndirection
+        );
+    }
+
+    #[test]
+    fn scalar_and_string_lengths_match_rlp_at_every_byte_boundary() {
+        for bits in 0..256 {
+            let value = U256::one() << bits;
+            for value in [value - U256::one(), value] {
+                assert_eq!(integer_length(value), rlp::encode(&value).len());
+            }
+        }
+        assert_eq!(integer_length(U256::MAX), 33);
+        for length in [0, 1, 2, 55, 56, 255, 256, 65535, 65536] {
+            for byte in [0, 0x7f, 0x80, 0xff] {
+                let bytes = vec![byte; length];
+                assert_eq!(bytes_length(&bytes), Some(rlp::encode(&bytes).len()));
+            }
+        }
+        assert_eq!(list_length(usize::MAX), None);
+        assert_eq!(list_length(usize::MAX - size_of::<usize>()), None);
+        assert_eq!(
+            list_length(usize::MAX - size_of::<usize>() - 1),
+            Some(usize::MAX)
         );
     }
 }

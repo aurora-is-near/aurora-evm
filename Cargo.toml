@@ -3,8 +3,10 @@ resolver = "3"
 members = [
     "evm",
     "evm-tests",
-    "evm-block-execution"
+    "evm-block-execution",
+    "evm-trie"
 ]
+exclude = ["evm-trie-bench", "evm-trie-bench/guest"]
 
 [workspace.package]
 authors = ["Aurora Labs <hello@aurora.dev>"]
@@ -30,15 +32,20 @@ module_name_repetitions = "allow"
 [workspace.dependencies]
 aurora-engine-precompiles = "2.1"
 aurora-evm = { path = "evm" }
+aurora-evm-trie = { path = "evm-trie" }
 auto_impl = "1.0"
+hash-db = "0.15"
 hex = "0.4"
 hex-literal = "1.1"
 libsecp256k1 = "0.7"
+plain_hasher = "0.2"
 primitive-types = { version = "0.13", default-features = false }
 rlp = { version = "0.6", default-features = false }
 sha2 = "0.10.0"
 sha3 = { version = "0.10.0", default-features = false }
 serde = { version = "1.0", default-features = false }
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+triehash = "0.8"
 
 [patch.crates-io]
 # Constrain to v0.14.6 to ensure compatibility with sha3 0.10 and prevent unexpected upgrades

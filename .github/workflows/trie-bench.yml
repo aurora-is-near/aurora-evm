@@ -1,0 +1,103 @@
+name: Trie benchmark harness
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'evm-trie/**'
+      - 'evm-trie-bench/**'
+      - 'evm-block-execution/**'
+      - 'evm/**'
+      - 'Cargo.toml'
+      - '.github/workflows/trie-bench.yml'
+  pull_request:
+    paths:
+      - 'evm-trie/**'
+      - 'evm-trie-bench/**'
+      - 'evm-block-execution/**'
+      - 'evm/**'
+      - 'Cargo.toml'
+      - '.github/workflows/trie-bench.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  harness-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evm-trie-bench
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check formatting of the harness and the guest
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --all --manifest-path guest/Cargo.toml -- --check
+
+      - name: Clippy with every feature
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  harness-differential:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: [corpus, 'corpus,tiny']
+    defaults:
+      run:
+        working-directory: evm-trie-bench
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Cross-check the three builders on the pinned corpus
+        run: cargo test --locked --release --features '${{ matrix.features }}' --test pinned_corpus
+
+      - name: Check allocation invariants on synthetic sizes
+        if: matrix.features == 'corpus,tiny'
+        run: cargo run --locked --release --features tiny,allocations --bin bench
+
+  guest:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install the RISC Zero toolchain
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          "$HOME/.risc0/bin/rzup" install rust 1.91.1
+          "$HOME/.risc0/bin/rzup" install r0vm 3.0.4
+
+      - name: Build the software and accelerated guests
+        working-directory: evm-trie-bench/guest
+        run: |
+          cargo build --release
+          cargo build --release --features tiny --target-dir target/tiny
+
+      - name: Execute the guests
+        working-directory: evm-trie-bench
+        run: |
+          cargo run --release --features guest-host --bin guest-host -- \
+            guest/target/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
+          cargo run --release --features guest-host,tiny --bin guest-host -- \
+            guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
+
+      - name: Check RV32 index boundaries and the heap tier
+        working-directory: evm-trie-bench
+        run: |
+          cargo run --release --features guest-host --bin guest-host -- \
+            guest/target/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest --boundary 2 127 128 129 255 256 257 4096 65535 65536 65537
+          cargo run --release --features guest-host,tiny --bin guest-host -- \
+            guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest --boundary 2 127 128 129 255 256 257 4096 65535 65536 65537

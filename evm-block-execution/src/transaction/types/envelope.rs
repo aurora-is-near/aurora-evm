@@ -321,7 +321,7 @@ fn check_covers_exactly(bytes: &[u8]) -> Result<(), TxDecodeError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::SignedTxEnvelope;
     use crate::rlp_strict::overflowing_header;
     use crate::transaction::TxType;
@@ -340,7 +340,7 @@ mod tests {
     const TYPE_BYTE_EIP1559: u8 = super::eip1559::TYPE_BYTE;
 
     /// One raw transaction per type, so the dispatch is covered end to end.
-    fn vectors() -> Vec<(TxType, Vec<u8>)> {
+    pub(in crate::transaction::types) fn vectors() -> Vec<(TxType, Vec<u8>)> {
         vec![
             (
                 TxType::Legacy,
