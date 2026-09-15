@@ -11,7 +11,9 @@ use crate::eips::eip1559::{BaseFeeParams, GAS_LIMIT_BOUND_DIVISOR};
 use crate::eips::eip4844::DATA_GAS_PER_BLOB;
 use crate::eips::eip7840::BlobParams;
 use crate::errors::HeaderField;
+use crate::rlp_strict::list_length;
 use crate::spec::Spec;
+use crate::transaction::types::TxLengthError;
 use crate::transaction::{SignedTxEnvelope, TxType};
 use crate::trie::ordered_trie_root_with_encoder;
 use core::fmt;
@@ -35,7 +37,8 @@ const MAX_RLP_BLOCK_SIZE: usize = 8_388_608;
 /// On success, returns the timestamp-resolved execution context.
 ///
 /// # Errors
-/// [`BlockValidationError`] if the header, parent transition or body commitments are invalid.
+/// [`BlockValidationError`] if the header, parent transition or body commitments are invalid,
+/// or body lengths or blob gas cannot be represented by their numeric types.
 #[inline]
 pub fn validate_block_consensus(
     chain_spec: &ChainSpec,
@@ -436,7 +439,8 @@ struct BodyMetrics {
 
 /// Checks canonical RLP lengths before hashing, then encodes each leaf into reusable scratch.
 ///
-/// On Osaka, the growing encoded body is size-checked before either trie is built.
+/// Length and blob-gas overflows fail before either trie is built on every fork. From Osaka,
+/// the growing encoded body is also checked against EIP-7934 before hashing.
 fn calculate_body_metrics(
     header: &Header,
     body: &BlockBody,
@@ -444,47 +448,52 @@ fn calculate_body_metrics(
 ) -> Result<BodyMetrics, BlockValidationError> {
     let header_length = rlp::encode(header).len();
 
-    let withdrawals_length = match body.withdrawals() {
-        Some(withdrawals) => {
-            let mut payload_length = 0usize;
-            for withdrawal in withdrawals {
-                payload_length = payload_length
-                    .checked_add(withdrawal.encoded_length())
-                    .ok_or(BlockValidationError::ArithmeticOverflow)?;
+    let mut withdrawals_length = usize::from(body.withdrawals().is_some());
+    if let Some(withdrawals) = body.withdrawals() {
+        let mut payload_length = 0usize;
+        for (withdrawal_index, withdrawal) in withdrawals.iter().enumerate() {
+            payload_length = payload_length
+                .checked_add(withdrawal.encoded_length())
+                .ok_or(BlockValidationError::WithdrawalsLengthOverflow { withdrawal_index })?;
+            withdrawals_length = list_length(payload_length)
+                .ok_or(BlockValidationError::WithdrawalsLengthOverflow { withdrawal_index })?;
 
-                if active_spec >= Spec::Osaka {
-                    let withdrawals_length = rlp_container_length(payload_length)?;
-                    let rlp_length =
-                        calculate_block_rlp_length(header_length, 0, withdrawals_length)?;
-                    validate_block_size(rlp_length, active_spec)?;
-                }
+            if active_spec >= Spec::Osaka {
+                let rlp_length = calculate_block_rlp_length(header_length, 0, withdrawals_length)?;
+                validate_block_size(rlp_length, active_spec)?;
             }
-            rlp_container_length(payload_length)?
         }
-        None => 0,
-    };
+    }
 
     let mut transactions_payload_length = 0usize;
     let mut blob_count = 0u64;
-    for transaction in &body.transactions {
-        let envelope_length = transaction
-            .encoded_2718_length()
-            .ok_or(BlockValidationError::ArithmeticOverflow)?;
+    for (transaction_index, transaction) in body.transactions.iter().enumerate() {
+        let envelope_length = transaction.encoded_2718_length().map_err(|source| {
+            BlockValidationError::TransactionLengthOverflow {
+                transaction_index,
+                source,
+            }
+        })?;
         let block_item_length = if transaction.tx_type() == TxType::Legacy {
             envelope_length
         } else {
-            rlp_container_length(envelope_length)?
+            list_length(envelope_length).ok_or(
+                BlockValidationError::TransactionItemLengthOverflow {
+                    transaction_index,
+                    envelope_length,
+                },
+            )?
         };
         transactions_payload_length = transactions_payload_length
             .checked_add(block_item_length)
-            .ok_or(BlockValidationError::ArithmeticOverflow)?;
+            .ok_or(BlockValidationError::TransactionsLengthOverflow { transaction_index })?;
 
         if let SignedTxEnvelope::Eip4844(transaction) = transaction {
-            let count =
-                u64::try_from(transaction.tx.blob_versioned_hashes.len()).unwrap_or(u64::MAX);
-            blob_count = blob_count
-                .checked_add(count)
-                .ok_or(BlockValidationError::ArithmeticOverflow)?;
+            blob_count = add_blob_count(
+                blob_count,
+                transaction.tx.blob_versioned_hashes.len(),
+                transaction_index,
+            )?;
         }
         if active_spec >= Spec::Osaka {
             let rlp_length = calculate_block_rlp_length(
@@ -501,20 +510,18 @@ fn calculate_body_metrics(
         transactions_payload_length,
         withdrawals_length,
     )?;
+    let blob_gas_used = calculate_blob_gas_used(blob_count)?;
 
     let transactions_root =
         ordered_trie_root_with_encoder(&body.transactions, |transaction, stream| {
             let encoded = transaction.encode_2718_in(stream);
             // Catch drift between the EIP-7934 length preflight and the wire encoder in debug builds.
-            debug_assert_eq!(transaction.encoded_2718_length(), Some(encoded.len()));
+            debug_assert_eq!(transaction.encoded_2718_length(), Ok(encoded.len()));
             encoded
         });
     let withdrawals_root = body.withdrawals().map(|withdrawals| {
         ordered_trie_root_with_encoder(withdrawals, crate::withdrawal::Withdrawal::encode_in)
     });
-    let blob_gas_used = blob_count
-        .checked_mul(DATA_GAS_PER_BLOB)
-        .ok_or(BlockValidationError::ArithmeticOverflow)?;
 
     Ok(BodyMetrics {
         transactions_root,
@@ -524,26 +531,52 @@ fn calculate_body_metrics(
     })
 }
 
+/// Adds a transaction's blobs to the exact body count, retaining its index on overflow.
+fn add_blob_count(
+    accumulated: u64,
+    additional: usize,
+    transaction_index: usize,
+) -> Result<u64, BlockValidationError> {
+    u64::try_from(additional)
+        .ok()
+        .and_then(|count| accumulated.checked_add(count))
+        .ok_or(BlockValidationError::BlobCountOverflow {
+            transaction_index,
+            accumulated,
+            additional,
+        })
+}
+
+/// Converts the exact body blob count to gas, rejecting an unrepresentable product.
+fn calculate_blob_gas_used(blob_count: u64) -> Result<u64, BlockValidationError> {
+    blob_count
+        .checked_mul(DATA_GAS_PER_BLOB)
+        .ok_or(BlockValidationError::BlobGasOverflow { blob_count })
+}
+
 /// Calculates the canonical block-list length from already measured body components.
+///
+/// Reports the input component lengths if a sum or an RLP prefix overflows `usize`.
 fn calculate_block_rlp_length(
     header_length: usize,
     transactions_payload_length: usize,
     withdrawals_length: usize,
 ) -> Result<usize, BlockValidationError> {
-    let transactions_length = rlp_container_length(transactions_payload_length)?;
+    let overflow_error_handler = || BlockValidationError::BlockRlpLengthOverflow {
+        header_length,
+        transactions_payload_length,
+        withdrawals_length,
+    };
+    let transactions_length =
+        list_length(transactions_payload_length).ok_or_else(overflow_error_handler)?;
     let block_payload_length = header_length
         .checked_add(transactions_length)
         // The body model has no ommers, so its encoded list is the one-byte empty list.
         .and_then(|length| length.checked_add(1))
         .and_then(|length| length.checked_add(withdrawals_length))
-        .ok_or(BlockValidationError::ArithmeticOverflow)?;
+        .ok_or_else(overflow_error_handler)?;
 
-    rlp_container_length(block_payload_length)
-}
-
-/// Returns an RLP container length, reporting unrepresentable aggregates as a block error.
-fn rlp_container_length(payload_length: usize) -> Result<usize, BlockValidationError> {
-    crate::rlp_strict::list_length(payload_length).ok_or(BlockValidationError::ArithmeticOverflow)
+    list_length(block_payload_length).ok_or_else(overflow_error_handler)
 }
 
 /// Validates body commitments and fork-specific body rules from one metrics pass.
@@ -634,6 +667,8 @@ fn validate_block_size(rlp_length: usize, active_spec: Spec) -> Result<(), Block
 }
 
 /// Why a block fails pre-execution consensus validation.
+///
+/// Transaction and withdrawal indices are zero-based positions in the block body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlockValidationError {
     /// Cancun is not active at the block timestamp under the configured fork boundary.
@@ -684,9 +719,36 @@ pub enum BlockValidationError {
     WithdrawalsRootMismatch { header: H256, computed: H256 },
     /// The body's blob count does not match the header's `blob_gas_used`.
     BlobGasUsedMismatch { header: u64, computed: u64 },
-    /// Blob-count or RLP-length arithmetic overflowed.
-    ArithmeticOverflow,
-    /// The canonical block RLP exceeds the EIP-7934 limit.
+    /// A transaction component has an unrepresentable encoded length.
+    TransactionLengthOverflow {
+        /// Zero-based position in the block body.
+        transaction_index: usize,
+        source: TxLengthError,
+    },
+    /// The block's byte-string wrapper overflows the transaction envelope length.
+    TransactionItemLengthOverflow {
+        transaction_index: usize,
+        envelope_length: usize,
+    },
+    /// Appending a transaction overflows the transaction-list payload length.
+    TransactionsLengthOverflow { transaction_index: usize },
+    /// Appending a withdrawal makes its containing list length unrepresentable.
+    WithdrawalsLengthOverflow { withdrawal_index: usize },
+    /// Combining body components or adding an RLP prefix overflows the block length.
+    BlockRlpLengthOverflow {
+        header_length: usize,
+        transactions_payload_length: usize,
+        withdrawals_length: usize,
+    },
+    /// Adding a transaction's blobs exceeds the body counter's range.
+    BlobCountOverflow {
+        transaction_index: usize,
+        accumulated: u64,
+        additional: usize,
+    },
+    /// Converting the body blob count to gas exceeds `u64`.
+    BlobGasOverflow { blob_count: u64 },
+    /// The canonical block RLP exceeds the active EIP-7934 limit.
     BlockTooLarge {
         /// Length lower bound observed when the limit was crossed; exact after a complete scan.
         rlp_length: usize,
@@ -696,6 +758,10 @@ pub enum BlockValidationError {
 }
 
 impl fmt::Display for BlockValidationError {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep the exhaustive error-to-message mapping together without a second dispatch."
+    )]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CancunNotActive { timestamp } => {
@@ -716,9 +782,7 @@ impl fmt::Display for BlockValidationError {
             Self::GasUsedExceedsGasLimit {
                 gas_used,
                 gas_limit,
-            } => {
-                write!(f, "gas used {gas_used} exceeds gas limit {gas_limit}")
-            }
+            } => write!(f, "gas used {gas_used} exceeds gas limit {gas_limit}"),
             Self::GasLimitExceedsMaximum { gas_limit, max } => {
                 write!(f, "gas limit {gas_limit} exceeds the maximum {max}")
             }
@@ -740,12 +804,10 @@ impl fmt::Display for BlockValidationError {
                 f,
                 "header names parent {header:#x}, but the supplied parent hashes to {parent:#x}"
             ),
-            Self::ParentNumberMismatch { parent, child } => {
-                write!(
-                    f,
-                    "block {child} does not immediately follow parent {parent}"
-                )
-            }
+            Self::ParentNumberMismatch { parent, child } => write!(
+                f,
+                "block {child} does not immediately follow parent {parent}"
+            ),
             Self::TimestampNotAfterParent { parent, child } => write!(
                 f,
                 "block timestamp {child} is not greater than parent timestamp {parent}"
@@ -762,13 +824,13 @@ impl fmt::Display for BlockValidationError {
                 write!(f, "gas limit {gas_limit} is below the minimum {min}")
             }
             Self::BaseFeeTransitionUnavailable => {
-                f.write_str("the next base fee could not be calculated")
+                write!(f, "the next base fee could not be calculated")
             }
             Self::BaseFeeMismatch { header, expected } => {
                 write!(f, "header base fee is {header}, expected {expected}")
             }
             Self::ExcessBlobGasTransitionUnavailable => {
-                f.write_str("the next excess blob gas could not be calculated")
+                write!(f, "the next excess blob gas could not be calculated")
             }
             Self::ExcessBlobGasMismatch { header, expected } => {
                 write!(f, "header excess blob gas is {header}, expected {expected}")
@@ -785,13 +847,49 @@ impl fmt::Display for BlockValidationError {
                 f,
                 "withdrawals root is {header:#x}, but the body derives {computed:#x}"
             ),
-            Self::BlobGasUsedMismatch { header, computed } => {
-                write!(
-                    f,
-                    "blob gas used is {header}, but the body derives {computed}"
-                )
-            }
-            Self::ArithmeticOverflow => f.write_str("block validation arithmetic overflowed"),
+            Self::BlobGasUsedMismatch { header, computed } => write!(
+                f,
+                "blob gas used is {header}, but the body derives {computed}"
+            ),
+            Self::TransactionLengthOverflow {
+                transaction_index,
+                source,
+            } => write!(f, "transaction {transaction_index}: {source}"),
+            Self::TransactionItemLengthOverflow {
+                transaction_index,
+                envelope_length,
+            } => write!(
+                f,
+                "transaction {transaction_index}: block RLP wrapper overflows envelope length {envelope_length}"
+            ),
+            Self::TransactionsLengthOverflow { transaction_index } => write!(
+                f,
+                "transaction {transaction_index}: transaction-list payload length exceeds usize"
+            ),
+            Self::WithdrawalsLengthOverflow { withdrawal_index } => write!(
+                f,
+                "withdrawal {withdrawal_index}: withdrawal-list encoded length exceeds usize"
+            ),
+            Self::BlockRlpLengthOverflow {
+                header_length,
+                transactions_payload_length,
+                withdrawals_length,
+            } => write!(
+                f,
+                "block RLP length exceeds usize: header {header_length}, transaction-list payload {transactions_payload_length}, withdrawals {withdrawals_length}"
+            ),
+            Self::BlobCountOverflow {
+                transaction_index,
+                accumulated,
+                additional,
+            } => write!(
+                f,
+                "transaction {transaction_index}: adding {additional} blobs to {accumulated} exceeds u64"
+            ),
+            Self::BlobGasOverflow { blob_count } => write!(
+                f,
+                "body blob gas exceeds u64: {blob_count} blobs at {DATA_GAS_PER_BLOB} gas each"
+            ),
             Self::BlockTooLarge { rlp_length, max } => write!(
                 f,
                 "block RLP is at least {rlp_length} bytes, exceeding the maximum {max}"
@@ -800,4 +898,11 @@ impl fmt::Display for BlockValidationError {
     }
 }
 
-impl core::error::Error for BlockValidationError {}
+impl core::error::Error for BlockValidationError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::TransactionLengthOverflow { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}

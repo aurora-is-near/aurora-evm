@@ -47,7 +47,7 @@ fn eest_body_lengths_and_roots_match_every_positive_block() {
                 for tx in decoded.transactions() {
                     assert_eq!(
                         tx.encoded_2718_length(),
-                        Some(tx.encoded_2718().len()),
+                        Ok(tx.encoded_2718().len()),
                         "{name}"
                     );
 

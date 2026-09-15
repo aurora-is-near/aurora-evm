@@ -2,10 +2,11 @@
 //! The baseline preserves the pre-optimization metrics flow; it deliberately uses triehash.
 
 use super::super::{
-    BlockBody, BlockValidationError, BodyMetrics, DATA_GAS_PER_BLOB, Header, SignedTxEnvelope,
-    Spec, TxType, calculate_block_rlp_length, calculate_body_metrics, rlp_container_length,
+    BlockBody, BlockValidationError, BodyMetrics, Header, SignedTxEnvelope, Spec, TxType,
+    add_blob_count, calculate_blob_gas_used, calculate_block_rlp_length, calculate_body_metrics,
     validate_block_size,
 };
+use crate::rlp_strict::list_length;
 use crate::withdrawal::Withdrawal;
 use primitive_types::{H160, H256};
 
@@ -27,22 +28,24 @@ fn baseline_metrics(
     let (withdrawal_values, withdrawals_length) = match body.withdrawals() {
         Some(withdrawals) => {
             let mut payload_length: usize = 0;
+            let mut withdrawals_length = 1;
             let mut values = Vec::with_capacity(withdrawals.len());
-            for withdrawal in withdrawals {
+            for (withdrawal_index, withdrawal) in withdrawals.iter().enumerate() {
                 let value = rlp::encode(withdrawal);
                 payload_length = payload_length
                     .checked_add(value.len())
-                    .ok_or(BlockValidationError::ArithmeticOverflow)?;
+                    .ok_or(BlockValidationError::WithdrawalsLengthOverflow { withdrawal_index })?;
+                withdrawals_length = list_length(payload_length)
+                    .ok_or(BlockValidationError::WithdrawalsLengthOverflow { withdrawal_index })?;
 
                 if active_spec >= Spec::Osaka {
-                    let withdrawals_length = rlp_container_length(payload_length)?;
                     let rlp_length =
                         calculate_block_rlp_length(header_length, 0, withdrawals_length)?;
                     validate_block_size(rlp_length, active_spec)?;
                 }
                 values.push(value);
             }
-            (Some(values), rlp_container_length(payload_length)?)
+            (Some(values), withdrawals_length)
         }
         None => (None, 0),
     };
@@ -53,23 +56,28 @@ fn baseline_metrics(
     // The count is already backed by the materialized body, so exact reservation avoids leaking
     // growth allocations in a bump-allocated guest. Values reach `triehash` only after EIP-7934.
     let mut transaction_values = Vec::with_capacity(body.transactions.len());
-    for transaction in &body.transactions {
+    for (transaction_index, transaction) in body.transactions.iter().enumerate() {
         let envelope = transaction.encode_2718_in(&mut scratch);
         let block_item_length = if transaction.tx_type() == TxType::Legacy {
             envelope.len()
         } else {
-            rlp_container_length(envelope.len())?
+            list_length(envelope.len()).ok_or(
+                BlockValidationError::TransactionItemLengthOverflow {
+                    transaction_index,
+                    envelope_length: envelope.len(),
+                },
+            )?
         };
         transactions_payload_length = transactions_payload_length
             .checked_add(block_item_length)
-            .ok_or(BlockValidationError::ArithmeticOverflow)?;
+            .ok_or(BlockValidationError::TransactionsLengthOverflow { transaction_index })?;
 
         if let SignedTxEnvelope::Eip4844(transaction) = transaction {
-            let count =
-                u64::try_from(transaction.tx.blob_versioned_hashes.len()).unwrap_or(u64::MAX);
-            blob_count = blob_count
-                .checked_add(count)
-                .ok_or(BlockValidationError::ArithmeticOverflow)?;
+            blob_count = add_blob_count(
+                blob_count,
+                transaction.tx.blob_versioned_hashes.len(),
+                transaction_index,
+            )?;
         }
         if active_spec >= Spec::Osaka {
             let rlp_length = calculate_block_rlp_length(
@@ -87,12 +95,10 @@ fn baseline_metrics(
         transactions_payload_length,
         withdrawals_length,
     )?;
+    let blob_gas_used = calculate_blob_gas_used(blob_count)?;
 
     let transactions_root = ordered_trie_root(transaction_values);
     let withdrawals_root = withdrawal_values.map(ordered_trie_root);
-    let blob_gas_used = blob_count
-        .checked_mul(DATA_GAS_PER_BLOB)
-        .ok_or(BlockValidationError::ArithmeticOverflow)?;
 
     Ok(BodyMetrics {
         transactions_root,

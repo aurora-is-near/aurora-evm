@@ -13,6 +13,7 @@
 //!
 //! [`list_length`], [`bytes_length`], and [`integer_length`] measure canonical encodings without
 //! allocating or copying payloads. These size calculations do not validate encoded input.
+//! [`list_length`] returns `None` if adding the prefix overflows `usize`; callers supply the context.
 
 use primitive_types::U256;
 
@@ -87,9 +88,10 @@ fn length_prefix_length(payload: usize) -> usize {
 }
 
 /// Length of an RLP list (also a string longer than one byte).
+///
+/// Returns `None` if adding the prefix overflows `usize`.
 #[inline]
 pub fn list_length(payload: usize) -> Option<usize> {
-    // An arbitrary aggregate length is not bounded by a single live allocation.
     payload.checked_add(length_prefix_length(payload))
 }
 
@@ -303,11 +305,13 @@ mod tests {
                 assert_eq!(bytes_length(&bytes), rlp::encode(&bytes).len());
             }
         }
-        assert_eq!(list_length(usize::MAX), None);
-        assert_eq!(list_length(usize::MAX - size_of::<usize>()), None);
+        // Exactly representable: the payload plus its widest prefix lands on `usize::MAX`.
         assert_eq!(
             list_length(usize::MAX - size_of::<usize>() - 1),
             Some(usize::MAX)
         );
+        // One byte more must fail instead of wrapping or losing the overflow in a sentinel.
+        assert_eq!(list_length(usize::MAX - size_of::<usize>()), None);
+        assert_eq!(list_length(usize::MAX), None);
     }
 }

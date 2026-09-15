@@ -4,7 +4,8 @@ mod bench;
 mod corpus;
 
 use super::{
-    BlockValidationError, MAX_RLP_BLOCK_SIZE, MAXIMUM_GAS_LIMIT, calculate_body_metrics,
+    BlockValidationError, MAX_RLP_BLOCK_SIZE, MAXIMUM_GAS_LIMIT, add_blob_count,
+    calculate_blob_gas_used, calculate_block_rlp_length, calculate_body_metrics,
     validate_block_consensus, validate_block_size, validate_shanghai_withdrawals,
 };
 use crate::block::codec::tests::vectors;
@@ -620,5 +621,110 @@ fn eip7934_limit_is_inclusive_and_osaka_only() {
     assert_eq!(
         validate_block_size(MAX_RLP_BLOCK_SIZE + 1, Spec::Prague),
         Ok(())
+    );
+}
+
+#[test]
+fn block_size_check_has_no_overflow_sentinel() {
+    // Representability is checked by the length pass; this function only applies EIP-7934.
+    assert_eq!(validate_block_size(usize::MAX, Spec::Prague), Ok(()));
+    assert_eq!(
+        validate_block_size(usize::MAX, Spec::Osaka),
+        Err(BlockValidationError::BlockTooLarge {
+            rlp_length: usize::MAX,
+            max: MAX_RLP_BLOCK_SIZE,
+        }),
+    );
+}
+
+#[test]
+fn block_length_overflow_preserves_component_lengths() {
+    // Cover the transaction-list prefix, each payload addition, and the outer list prefix.
+    for (header_length, transactions_payload_length, withdrawals_length) in [
+        (0, usize::MAX, 0),
+        (usize::MAX, 0, 0),
+        (usize::MAX - 1, 0, 0),
+        (0, 0, usize::MAX),
+        (usize::MAX - 2, 0, 0),
+    ] {
+        assert_eq!(
+            calculate_block_rlp_length(
+                header_length,
+                transactions_payload_length,
+                withdrawals_length,
+            ),
+            Err(BlockValidationError::BlockRlpLengthOverflow {
+                header_length,
+                transactions_payload_length,
+                withdrawals_length,
+            }),
+        );
+    }
+    let header_length = usize::MAX - size_of::<usize>() - 3;
+    assert_eq!(
+        calculate_block_rlp_length(header_length, 0, 0),
+        Ok(usize::MAX)
+    );
+    assert!(calculate_block_rlp_length(header_length + 1, 0, 0).is_err());
+}
+
+#[test]
+fn blob_count_overflow_preserves_transaction_index() {
+    assert_eq!(add_blob_count(0, 0, 17), Ok(0));
+    assert_eq!(add_blob_count(u64::MAX - 1, 1, 17), Ok(u64::MAX));
+    assert_eq!(
+        add_blob_count(u64::MAX, 1, 17),
+        Err(BlockValidationError::BlobCountOverflow {
+            transaction_index: 17,
+            accumulated: u64::MAX,
+            additional: 1,
+        }),
+    );
+}
+
+#[test]
+fn blob_gas_overflow_is_distinct_from_header_mismatch() {
+    let max_count = u64::MAX / DATA_GAS_PER_BLOB;
+    assert_eq!(calculate_blob_gas_used(0), Ok(0));
+    assert_eq!(
+        calculate_blob_gas_used(max_count),
+        Ok(max_count * DATA_GAS_PER_BLOB)
+    );
+    assert_eq!(
+        calculate_blob_gas_used(max_count + 1),
+        Err(BlockValidationError::BlobGasOverflow {
+            blob_count: max_count + 1
+        }),
+    );
+}
+
+#[test]
+fn transaction_length_error_preserves_source_and_index() {
+    use crate::transaction::types::TxLengthError;
+    use core::error::Error;
+
+    for source in [
+        TxLengthError::AccessList,
+        TxLengthError::AuthorizationList,
+        TxLengthError::BlobHashes,
+        TxLengthError::Payload,
+        TxLengthError::Envelope,
+    ] {
+        let error = BlockValidationError::TransactionLengthOverflow {
+            transaction_index: 17,
+            source,
+        };
+        assert_eq!(error.to_string(), format!("transaction 17: {source}"));
+        assert_eq!(
+            error.source().unwrap().downcast_ref::<TxLengthError>(),
+            Some(&source)
+        );
+    }
+    assert!(
+        BlockValidationError::BlobGasOverflow {
+            blob_count: u64::MAX
+        }
+        .source()
+        .is_none()
     );
 }

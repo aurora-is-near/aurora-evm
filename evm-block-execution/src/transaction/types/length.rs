@@ -1,27 +1,61 @@
 //! Allocation-free EIP-2718 length calculation for the pre-hashing block-size check.
 //!
-//! Fixed scalar groups have bounded lengths and use plain addition; dynamic aggregates use
-//! checked arithmetic because individual allocation bounds do not bound their encoded sum.
+//! Fixed scalar groups use bounded arithmetic. Aggregate lengths are checked; failures identify
+//! the transaction component whose length cannot fit `usize`.
 
 use super::SignedTxEnvelope;
 use crate::rlp_strict::{bytes_length, integer_length, list_length};
 use crate::transaction::{AccessList, SignedAuthorization, TxKind, TxSignature};
 use primitive_types::U256;
 
+/// The transaction component whose encoded length cannot fit `usize`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxLengthError {
+    /// The access list, including nested storage-key lists.
+    AccessList,
+    /// The EIP-7702 authorization list.
+    AuthorizationList,
+    /// The EIP-4844 blob hash list.
+    BlobHashes,
+    /// The sum of the transaction's encoded fields.
+    Payload,
+    /// The payload with its list prefix and optional EIP-2718 type byte.
+    Envelope,
+}
+
+impl core::fmt::Display for TxLengthError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let component = match self {
+            Self::AccessList => "access list",
+            Self::AuthorizationList => "authorization list",
+            Self::BlobHashes => "blob hash list",
+            Self::Payload => "transaction payload",
+            Self::Envelope => "transaction envelope",
+        };
+        write!(f, "{component} encoded length exceeds usize")
+    }
+}
+
+impl core::error::Error for TxLengthError {}
+
+/// Length of the typed transaction's parity and signature scalars.
 fn signature_length(signature: &TxSignature) -> usize {
     1 + integer_length(signature.r) + integer_length(signature.s)
 }
 
+/// Length of the access list and its nested storage-key lists.
 fn access_list_length(list: &AccessList) -> Option<usize> {
     let payload = list.iter().try_fold(0_usize, |total, item| {
         let keys = list_length(item.storage_keys.len().checked_mul(33)?)?;
-        total.checked_add(list_length(21_usize.checked_add(keys)?)?)
+        let item = list_length(21_usize.checked_add(keys)?)?;
+        total.checked_add(item)
     })?;
     list_length(payload)
 }
 
+/// Length of the EIP-7702 authorization list.
 fn authorization_list_length(list: &[SignedAuthorization]) -> Option<usize> {
-    let payload = list.iter().try_fold(0usize, |total, auth| {
+    let payload = list.iter().try_fold(0_usize, |total, auth| {
         let fields = integer_length(auth.chain_id)
             + 21
             + integer_length(auth.nonce.into())
@@ -33,48 +67,62 @@ fn authorization_list_length(list: &[SignedAuthorization]) -> Option<usize> {
     list_length(payload)
 }
 
-fn base_length(nonce: U256, gas_limit: u64, to: TxKind, value: U256, data: &[u8]) -> Option<usize> {
+/// Length of the common scalar fields and the single data slice.
+fn base_length(nonce: U256, gas_limit: u64, to: TxKind, value: U256, data: &[u8]) -> usize {
     let fixed = integer_length(nonce)
         + integer_length(gas_limit.into())
         + if to.is_create() { 1 } else { 21 }
         + integer_length(value);
-    fixed.checked_add(bytes_length(data))
+    // The slice is bounded by isize::MAX; fixed fields and its prefix fit usize.
+    fixed + bytes_length(data)
 }
 
 impl SignedTxEnvelope {
-    /// Computes the consensus envelope length without encoding or visiting payload bytes.
-    /// Returns `None` if the aggregate encoded length cannot fit in `usize`.
-    pub(crate) fn encoded_2718_length(&self) -> Option<usize> {
+    /// Computes the consensus envelope length without encoding or scanning payload bytes.
+    ///
+    /// # Errors
+    /// Returns the component whose encoded length cannot fit `usize`.
+    pub(crate) fn encoded_2718_length(&self) -> Result<usize, TxLengthError> {
         let payload = match self {
             Self::Legacy(signed) => {
                 let tx = &signed.tx;
-                base_length(tx.nonce, tx.gas_limit, tx.to, tx.value, &tx.data)?.checked_add(
-                    integer_length(tx.gas_price)
-                        + integer_length(signed.v().into())
-                        + integer_length(signed.signature.r)
-                        + integer_length(signed.signature.s),
-                )?
+                base_length(tx.nonce, tx.gas_limit, tx.to, tx.value, &tx.data)
+                    .checked_add(
+                        integer_length(tx.gas_price)
+                            + integer_length(signed.v().into())
+                            + integer_length(signed.signature.r)
+                            + integer_length(signed.signature.s),
+                    )
+                    .ok_or(TxLengthError::Payload)?
             }
             Self::Eip2930(signed) => {
                 let tx = &signed.tx;
-                base_length(tx.nonce, tx.gas_limit, tx.to, tx.value, &tx.data)?
+                base_length(tx.nonce, tx.gas_limit, tx.to, tx.value, &tx.data)
                     .checked_add(
                         integer_length(tx.chain_id.into())
                             + integer_length(tx.gas_price)
                             + signature_length(&signed.signature),
-                    )?
-                    .checked_add(access_list_length(&tx.access_list)?)?
+                    )
+                    .ok_or(TxLengthError::Payload)?
+                    .checked_add(
+                        access_list_length(&tx.access_list).ok_or(TxLengthError::AccessList)?,
+                    )
+                    .ok_or(TxLengthError::Payload)?
             }
             Self::Eip1559(signed) => {
                 let tx = &signed.tx;
-                base_length(tx.nonce, tx.gas_limit, tx.to, tx.value, &tx.data)?
+                base_length(tx.nonce, tx.gas_limit, tx.to, tx.value, &tx.data)
                     .checked_add(
                         integer_length(tx.chain_id.into())
                             + integer_length(tx.max_priority_fee_per_gas)
                             + integer_length(tx.max_fee_per_gas)
                             + signature_length(&signed.signature),
-                    )?
-                    .checked_add(access_list_length(&tx.access_list)?)?
+                    )
+                    .ok_or(TxLengthError::Payload)?
+                    .checked_add(
+                        access_list_length(&tx.access_list).ok_or(TxLengthError::AccessList)?,
+                    )
+                    .ok_or(TxLengthError::Payload)?
             }
             Self::Eip4844(signed) => {
                 let tx = &signed.tx;
@@ -84,18 +132,25 @@ impl SignedTxEnvelope {
                     TxKind::Call(tx.to),
                     tx.value,
                     &tx.data,
-                )?
+                )
                 .checked_add(
                     integer_length(tx.chain_id.into())
                         + integer_length(tx.max_priority_fee_per_gas)
                         + integer_length(tx.max_fee_per_gas)
                         + integer_length(tx.max_fee_per_blob_gas.into())
                         + signature_length(&signed.signature),
-                )?
-                .checked_add(access_list_length(&tx.access_list)?)?
-                .checked_add(list_length(
-                    tx.blob_versioned_hashes.len().checked_mul(33)?,
-                )?)?
+                )
+                .ok_or(TxLengthError::Payload)?
+                .checked_add(access_list_length(&tx.access_list).ok_or(TxLengthError::AccessList)?)
+                .ok_or(TxLengthError::Payload)?
+                .checked_add(
+                    tx.blob_versioned_hashes
+                        .len()
+                        .checked_mul(33)
+                        .and_then(list_length)
+                        .ok_or(TxLengthError::BlobHashes)?,
+                )
+                .ok_or(TxLengthError::Payload)?
             }
             Self::Eip7702(signed) => {
                 let tx = &signed.tx;
@@ -105,18 +160,26 @@ impl SignedTxEnvelope {
                     TxKind::Call(tx.to),
                     tx.value,
                     &tx.data,
-                )?
+                )
                 .checked_add(
                     integer_length(tx.chain_id.into())
                         + integer_length(tx.max_priority_fee_per_gas)
                         + integer_length(tx.max_fee_per_gas)
                         + signature_length(&signed.signature),
-                )?
-                .checked_add(access_list_length(&tx.access_list)?)?
-                .checked_add(authorization_list_length(&tx.authorization_list)?)?
+                )
+                .ok_or(TxLengthError::Payload)?
+                .checked_add(access_list_length(&tx.access_list).ok_or(TxLengthError::AccessList)?)
+                .ok_or(TxLengthError::Payload)?
+                .checked_add(
+                    authorization_list_length(&tx.authorization_list)
+                        .ok_or(TxLengthError::AuthorizationList)?,
+                )
+                .ok_or(TxLengthError::Payload)?
             }
         };
-        list_length(payload)?.checked_add(usize::from(!matches!(self, Self::Legacy(_))))
+        list_length(payload)
+            .and_then(|length| length.checked_add(usize::from(!matches!(self, Self::Legacy(_)))))
+            .ok_or(TxLengthError::Envelope)
     }
 }
 
@@ -129,7 +192,7 @@ mod tests {
     fn check(tx: &SignedTxEnvelope) {
         assert_eq!(
             tx.encoded_2718_length(),
-            Some(tx.encoded_2718().len()),
+            Ok(tx.encoded_2718().len()),
             "{:?}",
             tx.tx_type()
         );
@@ -149,7 +212,7 @@ mod tests {
                 let tx = SignedTxEnvelope::decode_2718(&raw).unwrap();
                 assert_eq!(
                     tx.encoded_2718_length(),
-                    Some(raw.len()),
+                    Ok(raw.len()),
                     "{}",
                     case["source"]
                 );
