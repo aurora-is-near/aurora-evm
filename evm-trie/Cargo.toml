@@ -1,0 +1,26 @@
+[package]
+name = "aurora-evm-trie"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+description = "Streaming Ethereum ordered Merkle-Patricia trie roots"
+repository.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rlp = { workspace = true, features = ["std"] }
+sha3.workspace = true
+tiny-keccak = { workspace = true, optional = true }
+
+[features]
+default = []
+# zkEVM guests may patch tiny-keccak with their VM's accelerated implementation.
+tiny-keccak = ["dep:tiny-keccak"]
+
+[dev-dependencies]
+hash-db.workspace = true
+plain_hasher.workspace = true
+triehash.workspace = true

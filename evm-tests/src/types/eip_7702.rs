@@ -1,8 +1,8 @@
 //! EIP-7702 - Prague hard fork
 #![allow(clippy::missing_errors_doc)]
 
-use aurora_engine_precompiles::secp256k1::ecrecover;
 use aurora_engine_precompiles::ExitError;
+use aurora_engine_precompiles::secp256k1::ecrecover;
 use primitive_types::{H160, H256, U256};
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};

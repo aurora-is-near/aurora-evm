@@ -1,0 +1,175 @@
+name: Trie benchmark harness
+
+on:
+  # Compile the harness when its path dependencies change; gate expensive runs below.
+  push:
+    branches: [ master ]
+    paths:
+      - 'evm-trie/**'
+      - 'evm-trie-bench/**'
+      - 'evm/**'
+      - 'evm-block-execution/**'
+      - 'Cargo.toml'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/trie-bench.yml'
+  pull_request:
+    paths:
+      - 'evm-trie/**'
+      - 'evm-trie-bench/**'
+      - 'evm/**'
+      - 'evm-block-execution/**'
+      - 'Cargo.toml'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/trie-bench.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      benchmark: ${{ steps.diff.outputs.benchmark }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check benchmark inputs
+        id: diff
+        shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          # Manual runs explicitly request all benchmark jobs.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo 'benchmark=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$PR_HEAD_SHA" ]; then
+            base=$(git rev-parse --verify HEAD^1)
+            if [ "$(git rev-parse --verify HEAD^2)" != "$PR_HEAD_SHA" ]; then
+              echo "::error::The checked-out merge commit does not match the pull request head."
+              exit 1
+            fi
+          elif [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            base=$(git hash-object -t tree --stdin </dev/null)
+          else
+            base=${BEFORE_SHA:?Missing previous commit for push comparison}
+            git cat-file -e "$base^{commit}"
+          fi
+
+          # EVM and block-execution source edits need only harness-check. The corpus and build
+          # configuration also affect the differential tests and the guest host executable.
+          paths=(evm-trie evm-trie-bench evm/Cargo.toml evm-block-execution/Cargo.toml
+                 evm-block-execution/testdata/ordered-roots.json Cargo.toml rust-toolchain.toml
+                 .github/workflows/trie-bench.yml)
+          if git diff --quiet "$base" HEAD -- "${paths[@]}"; then
+            changed=false
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then
+              echo "::error::Cannot compare benchmark inputs (git diff exited $status)."
+              exit "$status"
+            fi
+            changed=true
+          fi
+          echo "::group::Benchmark changes against ${base:0:7}"
+          git diff --stat "$base" HEAD -- "${paths[@]}"
+          echo "::endgroup::"
+          echo "benchmark=$changed" | tee -a "$GITHUB_OUTPUT"
+
+  harness-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evm-trie-bench
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check formatting of the harness and the guest
+        run: |
+          cargo fmt --all -- --check
+          cargo fmt --all --manifest-path guest/Cargo.toml -- --check
+
+      - name: Clippy with every feature
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  harness-differential:
+    needs: benchmark-changes
+    if: ${{ needs.benchmark-changes.outputs.benchmark == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: [corpus, 'corpus,tiny']
+    defaults:
+      run:
+        working-directory: evm-trie-bench
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Cross-check the three builders on the pinned corpus
+        run: cargo test --locked --release --features '${{ matrix.features }}' --test pinned_corpus
+
+      - name: Check allocation invariants on synthetic sizes
+        if: matrix.features == 'corpus,tiny'
+        run: cargo run --locked --release --features tiny,allocations --bin bench
+
+  guest:
+    needs: benchmark-changes
+    if: ${{ needs.benchmark-changes.outputs.benchmark == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install the RISC Zero toolchain
+        run: |
+          # Verify the published rzup source archive before unpacking or building it.
+          archive="$RUNNER_TEMP/rzup-0.5.2.crate"
+          curl --fail --location --silent --show-error \
+            https://static.crates.io/crates/rzup/rzup-0.5.2.crate -o "$archive"
+          echo "96909a7ea8fdf7e18da727d7facbc43eea8a4f77635e7ec75a69794dede16fb6  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          cargo install --locked --path "$RUNNER_TEMP/rzup-0.5.2" \
+            --no-default-features --features cli,install --root "$HOME/.risc0"
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          "$HOME/.risc0/bin/rzup" install rust 1.91.1
+          "$HOME/.risc0/bin/rzup" install r0vm 3.0.4
+
+      - name: Build the software and accelerated guests
+        working-directory: evm-trie-bench/guest
+        run: |
+          cargo build --release
+          cargo build --release --features tiny --target-dir target/tiny
+
+      - name: Execute the guests
+        working-directory: evm-trie-bench
+        run: |
+          cargo run --release --features guest-host --bin guest-host -- \
+            guest/target/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
+          cargo run --release --features guest-host,tiny --bin guest-host -- \
+            guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
+
+      - name: Check RV32 index boundaries and the heap tier
+        working-directory: evm-trie-bench
+        run: |
+          cargo run --release --features guest-host --bin guest-host -- \
+            guest/target/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest --boundary 2 127 128 129 255 256 257 4096 65535 65536 65537
+          cargo run --release --features guest-host,tiny --bin guest-host -- \
+            guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest --boundary 2 127 128 129 255 256 257 4096 65535 65536 65537
