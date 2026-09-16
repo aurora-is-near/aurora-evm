@@ -238,6 +238,7 @@ mod tests {
         let lengths: Vec<_> = expected.iter().map(Vec::len).collect();
         assert!(lengths.windows(2).any(|pair| pair[0] > pair[1]));
         assert!(lengths.windows(2).any(|pair| pair[0] < pair[1]));
+
         let mut scratch = rlp::RlpStream::new();
 
         for (receipt, expected) in receipts.iter().zip(&expected) {
@@ -246,6 +247,11 @@ mod tests {
         for (receipt, expected) in receipts.iter().zip(&expected).rev() {
             assert_eq!(receipt.encode_2718_in(&mut scratch), expected);
         }
+
+        assert_eq!(
+            crate::trie::receipts_root(&receipts),
+            ordered_trie_root(&expected)
+        );
     }
 
     #[test]

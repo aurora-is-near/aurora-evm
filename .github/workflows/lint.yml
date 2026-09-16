@@ -31,6 +31,8 @@ jobs:
         run: cargo clippy --features tracing,create-fixed,with-serde
       - name: Clippy with features for aurora-evm-jsontests
         run: cargo clippy -p aurora-evm-jsontests --features dump-state
+      - name: Clippy for aurora-evm-trie
+        run: cargo clippy -p aurora-evm-trie --all-features --all-targets
 
   build:
     runs-on: ubuntu-latest

@@ -67,11 +67,15 @@ from complete lists and are therefore always available as pure functions.
 
 ## Getting started
 
-To get started, add the following dependency to your `Cargo.toml`:
+This crate is not published on crates.io. Use a checkout of this repository
+containing `evm-block-execution` and add a path dependency to your `Cargo.toml`:
 
-```toml 
+```toml
 [dependencies]
-aurora-evm-block-execution = "3.0"
+aurora-evm-block-execution = { path = "../aurora-evm/evm-block-execution" }
 ```
+
+Adjust the path to your checkout. Keep the full repository: this crate inherits
+workspace settings and depends on the sibling `evm` and `evm-trie` crates.
 
 ## License: [MIT](../LICENSE)

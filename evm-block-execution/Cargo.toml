@@ -15,18 +15,19 @@ workspace = true
 
 [dependencies]
 aurora-evm = { workspace = true, features = ["with-serde"] }
+aurora-evm-trie.workspace = true
 aurora-engine-precompiles.workspace = true
 c-kzg = "2.1"
-hash-db = "0.15"
+hash-db.workspace = true
 hex-literal.workspace = true
 libsecp256k1.workspace = true
 primitive-types = { workspace = true, features = ["rlp", "serde", "std"] }
-plain_hasher = "0.2"
+plain_hasher.workspace = true
 rlp = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 sha3.workspace = true
-triehash = "0.8"
+triehash.workspace = true
 
 [dev-dependencies]
 hex = "0.4"
