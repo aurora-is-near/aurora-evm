@@ -367,7 +367,8 @@ pub(super) mod tests {
                 block
                     .transactions()
                     .iter()
-                    .map(SignedTxEnvelope::encoded_2718),
+                    .map(SignedTxEnvelope::encoded_2718)
+                    .collect::<Vec<_>>(),
             );
             assert_eq!(
                 transactions_root, block.header.transactions_root,
@@ -376,7 +377,12 @@ pub(super) mod tests {
             );
 
             let withdrawals_root = block.body.withdrawals().map(|withdrawals| {
-                ordered_trie_root(withdrawals.iter().map(|item| rlp::encode(item).to_vec()))
+                ordered_trie_root(
+                    withdrawals
+                        .iter()
+                        .map(|item| rlp::encode(item).to_vec())
+                        .collect::<Vec<_>>(),
+                )
             });
             assert_eq!(
                 withdrawals_root, block.header.withdrawals_root,

@@ -25,6 +25,32 @@ pub struct Withdrawal {
 }
 
 impl Withdrawal {
+    /// Length of the four-field RLP list; its fixed-width fields fit in a short list.
+    pub(crate) fn encoded_length(&self) -> usize {
+        use crate::rlp_strict::integer_length;
+        1 + 21
+            + integer_length(self.index.into())
+            + integer_length(self.validator_index.into())
+            + integer_length(self.amount.into())
+    }
+
+    /// Encodes into reusable scratch, rejecting an unfinished internal list before hashing.
+    ///
+    /// # Panics
+    /// Panics if the internal four-field encoder leaves its list unfinished.
+    pub(crate) fn encode_in<'s>(&self, stream: &'s mut rlp::RlpStream) -> &'s [u8] {
+        stream.clear();
+        let base = stream.as_raw().len();
+        stream.append(self);
+        // `as_raw()` bypasses the completion check in `out()`.
+        assert!(
+            stream.is_finished(),
+            "withdrawal encoding left an open list"
+        );
+
+        &stream.as_raw()[base..]
+    }
+
     /// Withdrawal amount converted from Gwei to Wei.
     #[must_use]
     pub fn amount_wei(&self) -> U256 {
@@ -61,6 +87,22 @@ mod tests {
     use super::Withdrawal;
     use hex_literal::hex;
     use primitive_types::{H160, U256};
+
+    #[test]
+    fn measured_length_and_scratch_encoding_match_the_codec() {
+        let mut scratch = rlp::RlpStream::new_with_buffer(rlp::encode(&"prefix"));
+        for value in [u64::MAX, 0, 127, 128, 255, 256, u64::MAX, 1] {
+            let withdrawal = Withdrawal {
+                index: value,
+                validator_index: value,
+                address: H160::zero(),
+                amount: value,
+            };
+            let encoded = rlp::encode(&withdrawal);
+            assert_eq!(withdrawal.encoded_length(), encoded.len());
+            assert_eq!(withdrawal.encode_in(&mut scratch), encoded.as_ref());
+        }
+    }
 
     #[test]
     fn amount_wei_conversion() {

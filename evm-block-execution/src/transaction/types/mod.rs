@@ -35,6 +35,7 @@ pub mod eip4844;
 pub mod eip7702;
 pub mod envelope;
 pub mod legacy;
+mod length;
 
 pub use codec::TxDecodeError;
 pub use eip1559::{SignedTxEip1559, TxEip1559};
@@ -43,3 +44,4 @@ pub use eip4844::{SignedTxEip4844, TxEip4844};
 pub use eip7702::{SignedTxEip7702, TxEip7702};
 pub use envelope::SignedTxEnvelope;
 pub use legacy::{SignedTxLegacy, TxLegacy};
+pub use length::TxLengthError;
