@@ -1,22 +1,25 @@
 name: Trie benchmark harness
 
 on:
+  # Compile the harness when its path dependencies change; gate expensive runs below.
   push:
     branches: [ master ]
     paths:
       - 'evm-trie/**'
       - 'evm-trie-bench/**'
-      - 'evm-block-execution/**'
       - 'evm/**'
+      - 'evm-block-execution/**'
       - 'Cargo.toml'
+      - 'rust-toolchain.toml'
       - '.github/workflows/trie-bench.yml'
   pull_request:
     paths:
       - 'evm-trie/**'
       - 'evm-trie-bench/**'
-      - 'evm-block-execution/**'
       - 'evm/**'
+      - 'evm-block-execution/**'
       - 'Cargo.toml'
+      - 'rust-toolchain.toml'
       - '.github/workflows/trie-bench.yml'
   workflow_dispatch:
 
@@ -27,6 +30,62 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  benchmark-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      benchmark: ${{ steps.diff.outputs.benchmark }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check benchmark inputs
+        id: diff
+        shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          # Manual runs explicitly request all benchmark jobs.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo 'benchmark=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$PR_HEAD_SHA" ]; then
+            base=$(git rev-parse --verify HEAD^1)
+            if [ "$(git rev-parse --verify HEAD^2)" != "$PR_HEAD_SHA" ]; then
+              echo "::error::The checked-out merge commit does not match the pull request head."
+              exit 1
+            fi
+          elif [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            base=$(git hash-object -t tree --stdin </dev/null)
+          else
+            base=${BEFORE_SHA:?Missing previous commit for push comparison}
+            git cat-file -e "$base^{commit}"
+          fi
+
+          # EVM and block-execution source edits need only harness-check. The corpus and build
+          # configuration also affect the differential tests and the guest host executable.
+          paths=(evm-trie evm-trie-bench evm/Cargo.toml evm-block-execution/Cargo.toml
+                 evm-block-execution/testdata/ordered-roots.json Cargo.toml rust-toolchain.toml
+                 .github/workflows/trie-bench.yml)
+          if git diff --quiet "$base" HEAD -- "${paths[@]}"; then
+            changed=false
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then
+              echo "::error::Cannot compare benchmark inputs (git diff exited $status)."
+              exit "$status"
+            fi
+            changed=true
+          fi
+          echo "::group::Benchmark changes against ${base:0:7}"
+          git diff --stat "$base" HEAD -- "${paths[@]}"
+          echo "::endgroup::"
+          echo "benchmark=$changed" | tee -a "$GITHUB_OUTPUT"
+
   harness-check:
     runs-on: ubuntu-latest
     defaults:
@@ -47,6 +106,8 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   harness-differential:
+    needs: benchmark-changes
+    if: ${{ needs.benchmark-changes.outputs.benchmark == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -68,6 +129,8 @@ jobs:
         run: cargo run --locked --release --features tiny,allocations --bin bench
 
   guest:
+    needs: benchmark-changes
+    if: ${{ needs.benchmark-changes.outputs.benchmark == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
