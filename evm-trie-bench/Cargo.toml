@@ -27,6 +27,7 @@ risc0-zkos-v1compat = { version = "=2.2.3", optional = true }
 default = ["corpus"]
 corpus = ["dep:serde_json", "dep:aurora-evm-block-execution"]
 allocations = []
+sparse = ["aurora-evm-trie/test-utils"]
 tiny = ["dep:tiny-keccak", "alloy-primitives/tiny-keccak", "aurora-evm-trie/tiny-keccak"]
 guest-host = ["dep:risc0-zkvm", "dep:risc0-binfmt", "dep:risc0-zkos-v1compat"]
 
@@ -37,6 +38,10 @@ required-features = ["corpus"]
 [[bin]]
 name = "bench"
 required-features = ["corpus"]
+
+[[bin]]
+name = "sparse"
+required-features = ["sparse"]
 
 [[bin]]
 name = "guest-host"

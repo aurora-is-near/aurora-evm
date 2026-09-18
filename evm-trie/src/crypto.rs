@@ -48,3 +48,11 @@ impl TrieHasher {
         result
     }
 }
+
+/// One-shot Keccak-256 through the configured backend.
+#[inline]
+pub fn keccak256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = TrieHasher::new();
+    hasher.update(bytes);
+    hasher.finalize_reset()
+}

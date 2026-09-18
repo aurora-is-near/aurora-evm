@@ -4,8 +4,10 @@
 
 The protocol rules come from the [Ethereum Yellow Paper](https://ethereum.github.io/yellowpaper/paper.pdf):
 Appendix B defines RLP, Appendix C defines hex-prefix encoding, and Appendix D
-defines recursive Merkle-Patricia construction and child references. This builder
-specializes those rules for dense keys `RLP(index)`, where `index` is in `0..len`.
+defines recursive Merkle-Patricia construction and child references. The ordered
+builder specializes those rules for dense keys `RLP(index)`, where `index` is in
+`0..len`. The read-only sparse lookup below follows the same node format for
+arbitrary byte paths, including prehashed state and storage keys.
 
 [Alloy 0.9.5's ordered-root implementation](https://docs.rs/alloy-trie/0.9.5/src/alloy_trie/root.rs.html)
 is a related reference: `adjust_index_for_rlp` gives the same key order, and
@@ -73,3 +75,71 @@ state. Scratch growth depends on native index width, not total value bytes.
 The encoder's additional memory depends on its largest encoded item and list
 nesting. `build_branch` stays out of line so the single-leaf path avoids its
 large scratch stack frame.
+
+## Sparse witness lookups
+
+`sparse::NodeStore` reads a partially revealed MPT; it does not construct or update
+state roots. Node encoding follows Yellow Paper Appendices B–D. The proof model
+is also described in [EIP-1186](https://eips.ethereum.org/EIPS/eip-1186): RLP nodes
+are authenticated against a separately trusted root. This module consumes nodes,
+not the RPC response format or decoded account/storage values.
+
+### Traversal and proof outcomes
+
+1. Construction hashes each supplied RLP blob, validates its encoding, and stores
+   compact field offsets beside the original bytes in a sorted vector. Duplicate
+   hashes retain one entry. Decoding errors are stored and reported only if lookup
+   reaches that node; unused malformed blobs do not invalidate a proof.
+2. Lookup takes a trusted root and a byte path. Secure-trie callers hash the
+   address or storage key first; `get` does not hash keys. The canonical empty
+   root proves absence without requiring a node.
+3. A branch consumes one nibble and selects a child, or returns its value when
+   the key ends. An empty child or value proves absence.
+4. An extension consumes its matching hex-prefix path; a mismatch proves absence.
+   A leaf returns its borrowed value only if the entire remaining path matches.
+5. Hash references resolve through the store; embedded children borrow their RLP
+   directly from the parent. Canonical MPT children are embedded only when their
+   entire RLP is shorter than 32 bytes; roots are always addressed by hash.
+6. A required but unrevealed hash returns `BlindedNode`, not absence. Detected
+   decoding failures return `MalformedNode`; for embedded data, the error names
+   the containing hashed node.
+
+The root must be trusted separately. Hashing supplied bytes prevents substitution
+under that root, assuming Keccak-256 collision resistance; witness lookup does
+not establish consensus validity of the root itself.
+
+The decoder checks exact RLP boundaries, minimal length encodings, node arity,
+hex-prefix flags and padding, child reference sizes, nonempty extension paths,
+and branches with at least two occupied entries. All embedded descendants are
+validated; their sub-32-byte encodings bound recursion depth. An extension must
+lead to a branch, and a hashed non-root child must encode to at least 32 bytes.
+For hashed children these two checks run when the child is followed: an
+unrevealed subtree remains valid partial-witness input, and is not required to
+prove exclusion along a different path. This validates visited structure, not
+unrevealed parts of the entire trie.
+
+### Cost and test reference
+
+For `N` supplied nodes containing `B` bytes, construction hashes and parses the
+bytes and sorts the index in `O(B + N log N)` time, retaining `O(B + N)` memory.
+It moves the supplied RLP buffers without copying them. An exact-size input such
+as `Vec<Vec<u8>>` needs one index allocation (zero for an empty input);
+`sort_unstable_by_key` and in-place deduplication allocate nothing. Iterators
+without a useful size hint may grow the index allocation.
+
+Lookups allocate no heap memory, including absence and error paths, and do not
+rehash nodes. Each hashed hop performs an `O(log N)` binary search. Cached field
+offsets select branch children directly without rescanning prior RLP headers.
+Embedded children borrow existing bytes and decode their bounded inline payload.
+Traversal is iterative, and key paths remain borrowed nibble views. The index
+has no interior mutability and supports concurrent shared reads.
+
+Sparse host benchmarks live in `evm-trie-bench` under the `sparse` feature. They
+compare construction and lookup separately with the frozen pre-refactor reader,
+check dataset roots against `triehash`, and measure allocation counts in a
+separate build. CI asserts correctness and allocation invariants on both hash
+backends; timing results are diagnostic, without unstable wall-clock thresholds.
+
+The `test-utils` feature exposes `sparse::reference::hashed_nodes`. This recursive
+builder constructs witnesses from complete maps and is checked against
+`triehash`; it is an allocating test oracle, not the production lookup algorithm.

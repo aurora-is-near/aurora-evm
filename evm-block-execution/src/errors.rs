@@ -10,7 +10,7 @@
 use crate::bloom::Bloom;
 use crate::eips::eip6110::DepositLogError;
 use crate::evm_context::InvalidEvmContext;
-use crate::witness_backend::MissingWitness;
+use crate::witness_backend::WitnessDbError;
 use aurora_evm::ExitReason;
 use core::fmt;
 use primitive_types::{H160, H256, U256};
@@ -339,17 +339,20 @@ pub enum BlockExecutionError {
         /// The predeploy address.
         address: H160,
     },
-    /// A post-execution request contract (EIP-7002 / EIP-7251) reverted or failed.
-    SystemContractCallFailed {
-        /// The predeploy address.
-        address: H160,
+    /// The EIP-7002 withdrawal-requests contract call reverted or failed.
+    WithdrawalRequestsContractCall {
+        /// How the call ended.
+        reason: ExitReason,
+    },
+    /// The EIP-7251 consolidation-requests contract call reverted or failed.
+    ConsolidationRequestsContractCall {
         /// How the call ended.
         reason: ExitReason,
     },
     /// A deposit-contract log is not a canonically encoded deposit event (EIP-6110).
-    InvalidDepositLog(DepositLogError),
+    DepositRequestDecode(DepositLogError),
     /// Execution read state the witness did not prove.
-    MissingWitness(MissingWitness),
+    MissingWitness(WitnessDbError),
     /// EVM execution ended in an unexpected (fatal) state.
     ExecutionFailed(ExitReason),
     /// Computed block gas used does not match the header.
@@ -431,12 +434,12 @@ impl From<InvalidEvmContext> for BlockExecutionError {
 
 impl From<DepositLogError> for BlockExecutionError {
     fn from(err: DepositLogError) -> Self {
-        Self::InvalidDepositLog(err)
+        Self::DepositRequestDecode(err)
     }
 }
 
-impl From<MissingWitness> for BlockExecutionError {
-    fn from(missing: MissingWitness) -> Self {
+impl From<WitnessDbError> for BlockExecutionError {
+    fn from(missing: WitnessDbError) -> Self {
         Self::MissingWitness(missing)
     }
 }
@@ -446,7 +449,7 @@ impl core::error::Error for BlockExecutionError {
         match self {
             // Preserve the underlying cause through the positional wrapper.
             Self::Transaction { source, .. } => Some(source),
-            Self::InvalidDepositLog(source) => Some(source),
+            Self::DepositRequestDecode(source) => Some(source),
             Self::MissingWitness(source) => Some(source),
             _ => None,
         }
@@ -505,10 +508,13 @@ impl fmt::Display for BlockExecutionError {
             Self::SystemContractEmpty { address } => {
                 write!(f, "system contract {address:?} has no code")
             }
-            Self::SystemContractCallFailed { address, reason } => {
-                write!(f, "system contract {address:?} call failed: {reason:?}")
+            Self::WithdrawalRequestsContractCall { reason } => {
+                write!(f, "withdrawal requests contract call failed: {reason:?}")
             }
-            Self::InvalidDepositLog(_) => write!(f, "invalid deposit contract log"),
+            Self::ConsolidationRequestsContractCall { reason } => {
+                write!(f, "consolidation requests contract call failed: {reason:?}")
+            }
+            Self::DepositRequestDecode(_) => write!(f, "invalid deposit contract log"),
             Self::MissingWitness(_) => write!(f, "execution read state the witness did not prove"),
             Self::ExecutionFailed(reason) => write!(f, "execution failed: {reason:?}"),
             Self::GasUsedMismatch { got, expected } => {
