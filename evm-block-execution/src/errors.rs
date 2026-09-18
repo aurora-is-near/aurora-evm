@@ -8,10 +8,12 @@
 //!   and adds block-level execution failures and post-execution header mismatches.
 
 use crate::bloom::Bloom;
+use crate::eips::eip6110::DepositLogError;
 use crate::evm_context::InvalidEvmContext;
+use crate::witness_backend::MissingWitness;
 use aurora_evm::ExitReason;
 use core::fmt;
-use primitive_types::{H256, U256};
+use primitive_types::{H160, H256, U256};
 
 /// Block environment inconsistent with the active hardfork.
 ///
@@ -21,6 +23,8 @@ use primitive_types::{H256, U256};
 pub enum InvalidHeader {
     /// `prevrandao` is not set for Merge and above.
     PrevrandaoNotSet,
+    /// `base_fee_per_gas` is not set for London and above.
+    BaseFeeNotSet,
     /// `excess_blob_gas` is not set for Cancun and above.
     ExcessBlobGasNotSet,
     /// `excess_blob_gas` set on a pre-Cancun block (not supported).
@@ -82,6 +86,7 @@ impl fmt::Display for InvalidHeader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PrevrandaoNotSet => write!(f, "`prevrandao` not set"),
+            Self::BaseFeeNotSet => write!(f, "`base_fee_per_gas` not set"),
             Self::ExcessBlobGasNotSet => write!(f, "`excess_blob_gas` not set"),
             Self::ExcessBlobGasNotSupported => {
                 write!(f, "`excess_blob_gas` not supported for this spec")
@@ -271,7 +276,7 @@ impl fmt::Display for InvalidTransaction {
 pub enum BlockExecutionError {
     /// Per-transaction validation failed (header / transaction checks).
     InvalidContext(InvalidEvmContext),
-    /// Transaction nonce is different from the sender account nonce.
+    /// Transaction nonce differs from the sender account nonce or is at least `u64::MAX` (EIP-2681).
     InvalidNonce {
         /// Nonce supplied by the transaction.
         tx: U256,
@@ -322,8 +327,29 @@ pub enum BlockExecutionError {
         /// Why the block is invalid.
         source: Box<Self>,
     },
-    /// A required pre/post-execution system call failed.
-    SystemCallFailed,
+    /// The header's `excess_blob_gas` yields a blob gas price that does not fit in `u128`.
+    BlobGasPriceOverflow {
+        /// The header value.
+        excess_blob_gas: u64,
+    },
+    /// A Cancun-or-later block carries no `parent_beacon_block_root` for the EIP-4788 call.
+    MissingParentBeaconBlockRoot,
+    /// A post-execution request contract (EIP-7002 / EIP-7251) has no code.
+    SystemContractEmpty {
+        /// The predeploy address.
+        address: H160,
+    },
+    /// A post-execution request contract (EIP-7002 / EIP-7251) reverted or failed.
+    SystemContractCallFailed {
+        /// The predeploy address.
+        address: H160,
+        /// How the call ended.
+        reason: ExitReason,
+    },
+    /// A deposit-contract log is not a canonically encoded deposit event (EIP-6110).
+    InvalidDepositLog(DepositLogError),
+    /// Execution read state the witness did not prove.
+    MissingWitness(MissingWitness),
     /// EVM execution ended in an unexpected (fatal) state.
     ExecutionFailed(ExitReason),
     /// Computed block gas used does not match the header.
@@ -403,11 +429,25 @@ impl From<InvalidEvmContext> for BlockExecutionError {
     }
 }
 
+impl From<DepositLogError> for BlockExecutionError {
+    fn from(err: DepositLogError) -> Self {
+        Self::InvalidDepositLog(err)
+    }
+}
+
+impl From<MissingWitness> for BlockExecutionError {
+    fn from(missing: MissingWitness) -> Self {
+        Self::MissingWitness(missing)
+    }
+}
+
 impl core::error::Error for BlockExecutionError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             // Preserve the underlying cause through the positional wrapper.
             Self::Transaction { source, .. } => Some(source),
+            Self::InvalidDepositLog(source) => Some(source),
+            Self::MissingWitness(source) => Some(source),
             _ => None,
         }
     }
@@ -452,7 +492,24 @@ impl fmt::Display for BlockExecutionError {
                     "transaction at index {index} makes the block invalid: {source}"
                 )
             }
-            Self::SystemCallFailed => write!(f, "system call failed"),
+            Self::BlobGasPriceOverflow { excess_blob_gas } => write!(
+                f,
+                "blob gas price for excess blob gas {excess_blob_gas} overflows u128"
+            ),
+            Self::MissingParentBeaconBlockRoot => {
+                write!(
+                    f,
+                    "missing parent beacon block root for the EIP-4788 system call"
+                )
+            }
+            Self::SystemContractEmpty { address } => {
+                write!(f, "system contract {address:?} has no code")
+            }
+            Self::SystemContractCallFailed { address, reason } => {
+                write!(f, "system contract {address:?} call failed: {reason:?}")
+            }
+            Self::InvalidDepositLog(_) => write!(f, "invalid deposit contract log"),
+            Self::MissingWitness(_) => write!(f, "execution read state the witness did not prove"),
             Self::ExecutionFailed(reason) => write!(f, "execution failed: {reason:?}"),
             Self::GasUsedMismatch { got, expected } => {
                 write!(f, "gas used mismatch: got {got}, expected {expected}")

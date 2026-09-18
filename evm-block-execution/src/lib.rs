@@ -1,8 +1,8 @@
 //! Ethereum block validation and execution on top of [`aurora_evm`].
 //!
 //! The crate provides consensus block and transaction types, strict RLP codecs, sender recovery,
-//! transaction validation and execution, receipts, and protocol helpers. Stateless witness
-//! execution and the remaining pre- and post-execution stages are still being assembled.
+//! consensus validation, and block execution — system calls, the transaction loop, requests and
+//! withdrawals — against state proven by an execution witness.
 
 #![forbid(unsafe_code)]
 
@@ -24,6 +24,10 @@ pub mod requests;
 mod rlp_strict;
 pub mod spec;
 mod stateless;
+pub mod system_calls;
+#[cfg(test)]
+mod test_support;
 pub mod transaction;
 pub mod trie;
 pub mod withdrawal;
+pub mod witness_backend;

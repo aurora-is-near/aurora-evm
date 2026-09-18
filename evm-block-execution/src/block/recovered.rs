@@ -11,9 +11,21 @@ use crate::block::body::BlockBody;
 use crate::block::header::Header;
 use crate::block::sealed::{SealedBlock, SealedHeader};
 use crate::transaction::{SignedTxEnvelope, TxEnv};
+use crate::withdrawal::Withdrawal;
 use core::fmt;
 use core::ops::Deref;
 use primitive_types::{H160, H256};
+
+/// A recovered block split into what execution consumes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionParts {
+    /// The sealed header.
+    pub header: SealedHeader,
+    /// Validator withdrawals, `None` before Shanghai.
+    pub withdrawals: Option<Vec<Withdrawal>>,
+    /// One execution environment per transaction, in block order.
+    pub transactions: Vec<TxEnv>,
+}
 
 /// A [`SealedBlock`] with the sender of every transaction alongside it.
 ///
@@ -159,12 +171,31 @@ impl RecoveredBlock {
     /// [`BlockRecoveryError::SenderCountMismatch`] if the lists differ in length. The explicit check
     /// prevents `zip` from silently projecting only a prefix of the block.
     pub fn into_tx_envs(self) -> Result<Vec<TxEnv>, BlockRecoveryError> {
+        Ok(self.into_execution_parts()?.transactions)
+    }
+
+    /// Consumes the block into the parts execution reads: the sealed header, the withdrawals and
+    /// one [`TxEnv`] per transaction in block order.
+    ///
+    /// # Errors
+    /// [`BlockRecoveryError::SenderCountMismatch`] if the lists differ in length. The explicit check
+    /// prevents `zip` from silently projecting only a prefix of the block.
+    pub fn into_execution_parts(self) -> Result<ExecutionParts, BlockRecoveryError> {
         check_sender_count(self.transactions(), &self.senders)?;
         let (block, senders) = self.split();
-        let transactions = block.into_block().body.transactions;
-        Ok(core::iter::zip(senders, transactions)
+        let (header, body) = block.split();
+        let BlockBody {
+            transactions,
+            withdrawals,
+        } = body;
+        let transactions = core::iter::zip(senders, transactions)
             .map(|(sender, transaction)| transaction.into_tx_env(sender))
-            .collect())
+            .collect();
+        Ok(ExecutionParts {
+            header,
+            withdrawals,
+            transactions,
+        })
     }
 }
 
