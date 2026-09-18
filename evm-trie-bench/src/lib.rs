@@ -123,3 +123,6 @@ pub fn cases() -> Vec<Case> {
     );
     cases
 }
+
+#[cfg(feature = "sparse")]
+pub mod sparse;

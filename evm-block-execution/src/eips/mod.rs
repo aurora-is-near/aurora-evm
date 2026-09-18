@@ -5,6 +5,7 @@
 
 pub mod eip1559;
 pub mod eip4844;
+pub mod eip6110;
 pub mod eip7594;
 pub mod eip7691;
 pub mod eip7825;
