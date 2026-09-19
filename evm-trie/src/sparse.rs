@@ -12,6 +12,7 @@ use crate::crypto::keccak256;
 use crate::sparse::decode::{Child, Decoded, Malformed, Node};
 
 mod decode;
+mod sort;
 #[cfg(any(test, feature = "test-utils"))]
 mod tests;
 #[cfg(feature = "test-utils")]
@@ -43,7 +44,7 @@ impl NodeStore {
                 bytes,
             })
             .collect();
-        nodes.sort_unstable_by_key(|entry| entry.hash);
+        sort::by_hash(&mut nodes);
         nodes.dedup_by_key(|entry| entry.hash);
         Self { nodes }
     }

@@ -7,3 +7,9 @@ mod lookup;
 
 #[cfg(test)]
 mod validation;
+
+#[cfg(test)]
+mod sort;
+
+#[cfg(test)]
+mod ordered;

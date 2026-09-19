@@ -93,10 +93,11 @@ fn main() {
             assert_eq!(lookup, (0, 0), "{} lookup allocated", data.name);
             let (_, old_lookup) = allocations::measure(run_baseline);
             let nodes = data.nodes.clone();
+            let unsorted = !nodes.iter().map(|node| keccak256(node)).is_sorted();
             let (_, build) = allocations::measure(|| NodeStore::new(nodes));
             assert_eq!(
                 build.0,
-                usize::from(!data.nodes.is_empty()),
+                usize::from(!data.nodes.is_empty()) + usize::from(unsorted),
                 "{} index allocation count",
                 data.name
             );
@@ -106,6 +107,35 @@ fn main() {
                 "{}: lookup={lookup:?} baseline_lookup={old_lookup:?} build={build:?} baseline_build={old_build:?}",
                 data.name
             );
+            // Sorting, reversal and duplicates must not change any proof result.
+            let mut ordered = data.nodes.clone();
+            ordered.sort_unstable_by_key(|node| keccak256(node));
+            for variant in 0..3 {
+                let mut nodes = ordered.clone();
+                if variant == 1 {
+                    nodes.reverse();
+                } else if variant == 2 {
+                    nodes.extend_from_within(..);
+                }
+                let unsorted = !nodes.iter().map(|node| keccak256(node)).is_sorted();
+                let expected_calls = usize::from(!nodes.is_empty()) + usize::from(unsorted);
+                let (store, allocation) = allocations::measure(|| NodeStore::new(nodes));
+                assert_eq!(
+                    allocation.0, expected_calls,
+                    "{} variant {variant}",
+                    data.name
+                );
+                assert_eq!(store.len(), candidate.len());
+                let (_, lookup) = allocations::measure(|| {
+                    for query in &data.queries {
+                        assert_eq!(
+                            store.get(data.root, &query.key).unwrap(),
+                            query.value.as_deref()
+                        );
+                    }
+                });
+                assert_eq!(lookup, (0, 0));
+            }
         }
         #[cfg(not(feature = "allocations"))]
         {

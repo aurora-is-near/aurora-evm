@@ -123,9 +123,21 @@ unrevealed parts of the entire trie.
 For `N` supplied nodes containing `B` bytes, construction hashes and parses the
 bytes and sorts the index in `O(B + N log N)` time, retaining `O(B + N)` memory.
 It moves the supplied RLP buffers without copying them. An exact-size input such
-as `Vec<Vec<u8>>` needs one index allocation (zero for an empty input);
-`sort_unstable_by_key` and in-place deduplication allocate nothing. Iterators
-without a useful size hint may grow the index allocation.
+as `Vec<Vec<u8>>` needs one retained index allocation (zero for an empty input).
+Already sorted hashes, including empty and singleton inputs, skip sorting scratch.
+Otherwise, one temporary vector holds `(big-endian u64 prefix, usize source)` keys:
+16 bytes per input node on RV32 and 64-bit targets. Equal prefixes are
+ordered by the full hash, so collisions cannot change results or trigger linear
+probing. Sorting costs `O(N log N)` even when all prefixes collide.
+
+The sorted source indices form a permutation. Each disjoint cycle is applied
+in place with at most one swap per entry; completed positions are marked with
+`usize::MAX` in the key vector itself. Slice indices cannot equal that marker.
+This avoids both repeated large-entry swaps during sorting and a separate visited
+buffer. The temporary vector is freed before adjacent duplicate hashes and their
+RLP buffers are removed. Lookup layout and retained index capacity are unchanged;
+peak construction memory includes the temporary vector. Iterators without a
+useful size hint may grow the retained index allocation.
 
 Lookups allocate no heap memory, including absence and error paths, and do not
 rehash nodes. Each hashed hop performs an `O(log N)` binary search. Cached field

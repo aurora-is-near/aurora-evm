@@ -198,8 +198,10 @@ cargo run --locked --release --no-default-features --features sparse,tiny,alloca
 Workloads cover empty tries, 1/128/10,000 secure keys, absent keys, embedded nodes,
 and branch values. Nine timing rounds alternate implementation order; medians
 exclude fixture generation and constructor input cloning. Constructor teardown
-is excluded. Allocation runs require zero lookup allocations and exactly one
-index allocation for a nonempty exact-size node input (none for an empty input).
+is excluded. Allocation runs require zero lookup allocations, one retained
+index allocation for a nonempty exact-size input, and one temporary key allocation
+only when hashes are unsorted. Empty input allocates nothing. Ordered, reversed,
+and duplicate inputs also exercise the constructor's allocation contract.
 Input RLP buffers are owned by the store and are not counted as index allocations.
 
 The `harness-differential` CI job runs sparse checks on both hash backends under
