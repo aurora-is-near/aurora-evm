@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 
 use primitive_types::{H160, H256, U256};
 
+#[cfg(test)]
+mod tests;
+
 /// Ethereum account as encoded in the state trie.
 ///
 /// Encoded as a four-item list `[nonce, balance, storage_root, code_hash]` while
@@ -158,6 +161,3 @@ pub fn state_root(accounts: &BTreeMap<H160, MemoryAccount>) -> H256 {
             .map(|(address, account)| (*address, rlp::encode(&trie_account(account)))),
     )
 }
-
-#[cfg(test)]
-mod tests;
