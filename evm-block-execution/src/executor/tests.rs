@@ -1,3 +1,5 @@
+mod witness_regressions;
+
 use super::{
     BEACON_ROOTS_ADDRESS, BlockExecutionCounters, BlockExecutor,
     CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS, Precompiles,

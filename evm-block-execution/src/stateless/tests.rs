@@ -263,7 +263,7 @@ fn a_witness_missing_a_touched_leaf_fails_the_block() {
     let error = stateless_validation(block, &[], witness, chain_spec()).unwrap_err();
     match error {
         StatelessValidationError::Execution(BlockExecutionError::MissingWitness(
-            WitnessDbError::TrieNode { hash },
+            WitnessDbError::BlindedNode { hash },
         )) => assert_eq!(hash, withheld),
         other => panic!("unexpected {other:?}"),
     }

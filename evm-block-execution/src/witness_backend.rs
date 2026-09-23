@@ -8,12 +8,12 @@
 use crate::constants::{BLOCKHASH_WINDOW, EMPTY_ROOT_HASH, KECCAK_EMPTY};
 use crate::crypto::keccak256;
 use crate::execution_types::witness::ExecutionWitness;
-use crate::trie::{TrieAccount, storage_root};
+use crate::trie::storage_root;
 use aurora_evm::backend::{
     Apply, ApplyBackend, Backend, Basic, Log, MemoryAccount, MemoryVicinity,
 };
 use aurora_evm_trie::sparse::{LookupError, NodeStore};
-use core::cell::{Cell, Ref, RefCell};
+use core::cell::{Cell, RefCell};
 use core::fmt;
 use primitive_types::{H160, H256, U256};
 use std::collections::BTreeMap;
@@ -67,8 +67,8 @@ impl WitnessAccount {
         self.nonce.is_zero() && self.balance.is_zero() && !self.has_code()
     }
 
-    /// Whether every slot is zero — the account started with empty storage (or it was wiped) and
-    /// nothing non-zero has been written since.
+    /// Whether storage is known empty after a wipe or from its initial root and cached writes.
+    /// Clearing cached slots alone cannot prove an initially nonempty trie empty.
     #[must_use]
     pub fn is_storage_empty(&self) -> bool {
         (self.storage_wiped || self.storage_root == EMPTY_ROOT_HASH)
@@ -113,16 +113,9 @@ impl RevealedTrie {
         match self.nodes.get(self.state_root.0, key.as_bytes()) {
             Ok(None) => Ok(RevealedAccount::Absent),
             Ok(Some(leaf)) => {
-                let account: TrieAccount =
-                    rlp::decode(leaf).map_err(|_| WitnessDbError::Leaf { address })?;
-                Ok(RevealedAccount::Present(WitnessAccount {
-                    nonce: account.nonce,
-                    balance: account.balance,
-                    code_hash: account.code_hash,
-                    storage_root: account.storage_root,
-                    storage: BTreeMap::new(),
-                    storage_wiped: false,
-                }))
+                let account = decode_account_leaf(leaf)
+                    .map_err(|_| WitnessDbError::AccountLeaf { address })?;
+                Ok(RevealedAccount::Present(account))
             }
             Err(error) => Err(trie_node_error(error)),
         }
@@ -134,20 +127,50 @@ impl RevealedTrie {
         match self.nodes.get(storage_root.0, key.as_bytes()) {
             Ok(None) => Ok(H256::zero()),
             Ok(Some(leaf)) => {
-                let value: U256 =
-                    rlp::decode(leaf).map_err(|_| WitnessDbError::Leaf { address })?;
-                Ok(H256(value.to_big_endian()))
+                decode_storage_leaf(leaf).map_err(|_| WitnessDbError::StorageLeaf { address, slot })
             }
             Err(error) => Err(trie_node_error(error)),
         }
     }
 }
 
+/// Requires one complete, canonically sized RLP item before decoding its fields.
+fn exact_leaf(bytes: &[u8]) -> Result<rlp::Rlp<'_>, rlp::DecoderError> {
+    if crate::rlp_strict::declared_item_len(bytes)? != bytes.len() {
+        return Err(rlp::DecoderError::RlpInconsistentLengthAndData);
+    }
+    Ok(rlp::Rlp::new(bytes))
+}
+
+/// Decodes Ethereum's four account fields; extended account formats are not witness inputs.
+fn decode_account_leaf(bytes: &[u8]) -> Result<WitnessAccount, rlp::DecoderError> {
+    let leaf = exact_leaf(bytes)?;
+    if crate::rlp_strict::checked_len(&leaf)? != 4 {
+        return Err(rlp::DecoderError::RlpIncorrectListLen);
+    }
+    Ok(WitnessAccount {
+        nonce: U256::from(leaf.val_at::<u64>(0)?),
+        balance: leaf.val_at(1)?,
+        storage_root: leaf.val_at(2)?,
+        code_hash: leaf.val_at(3)?,
+        storage: BTreeMap::new(),
+        storage_wiped: false,
+    })
+}
+
+/// Decodes a nonzero storage value; zero is represented by an absent leaf.
+fn decode_storage_leaf(bytes: &[u8]) -> Result<H256, rlp::DecoderError> {
+    let value: U256 = exact_leaf(bytes)?.as_val()?;
+    if value.is_zero() {
+        return Err(rlp::DecoderError::Custom("zero storage leaf"));
+    }
+    Ok(H256(value.to_big_endian()))
+}
+
 const fn trie_node_error(error: LookupError) -> WitnessDbError {
     match error {
-        LookupError::BlindedNode(hash) | LookupError::MalformedNode(hash) => {
-            WitnessDbError::TrieNode { hash: H256(hash) }
-        }
+        LookupError::BlindedNode(hash) => WitnessDbError::BlindedNode { hash: H256(hash) },
+        LookupError::MalformedNode(hash) => WitnessDbError::MalformedNode { hash: H256(hash) },
     }
 }
 
@@ -182,7 +205,6 @@ pub struct WitnessBackend {
     coverage: Coverage,
     /// The first read that had no proof, if any.
     missing: Cell<Option<WitnessDbError>>,
-    logs: Vec<Log>,
 }
 
 impl WitnessBackend {
@@ -227,7 +249,7 @@ impl WitnessBackend {
         ))
     }
 
-    /// Builds a backend with lazy proofs against `pre_state_root`.
+    /// Builds lazy proofs against `pre_state_root`, which must authenticate valid Ethereum state.
     /// Unprovable reads record [`WitnessDbError`]. Headers must be verified separately;
     /// `storage_keys` are unused because execution supplies addresses and slots.
     ///
@@ -320,7 +342,6 @@ impl WitnessBackend {
             trie,
             coverage,
             missing: Cell::new(None),
-            logs: Vec::new(),
         }
     }
 
@@ -330,22 +351,16 @@ impl WitnessBackend {
         self.missing.get()
     }
 
-    /// The accounts revealed so far, as execution has left them.
+    /// The cached accounts; exclusive borrowing prevents concurrent lazy cache writes.
     #[must_use]
-    pub fn accounts(&self) -> Ref<'_, BTreeMap<H160, RevealedAccount>> {
-        self.accounts.borrow()
+    pub fn accounts(&mut self) -> &BTreeMap<H160, RevealedAccount> {
+        self.accounts.get_mut()
     }
 
     /// The code map, which execution extends with the code of every contract it creates.
     #[must_use]
     pub const fn codes(&self) -> &BTreeMap<H256, Vec<u8>> {
         &self.codes
-    }
-
-    /// Logs collected from every applied transaction, in order.
-    #[must_use]
-    pub fn logs(&self) -> &[Log] {
-        &self.logs
     }
 
     /// The block environment reads are answered from.
@@ -494,8 +509,7 @@ impl Backend for WitnessBackend {
             return H256::zero();
         }
         let Ok(number) = u64::try_from(number) else {
-            // Unreachable given the window check above; a number that far from `current` cannot be
-            // within 256 of it. Zero is the same answer the range check would have given.
+            // Block execution uses a u64 header number; this only handles synthetic environments.
             return H256::zero();
         };
         self.ancestor_hashes.get(&number).map_or_else(
@@ -640,7 +654,8 @@ impl Backend for WitnessBackend {
 }
 
 impl ApplyBackend for WitnessBackend {
-    fn apply<A, I, L>(&mut self, values: A, logs: L, delete_empty: bool)
+    /// Applies state changes; the block executor collects receipt logs separately.
+    fn apply<A, I, L>(&mut self, values: A, _logs: L, delete_empty: bool)
     where
         A: IntoIterator<Item = Apply<I>>,
         I: IntoIterator<Item = (H256, H256)>,
@@ -707,12 +722,7 @@ impl ApplyBackend for WitnessBackend {
                         account.storage.insert(index, value);
                     }
 
-                    // EIP-161 `EMPTY(σ,a)` is nonce, balance and code hash — storage is **not**
-                    // part of it, and adding it here would keep an account the protocol prunes,
-                    // leaving a leaf in the post-state that no state root expects. The same
-                    // predicate, storage-free, is what the full-state backend uses
-                    // (`backend/memory.rs:237-239`) and what this crate's own
-                    // `trie::is_empty_account` uses.
+                    // EIP-161 prunes touched empty accounts regardless of their storage.
                     if delete_empty && account.is_empty() {
                         // Such an account is not part of the state trie. Recorded as *proven*
                         // absent, because that is what execution just established.
@@ -722,14 +732,14 @@ impl ApplyBackend for WitnessBackend {
                     }
                 }
                 Apply::Delete { address } => {
+                    // The trusted executor reads the account before emitting Delete;
+                    // recording its removal needs no additional proof lookup.
                     self.accounts
                         .get_mut()
                         .insert(address, RevealedAccount::Absent);
                 }
             }
         }
-
-        self.logs.extend(logs);
     }
 }
 
@@ -797,15 +807,27 @@ pub enum WitnessDbError {
         /// The block number that was read.
         number: u64,
     },
-    /// A trie node a read needed was not revealed, or is not a valid node.
-    TrieNode {
+    /// A trie node required by a read was not revealed.
+    BlindedNode {
         /// The hash the node's parent refers to it by.
         hash: H256,
     },
-    /// A revealed leaf of this account — its own or one of its storage slots — does not decode.
-    Leaf {
+    /// A revealed node has invalid RLP or trie structure.
+    MalformedNode {
+        /// The hash of the invalid node.
+        hash: H256,
+    },
+    /// An account leaf is not a canonical Ethereum account.
+    AccountLeaf {
         /// The account the leaf belongs to.
         address: H160,
+    },
+    /// A storage leaf is not a canonical nonzero integer.
+    StorageLeaf {
+        /// The account whose storage was read.
+        address: H160,
+        /// The storage key whose leaf is invalid.
+        slot: H256,
     },
 }
 
@@ -826,12 +848,19 @@ impl fmt::Display for WitnessDbError {
             Self::AncestorHash { number } => {
                 write!(f, "witness omitted the header of ancestor block {number}")
             }
-            Self::TrieNode { hash } => {
-                write!(f, "witness omitted or corrupted trie node {hash:?}")
+            Self::BlindedNode { hash } => {
+                write!(f, "witness omitted trie node {hash:?}")
             }
-            Self::Leaf { address } => {
-                write!(f, "witness leaf of account {address:?} does not decode")
+            Self::MalformedNode { hash } => {
+                write!(f, "witness trie node {hash:?} is malformed")
             }
+            Self::AccountLeaf { address } => {
+                write!(f, "witness account leaf {address:?} is invalid")
+            }
+            Self::StorageLeaf { address, slot } => write!(
+                f,
+                "witness storage leaf {slot:?} of account {address:?} is invalid"
+            ),
         }
     }
 }

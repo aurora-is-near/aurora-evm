@@ -22,7 +22,7 @@ use crate::stateless::{StatelessValidationError, stateless_validation_recovered}
 use crate::test_support::witness_of;
 use crate::trie::{receipts_root, state_root};
 use crate::witness_backend::WitnessStateError;
-use crate::witness_backend::{RevealedAccount, WitnessBackend, WitnessState};
+use crate::witness_backend::{RevealedAccount, WitnessBackend, WitnessDbError, WitnessState};
 use aurora_evm::backend::MemoryAccount;
 use core::fmt;
 use primitive_types::{H160, H256, U256};
@@ -195,7 +195,13 @@ enum BlockFailure {
 impl BlockFailure {
     fn is_unproven(&self) -> bool {
         matches!(self, Self::Stateless(error) if matches!(error.as_ref(),
-            StatelessValidationError::Execution(BlockExecutionError::MissingWitness(_))
+            StatelessValidationError::Execution(BlockExecutionError::MissingWitness(
+                WitnessDbError::Account { .. }
+                | WitnessDbError::Code { .. }
+                | WitnessDbError::StorageSlot { .. }
+                | WitnessDbError::AncestorHash { .. }
+                | WitnessDbError::BlindedNode { .. }
+            ))
                 | StatelessValidationError::Witness(WitnessStateError::PreStateRootNotRevealed { .. })
         ))
     }
@@ -222,8 +228,6 @@ impl fmt::Display for BlockFailure {
 
 #[test]
 fn witness_rejections_are_classified_by_type_not_message() {
-    use crate::witness_backend::WitnessDbError;
-
     let missing = BlockFailure::Stateless(Box::new(StatelessValidationError::Execution(
         BlockExecutionError::MissingWitness(WitnessDbError::Account {
             address: H160::zero(),
@@ -248,6 +252,21 @@ fn witness_rejections_are_classified_by_type_not_message() {
     assert!(!invalid.is_unproven());
     assert!(!malformed.is_unproven());
     assert!(!BlockFailure::Other("MissingWitness PreStateRootNotRevealed".into()).is_unproven());
+    for error in [
+        WitnessDbError::MalformedNode { hash: H256::zero() },
+        WitnessDbError::AccountLeaf {
+            address: H160::zero(),
+        },
+        WitnessDbError::StorageLeaf {
+            address: H160::zero(),
+            slot: H256::zero(),
+        },
+    ] {
+        let failure = BlockFailure::Stateless(Box::new(StatelessValidationError::Execution(
+            BlockExecutionError::MissingWitness(error),
+        )));
+        assert!(!failure.is_unproven());
+    }
 }
 
 /// Why a fixture block did not behave as the fixture says.
@@ -353,9 +372,8 @@ fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -
             return Some(());
         }
     }
-    for (address, account) in &state {
-        let empty = account.nonce.is_zero() && account.balance.is_zero() && account.code.is_empty();
-        if !empty && !expected.contains_key(address) {
+    for address in state.keys() {
+        if !expected.contains_key(address) {
             outcome.failures.push((
                 name.to_owned(),
                 usize::MAX,
@@ -428,7 +446,7 @@ fn execute_block(
             let (_root, mut witness) = witness_of(state);
             if mode == Mode::WitnessWithholding && !witness.state.is_empty() {
                 // Deterministic per block: the header hash picks the node to withhold.
-                let pick = usize::from(header.hash_slow().0[0]) % witness.state.len();
+                let pick = witness_node_index(header.hash_slow(), witness.state.len());
                 witness.state.remove(pick);
             }
             witness.headers = recent_headers.to_vec();
@@ -541,4 +559,20 @@ fn eest_blockchain_tests_validate_against_witnesses() {
 #[ignore = "requires EEST_PATH pointing to the official fixtures release"]
 fn eest_blockchain_tests_never_answer_from_a_withheld_node() {
     run_all(Mode::WitnessWithholding);
+}
+
+/// Selects across the whole witness using all hash bytes, including on 32-bit hosts.
+fn witness_node_index(hash: H256, len: usize) -> usize {
+    usize::try_from(U256::from_big_endian(hash.as_bytes()) % U256::from(len)).unwrap()
+}
+
+#[test]
+fn withholding_can_select_beyond_the_first_256_nodes() {
+    for index in 0..1024usize {
+        assert_eq!(
+            witness_node_index(H256(U256::from(index).to_big_endian()), 1024),
+            index
+        );
+    }
+    assert!(witness_node_index(H256::repeat_byte(0xff), 1023) < 1023);
 }

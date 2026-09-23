@@ -1,5 +1,7 @@
 //! Unit tests: revealed maps, lazy trie resolution, complete-state coverage and credits.
 
+mod decoding;
+
 use super::{
     RevealedAccount, WitnessAccount, WitnessBackend, WitnessDbError, WitnessState,
     WitnessStateError,
@@ -89,7 +91,7 @@ fn witness_of(accounts: &[(H160, MemoryAccount)]) -> (H256, ExecutionWitness) {
 fn a_touched_account_whose_code_is_absent_is_reported_not_emptied() {
     let who = addr(0xc0);
     // The account is revealed; its code bytes are NOT supplied.
-    let db = backend(
+    let mut db = backend(
         vec![(who, RevealedAccount::Present(account_with_code()))],
         vec![],
     );
@@ -320,7 +322,7 @@ fn reset_storage_records_the_wipe_and_stops_poisoning() {
     account.storage_root = H256::repeat_byte(0x99);
     account.storage.insert(slot(1), H256::repeat_byte(0x11));
 
-    let db = backend(vec![(who, RevealedAccount::Present(account))], vec![]);
+    let mut db = backend(vec![(who, RevealedAccount::Present(account))], vec![]);
     // Before the wipe an unmentioned slot has no proof.
     assert_eq!(db.storage(who, slot(5)), H256::zero());
     assert!(db.missing().is_some());
@@ -641,7 +643,7 @@ fn from_witness_resolves_accounts_and_slots_by_proof() {
         ),
         (holder, memory_account(1_000, 3, &[], &[])),
     ]);
-    let db = WitnessBackend::from_witness(vicinity(), witness, root, BTreeMap::new()).unwrap();
+    let mut db = WitnessBackend::from_witness(vicinity(), witness, root, BTreeMap::new()).unwrap();
 
     // Nothing is resolved until it is read.
     assert!(db.accounts().is_empty());
@@ -749,7 +751,7 @@ fn a_withheld_node_poisons_only_the_reads_that_need_it() {
     assert_eq!(db.storage(contract, slot(1)), H256::zero());
     assert_eq!(
         db.missing(),
-        Some(WitnessDbError::TrieNode { hash: withheld })
+        Some(WitnessDbError::BlindedNode { hash: withheld })
     );
 }
 
