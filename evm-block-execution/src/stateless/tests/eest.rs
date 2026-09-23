@@ -19,7 +19,7 @@ use crate::execution_types::execution::BlockExecutionResult;
 use crate::executor::BlockExecutor;
 use crate::spec::Spec;
 use crate::stateless::{StatelessValidationError, stateless_validation_recovered};
-use crate::test_support::witness_of;
+use crate::test_utils::witness_of;
 use crate::trie::{receipts_root, state_root};
 use crate::witness_backend::WitnessStateError;
 use crate::witness_backend::{RevealedAccount, WitnessBackend, WitnessDbError, WitnessState};

@@ -11,7 +11,7 @@ use crate::errors::BlockExecutionError;
 use crate::execution_types::witness::ExecutionWitness;
 use crate::spec::Spec;
 use crate::system_calls::BEACON_ROOTS_ADDRESS;
-use crate::test_support::witness_of;
+use crate::test_utils::witness_of;
 use crate::witness_backend::{RevealedAccount, WitnessDbError, WitnessStateError};
 use aurora_evm::backend::MemoryAccount;
 use hex_literal::hex;

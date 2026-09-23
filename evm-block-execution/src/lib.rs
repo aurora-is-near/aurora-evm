@@ -26,7 +26,7 @@ pub mod spec;
 mod stateless;
 pub mod system_calls;
 #[cfg(test)]
-mod test_support;
+mod test_utils;
 pub mod transaction;
 pub mod trie;
 pub mod withdrawal;

@@ -8,7 +8,7 @@ use crate::constants::EMPTY_ROOT_HASH;
 use crate::crypto::keccak256;
 use crate::errors::BlockExecutionError;
 use crate::execution_types::witness::ExecutionWitness;
-use crate::test_support::witness_of;
+use crate::test_utils::witness_of;
 use crate::trie::state_root;
 use crate::withdrawal::Withdrawal;
 use crate::witness_backend::{RevealedAccount, WitnessBackend, WitnessDbError};

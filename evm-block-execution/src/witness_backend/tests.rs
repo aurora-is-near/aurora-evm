@@ -78,9 +78,9 @@ fn memory_account(
     }
 }
 
-/// A witness over `accounts` (see [`crate::test_support::witness_of`]) and the root it proves.
+/// A witness over `accounts` (see [`crate::test_utils::witness_of`]) and the root it proves.
 fn witness_of(accounts: &[(H160, MemoryAccount)]) -> (H256, ExecutionWitness) {
-    crate::test_support::witness_of(&accounts.iter().cloned().collect())
+    crate::test_utils::witness_of(&accounts.iter().cloned().collect())
 }
 
 /// The defect this module exists for: the witness reveals the *account* but not its *code*.
