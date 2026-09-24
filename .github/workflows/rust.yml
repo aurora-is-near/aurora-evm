@@ -117,7 +117,7 @@ jobs:
             echo "$output=$changed" | tee -a "$GITHUB_OUTPUT"
           }
           compare_paths integration_tests evm evm-tests Cargo.toml rust-toolchain.toml .github/workflows/rust.yml
-          compare_paths block_body evm-block-execution evm-trie Cargo.toml rust-toolchain.toml .github/workflows/rust.yml
+          compare_paths block_body evm evm-block-execution evm-trie Cargo.toml rust-toolchain.toml .github/workflows/rust.yml
 
   ethereum-tests:
     needs: changes
@@ -194,7 +194,6 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      # A plain `docker run` for the same reasons as `unit-tests-32-bit` above.
       - name: Run Ethereum state tests 32 bit
         run: |
           docker run --rm --platform linux/386 -v "$PWD":/work -w /work \
@@ -248,13 +247,17 @@ jobs:
           mkdir ethereum-spec-tests
           tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
-      # Decodes every positive EEST blockchain fixture and compares computed transaction lengths,
-      # block RLP lengths and transaction/withdrawal roots with the fixture headers.
       - name: Run EEST block body differential
         run: |
           EEST_PATH="$PWD/ethereum-spec-tests/fixtures" \
             cargo test -r -p aurora-evm-block-execution \
               eest_body_lengths_and_roots_match_every_positive_block -- --ignored --nocapture
+
+      - name: Run EEST blockchain execution
+        run: |
+          EEST_PATH="$PWD/ethereum-spec-tests/fixtures" \
+            cargo test -r -p aurora-evm-block-execution \
+              eest_blockchain_tests -- --ignored --nocapture
 
   # Require this aggregate check in branch protection. It accepts only intentional skips.
   ci-result:
@@ -268,7 +271,7 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions: { }
     steps:
       - name: Verify required job results
         shell: bash

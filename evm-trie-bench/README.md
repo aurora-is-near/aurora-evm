@@ -178,3 +178,33 @@ cargo run --release --features guest-host,tiny --bin guest-host -- \
 cargo run --release --features guest-host,tiny --bin guest-host -- \
   guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest --prove 16
 ```
+
+## Sparse witness benchmarks
+
+Run from `evm-trie-bench/`. Dataset preparation and input copies are outside the
+measurements; construction and lookup are reported separately. The frozen
+`src/sparse/baseline.rs` is the pre-refactor reader, including its permissive
+parser, and is used only on valid workloads for comparison. Fixture roots are
+independently checked against `triehash` before measuring.
+
+```sh
+# Timing without allocator instrumentation; repeat with sparse,tiny for tiny-keccak.
+cargo run --locked --release --no-default-features --features sparse --bin sparse
+# Allocation assertions, including lookup hits, misses, and malformed/missing-node errors.
+cargo run --locked --release --no-default-features --features sparse,allocations --bin sparse
+cargo run --locked --release --no-default-features --features sparse,tiny,allocations --bin sparse
+```
+
+Workloads cover empty tries, 1/128/10,000 secure keys, absent keys, embedded nodes,
+and branch values. Nine timing rounds alternate implementation order; medians
+exclude fixture generation and constructor input cloning. Constructor teardown
+is excluded. Allocation runs require zero lookup allocations, one retained
+index allocation for a nonempty exact-size input, and one temporary key allocation
+only when hashes are unsorted. Empty input allocates nothing. Ordered, reversed,
+and duplicate inputs also exercise the constructor's allocation contract.
+Input RLP buffers are owned by the store and are not counted as index allocations.
+
+The `harness-differential` CI job runs sparse checks on both hash backends under
+the existing benchmark path filter. Allocation/correctness failures fail CI;
+wall-clock timings are printed without a threshold. These are host measurements,
+not RISC Zero cycle/proof measurements; the current guest benchmarks ordered roots.

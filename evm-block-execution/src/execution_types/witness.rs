@@ -12,7 +12,10 @@ pub struct ExecutionWitness {
     pub state: Vec<Vec<u8>>,
     /// Contract-code preimages required by execution and state-root recomputation.
     pub contract_codes: Vec<Vec<u8>>,
-    /// Account-address and storage-slot preimages required for trie lookups.
+    /// Account-address and storage-slot preimages of the hashed trie keys the block touches.
+    ///
+    /// Execution does not need them: reads are proven from the addresses and slots the EVM asks
+    /// for. They are carried for tooling that maps hashed keys back to their preimages.
     pub storage_keys: Vec<Vec<u8>>,
     /// RLP-encoded ancestor headers used to establish the pre-state and serve `BLOCKHASH`.
     /// Raw bytes are retained because their exact encoding determines each ancestor hash.

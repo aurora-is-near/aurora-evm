@@ -1,15 +1,15 @@
-//! Execution inputs derived from a block header, body and ancestor chain.
-//!
-//! [`BlockEnv`] contains block-wide values read by transactions and system steps. Chain-scheduled
-//! parameters remain in the chain configuration, while transaction-specific values remain in
-//! [`crate::transaction::TxEnv`].
+//! Block-wide execution inputs; transaction fields live in [`crate::transaction::TxEnv`].
+//! The witness backend serves `BLOCKHASH` from verified ancestors.
 
+use crate::block::header::Header;
+use crate::chain_spec::ActiveSpec;
+use crate::errors::{BlockExecutionError, InvalidHeader};
+use crate::evm_context::InvalidEvmContext;
 use crate::withdrawal::Withdrawal;
+use aurora_evm::backend::MemoryVicinity;
 use primitive_types::{H160, H256, U256};
 
-/// A block's `excess_blob_gas` together with the blob gas price it implies.
-///
-/// An execution convenience, not an EIP-defined type: the derived price is computed once per block.
+/// Excess blob gas and its price, derived once per block.
 #[derive(Copy, Clone, Debug, Default, Ord, PartialOrd, PartialEq, Eq)]
 pub struct BlobExcessGasAndPrice {
     /// The block's `excess_blob_gas` header field.
@@ -19,17 +19,11 @@ pub struct BlobExcessGasAndPrice {
     pub blob_gas_price: u128,
 }
 
-/// Execution **input** environment for a block.
-///
-/// Includes transaction-loop context and inputs consumed by pre/post-execution system steps. Blob
-/// versioned hashes stay on [`TxEnv`](crate::transaction::TxEnv), and scheduled
-/// [`BlobParams`](crate::eips::eip7840::BlobParams) stay in
-/// [`ChainSpec`](crate::chain_spec::ChainSpec). Expected post-execution values are read directly from
-/// the header rather than duplicated here.
+/// Inputs for transactions, system calls, and withdrawals.
+/// Fork parameters remain in [`ChainSpec`](crate::chain_spec::ChainSpec);
+/// expected execution results remain in the header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockEnv {
-    /// Environmental block hashes (recent ancestors, for the `BLOCKHASH` opcode window).
-    pub block_hashes: Vec<H256>,
     /// Environmental block number.
     pub block_number: U256,
     /// Environmental coinbase.
@@ -52,4 +46,72 @@ pub struct BlockEnv {
     pub parent_beacon_block_root: Option<H256>,
     /// Validator withdrawals credited after the transaction loop (EIP-4895, Shanghai+).
     pub withdrawals: Vec<Withdrawal>,
+}
+
+impl BlockEnv {
+    /// Derives inputs from a validated header using the active blob fee parameters.
+    ///
+    /// # Errors
+    /// [`BlockExecutionError`] if the base fee is missing or the blob gas price overflows.
+    pub fn from_block(
+        header: &Header,
+        withdrawals: Option<Vec<Withdrawal>>,
+        active_spec: ActiveSpec,
+    ) -> Result<Self, BlockExecutionError> {
+        let base_fee = header
+            .base_fee_per_gas
+            .ok_or(BlockExecutionError::InvalidContext(
+                InvalidEvmContext::InvalidHeader(InvalidHeader::BaseFeeNotSet),
+            ))?;
+        let blob_excess_gas_and_price = header
+            .excess_blob_gas
+            .map(|excess_blob_gas| {
+                active_spec
+                    .blob_params()
+                    .calc_blob_fee(excess_blob_gas)
+                    .map(|blob_gas_price| BlobExcessGasAndPrice {
+                        excess_blob_gas,
+                        blob_gas_price,
+                    })
+                    .ok_or(BlockExecutionError::BlobGasPriceOverflow { excess_blob_gas })
+            })
+            .transpose()?;
+        Ok(Self {
+            block_number: U256::from(header.number),
+            block_coinbase: header.beneficiary,
+            block_timestamp: U256::from(header.timestamp),
+            block_difficulty: header.difficulty,
+            block_gas_limit: header.gas_limit,
+            block_base_fee_per_gas: U256::from(base_fee),
+            block_randomness: Some(header.mix_hash),
+            blob_excess_gas_and_price,
+            parent_hash: header.parent_hash,
+            parent_beacon_block_root: header.parent_beacon_block_root,
+            withdrawals: withdrawals.unwrap_or_default(),
+        })
+    }
+
+    /// Builds the block environment for `chain_id`.
+    /// The executor sets transaction fields before use; `block_hashes` stays empty.
+    #[must_use]
+    pub fn vicinity(&self, chain_id: u64) -> MemoryVicinity {
+        MemoryVicinity {
+            gas_price: U256::zero(),
+            effective_gas_price: U256::zero(),
+            origin: H160::zero(),
+            block_hashes: Vec::new(),
+            block_number: self.block_number,
+            block_coinbase: self.block_coinbase,
+            block_timestamp: self.block_timestamp,
+            block_difficulty: self.block_difficulty,
+            block_gas_limit: U256::from(self.block_gas_limit),
+            chain_id: U256::from(chain_id),
+            block_base_fee_per_gas: self.block_base_fee_per_gas,
+            block_randomness: self.block_randomness,
+            blob_gas_price: self
+                .blob_excess_gas_and_price
+                .map(|blob| blob.blob_gas_price),
+            blob_hashes: Vec::new(),
+        }
+    }
 }

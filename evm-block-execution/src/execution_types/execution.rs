@@ -2,9 +2,7 @@
 
 use crate::receipt::Receipt;
 use crate::requests::Requests;
-use aurora_evm::backend::MemoryAccount;
-use primitive_types::H160;
-use std::collections::BTreeMap;
+use crate::witness_backend::WitnessState;
 
 /// Consensus outputs produced by executing a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,11 +17,11 @@ pub struct BlockExecutionResult {
     pub blob_gas_used: u64,
 }
 
-/// Block execution result together with the resulting materialized state.
+/// Block execution result together with the state execution left behind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockExecutionOutput {
     /// Consensus execution outputs.
     pub result: BlockExecutionResult,
-    /// Post-execution world state.
-    pub state: BTreeMap<H160, MemoryAccount>,
+    /// Every account execution touched or revealed, with the code those accounts refer to.
+    pub state: WitnessState,
 }

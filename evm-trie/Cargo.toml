@@ -19,6 +19,8 @@ tiny-keccak = { workspace = true, optional = true }
 default = []
 # zkEVM guests may patch tiny-keccak with their VM's accelerated implementation.
 tiny-keccak = ["dep:tiny-keccak"]
+# Reference trie builder for tests of dependants (not part of the production surface).
+test-utils = []
 
 [dev-dependencies]
 hash-db.workspace = true

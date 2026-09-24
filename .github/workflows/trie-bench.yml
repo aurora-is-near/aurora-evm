@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: [corpus, 'corpus,tiny']
+        features: ['corpus,sparse', 'corpus,sparse,tiny']
     defaults:
       run:
         working-directory: evm-trie-bench
@@ -125,8 +125,18 @@ jobs:
         run: cargo test --locked --release --features '${{ matrix.features }}' --test pinned_corpus
 
       - name: Check allocation invariants on synthetic sizes
-        if: matrix.features == 'corpus,tiny'
+        if: matrix.features == 'corpus,sparse,tiny'
         run: cargo run --locked --release --features tiny,allocations --bin bench
+
+      - name: Check sparse results and allocation invariants
+        run: cargo run --locked --release --features '${{ matrix.features }},allocations' --bin sparse
+
+      - name: Check trie negative cases with all features
+        if: matrix.features == 'corpus,sparse,tiny'
+        run: cargo test --release --manifest-path ../evm-trie/Cargo.toml --all-features
+
+      - name: Measure sparse construction and lookup separately
+        run: cargo run --locked --release --features '${{ matrix.features }}' --bin sparse
 
   guest:
     needs: benchmark-changes

@@ -21,6 +21,7 @@ mod header;
 mod recover;
 mod recovered;
 mod sealed;
+mod state_changes;
 mod validation;
 
 pub use ancestors::{AncestorChainError, Ancestors, derive_ancestors};
@@ -32,8 +33,9 @@ use primitive_types::H256;
 pub use recover::{
     SenderRecoveryError, UncompressedPublicKey, recover_block, recover_block_with_public_keys,
 };
-pub use recovered::{BlockRecoveryError, RecoveredBlock};
+pub use recovered::{BlockRecoveryError, ExecutionParts, RecoveredBlock};
 pub use sealed::{SealedBlock, SealedHeader};
+pub use state_changes::post_block_balance_increments;
 pub use validation::BlockValidationError;
 pub(crate) use validation::validate_block_consensus;
 
