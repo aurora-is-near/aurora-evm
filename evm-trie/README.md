@@ -39,8 +39,22 @@ per leaf. Empty input does not construct this stream. Stack memory, hash state,
 input data and guest paging are not zero just because the builder avoids heap
 allocation.
 
-Only ordered keys are supported. Secure state/storage roots remain in
-`evm-block-execution` on `triehash`; this is not a sparse witness trie.
+Only ordered keys are supported by the builder. Secure state/storage roots remain in
+`evm-block-execution` on `triehash`.
+
+## Witness lookups
+
+`sparse::NodeStore` indexes the hashed nodes an execution witness reveals and answers key
+lookups by walking from a trusted root, one authenticated node at a time: a key is found, proven
+absent, or reported as unprovable when a needed node was withheld. Embedded (sub-32-byte) nodes
+are followed in place. Canonical node decoding is cached at construction; lookups allocate no
+heap memory and select branch slots by validated offsets. It is read-only; updating
+the revealed trie and recomputing its root is future work. The `test-utils` feature exposes
+`sparse::reference::hashed_nodes`, a Yellow-Paper-style builder that turns a known key/value map
+into the node list a witness would carry.
+
+See [sparse witness lookups](ALGORITHM.md#sparse-witness-lookups) for the traversal,
+proof outcomes, trust boundary, and memory costs.
 
 ## Hash backend
 

@@ -10,10 +10,14 @@ use std::collections::BTreeMap;
 
 use primitive_types::{H160, H256, U256};
 
-/// Ethereum account as encoded in the state trie.
+#[cfg(test)]
+mod tests;
+
+/// Account trie encoding, with an optional code-version extension.
 ///
 /// Encoded as a four-item list `[nonce, balance, storage_root, code_hash]` while
 /// `code_version == 0` (current mainnet); a fifth item is appended otherwise.
+/// Ethereum witness decoding accepts only the four-field form.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrieAccount {
     /// Account nonce.
@@ -138,26 +142,16 @@ pub fn trie_account(account: &MemoryAccount) -> TrieAccount {
     }
 }
 
-/// EIP-161 "empty" account: zero nonce, zero balance and no code. Such accounts are never part
-/// of the post-Spurious-Dragon state trie.
-const fn is_empty_account(account: &MemoryAccount) -> bool {
-    account.nonce.is_zero() && account.balance.is_zero() && account.code.is_empty()
-}
-
 /// Computes the canonical Ethereum state root from a fully materialized account map.
 ///
 /// Addresses are secure-trie keys; storage roots and code hashes are derived from each account.
-/// EIP-161 empty accounts are omitted. A partial witness must instead update an authenticated sparse
-/// trie rooted at the parent state.
+/// Every supplied account is included; the executor removes touched empty accounts.
+/// A partial witness must instead update an authenticated sparse trie rooted at the parent state.
 #[must_use]
 pub fn state_root(accounts: &BTreeMap<H160, MemoryAccount>) -> H256 {
     sec_trie_root(
         accounts
             .iter()
-            .filter(|(_, account)| !is_empty_account(account))
             .map(|(address, account)| (*address, rlp::encode(&trie_account(account)))),
     )
 }
-
-#[cfg(test)]
-mod tests;

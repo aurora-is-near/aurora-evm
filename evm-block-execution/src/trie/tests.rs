@@ -65,14 +65,26 @@ fn state_root_is_deterministic_and_nonempty() {
 }
 
 #[test]
-fn state_root_ignores_empty_accounts() {
-    // An EIP-161 empty account must not affect the root (it is not part of the trie).
-    let mut with_empty: BTreeMap<H160, MemoryAccount> = BTreeMap::new();
-    with_empty.insert(H160::repeat_byte(0x11), sample_account());
-    with_empty.insert(H160::repeat_byte(0x22), MemoryAccount::default());
-    let mut without: BTreeMap<H160, MemoryAccount> = BTreeMap::new();
-    without.insert(H160::repeat_byte(0x11), sample_account());
-    assert_eq!(state_root(&with_empty), state_root(&without));
+fn state_root_preserves_empty_accounts_with_or_without_storage() {
+    let address = H160::repeat_byte(0x22);
+    for storage in [
+        BTreeMap::new(),
+        BTreeMap::from([(H256::zero(), H256::repeat_byte(1))]),
+    ] {
+        let account = MemoryAccount {
+            storage,
+            ..MemoryAccount::default()
+        };
+        let mut path = vec![0x20];
+        path.extend_from_slice(keccak256(address.as_bytes()).as_bytes());
+        let mut leaf = rlp::RlpStream::new_list(2);
+        leaf.append(&path);
+        leaf.append(&rlp::encode(&trie_account(&account)).as_ref());
+        let expected = keccak256(&leaf.out());
+        let accounts = BTreeMap::from([(address, account)]);
+        assert_eq!(state_root(&accounts), expected);
+        assert_ne!(expected, EMPTY_ROOT_HASH);
+    }
 }
 
 #[test]
