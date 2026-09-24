@@ -260,20 +260,18 @@ impl BlockExecutor {
         let mut counters = BlockExecutionCounters::default();
 
         for (index, tx) in transactions.into_iter().enumerate() {
-            // Both stages are tagged with the position, because "this block is invalid" without
-            // saying *which* transaction made it so is almost useless when reconciling with another
-            // client.
-            let validated_tx = self
-                .validate_transaction_for_block(tx, counters)
-                .map_err(|source| BlockExecutionError::at_transaction(index, source))?;
+            // Witness gaps precede derived failures; other errors retain the transaction index.
+            let validated = self.validate_transaction_for_block(tx, counters);
             self.check_witness()?;
+            let validated_tx =
+                validated.map_err(|source| BlockExecutionError::at_transaction(index, source))?;
             let tx_type = validated_tx.tx.tx_type;
             let tx_blob_count = validated_tx.blob_count;
 
-            let outcome = self
-                .execute_validated_tx(validated_tx)
-                .map_err(|source| BlockExecutionError::at_transaction(index, source))?;
+            let outcome = self.execute_validated_tx(validated_tx);
             self.check_witness()?;
+            let outcome =
+                outcome.map_err(|source| BlockExecutionError::at_transaction(index, source))?;
 
             // Validation and the executor's gas-limit contract bound this sum for valid input;
             // saturation keeps a broken upstream invariant from wrapping the block total.

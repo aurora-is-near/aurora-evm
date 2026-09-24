@@ -6,17 +6,62 @@ use super::{
 };
 use crate::constants::EMPTY_ROOT_HASH;
 use crate::crypto::keccak256;
-use crate::errors::BlockExecutionError;
+use crate::errors::{BlockExecutionError, InvalidTransaction};
+use crate::evm_context::InvalidEvmContext;
 use crate::execution_types::witness::ExecutionWitness;
 use crate::test_utils::witness_of;
 use crate::trie::state_root;
 use crate::withdrawal::Withdrawal;
-use crate::witness_backend::{RevealedAccount, WitnessBackend, WitnessDbError};
+use crate::witness_backend::{RevealedAccount, WitnessAccount, WitnessBackend, WitnessDbError};
 use aurora_evm::backend::{Backend, MemoryAccount};
 use aurora_evm::{ExitError, ExitFatal, ExitReason, ExitRevert, ExitSucceed};
 use aurora_evm_trie::sparse::reference::hashed_nodes;
 use primitive_types::{H256, U256};
 use std::collections::BTreeMap;
+
+#[test]
+fn transaction_phase_prioritizes_witness_gaps_over_sender_validation_errors() {
+    let caller = addr(1);
+    for revealed in [false, true] {
+        for nonce in [0, 1] {
+            let blk = block(0, addr(5));
+            let accounts = if revealed {
+                BTreeMap::from([(caller, RevealedAccount::Present(WitnessAccount::empty()))])
+            } else {
+                BTreeMap::new()
+            };
+            let db = WitnessBackend::try_new(blk.vicinity(1), accounts, vec![], BTreeMap::new())
+                .unwrap();
+            let tx = legacy_transfer(caller, addr(2), U256::one(), nonce, 1);
+            let mut executor = BlockExecutor::new(
+                chain_spec(Spec::London, empty_blob_schedule()),
+                blk,
+                vec![tx],
+                db,
+            )
+            .unwrap();
+            let Err(error) = executor.execute_transactions() else {
+                panic!("an unfunded or unproven sender must be rejected");
+            };
+            let expected = if revealed {
+                let source = if nonce == 0 {
+                    BlockExecutionError::InvalidContext(InvalidEvmContext::InvalidTransaction(
+                        InvalidTransaction::OutOfFunds,
+                    ))
+                } else {
+                    BlockExecutionError::InvalidNonce {
+                        tx: U256::from(nonce),
+                        state: U256::zero(),
+                    }
+                };
+                BlockExecutionError::at_transaction(0, source)
+            } else {
+                BlockExecutionError::MissingWitness(WitnessDbError::Account { address: caller })
+            };
+            assert_eq!(error, expected, "revealed={revealed}, nonce={nonce}");
+        }
+    }
+}
 
 #[test]
 fn pre_execution_rejects_fatal_errors_but_preserves_witness_priority() {
