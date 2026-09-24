@@ -158,9 +158,14 @@ pub fn stateless_validation_recovered(
         ancestor_hashes,
     )?;
 
-    let execution_output =
-        BlockExecutor::with_active_spec(chain_spec, block_env, transactions, backend, active_spec)
-            .execute()?;
+    let execution_output = BlockExecutor::new_with_active_spec(
+        chain_spec,
+        block_env,
+        transactions,
+        backend,
+        active_spec,
+    )
+    .execute()?;
 
     Ok(StatelessValidationOutput {
         block_hash,

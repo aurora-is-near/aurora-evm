@@ -239,7 +239,7 @@ impl WitnessBackend {
             .into_iter()
             .map(|code| (keccak256(&code), code))
             .collect();
-        Ok(Self::assemble(
+        Ok(Self::new_inner(
             vicinity,
             accounts,
             codes,
@@ -274,7 +274,7 @@ impl WitnessBackend {
             .into_iter()
             .map(|code| (keccak256(&code), code))
             .collect();
-        Ok(Self::assemble(
+        Ok(Self::new_inner(
             vicinity,
             BTreeMap::new(),
             codes,
@@ -316,7 +316,7 @@ impl WitnessBackend {
                 (address, RevealedAccount::Present(revealed))
             })
             .collect();
-        Self::assemble(
+        Self::new_inner(
             vicinity,
             accounts,
             codes,
@@ -326,7 +326,7 @@ impl WitnessBackend {
         )
     }
 
-    const fn assemble(
+    const fn new_inner(
         vicinity: MemoryVicinity,
         accounts: BTreeMap<H160, RevealedAccount>,
         codes: BTreeMap<H256, Vec<u8>>,

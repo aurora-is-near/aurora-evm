@@ -428,7 +428,7 @@ fn execute_block(
                 state.clone(),
                 ancestor_hashes,
             );
-            let output = BlockExecutor::with_active_spec(
+            let output = BlockExecutor::new_with_active_spec(
                 chain.clone(),
                 block_env,
                 transactions,
