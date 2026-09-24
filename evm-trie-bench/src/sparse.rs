@@ -53,21 +53,29 @@ impl Dataset {
     }
 }
 
+/// Secure trie leaves with independent hit/miss expectations.
+fn hashed_dataset(count: u64) -> Dataset {
+    let items = (0..count)
+        .map(|i| {
+            (
+                keccak256(&i.to_be_bytes()).to_vec(),
+                vec![i.to_le_bytes()[0]; 40],
+            )
+        })
+        .collect();
+    Dataset::new(format!("hashed-{count}"), items)
+}
+
+/// Small deterministic inputs keep the permanent RV32 check inexpensive.
+pub fn guest_datasets() -> Vec<Dataset> {
+    [0, 1, 128, 1024].into_iter().map(hashed_dataset).collect()
+}
+
 /// Covers an empty root, secure paths, and embedded nodes with branch values.
 pub fn datasets() -> Vec<Dataset> {
     let mut cases: Vec<_> = [0u64, 1, 128, 10_000]
         .into_iter()
-        .map(|count| {
-            let items = (0..count)
-                .map(|i| {
-                    (
-                        keccak256(&i.to_be_bytes()).to_vec(),
-                        vec![i.to_le_bytes()[0]; 40],
-                    )
-                })
-                .collect();
-            Dataset::new(format!("hashed-{count}"), items)
-        })
+        .map(hashed_dataset)
         .collect();
     cases.push(Dataset::new(
         "embedded".into(),

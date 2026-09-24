@@ -192,7 +192,7 @@ impl BlockExecutor {
         let block_txs_result = self.execute_transactions()?;
         let requests = self.apply_post_execution_changes(&block_txs_result.receipts)?;
         let increments = post_block_balance_increments(self.active_spec, &self.block.withdrawals);
-        self.backend.increment_balances(increments);
+        self.backend.increment_balances(&increments);
 
         Ok(BlockExecutionResult {
             receipts: block_txs_result.receipts,
@@ -202,25 +202,27 @@ impl BlockExecutor {
         })
     }
 
-    /// EIP-2935 and EIP-4788 system calls, before any transaction. Their outcome is not judged;
-    /// an unproven read is.
+    /// EIP-2935 and EIP-4788 calls; ordinary EVM failures are ignored, fatal errors are not.
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         // Genesis has no parent to record.
         if self.block.block_number.is_zero() {
             return Ok(());
         }
 
-        self.apply_blockhashes_contract_call();
+        self.apply_blockhashes_contract_call()?;
         self.apply_beacon_root_contract_call()?;
         self.check_witness()
     }
 
     /// EIP-2935: stores the parent hash in the history contract (Prague+).
-    fn apply_blockhashes_contract_call(&mut self) {
+    fn apply_blockhashes_contract_call(&mut self) -> Result<(), BlockExecutionError> {
         if self.active_spec >= Spec::Prague {
             let parent_hash = self.block.parent_hash;
-            self.transact_system_call(HISTORY_STORAGE_ADDRESS, parent_hash.as_bytes().to_vec());
+            let outcome =
+                self.transact_system_call(HISTORY_STORAGE_ADDRESS, parent_hash.as_bytes().to_vec());
+            self.check_pre_execution_outcome(outcome)?;
         }
+        Ok(())
     }
 
     /// EIP-4788: stores the parent beacon block root in the beacon-roots contract (Cancun+).
@@ -232,7 +234,19 @@ impl BlockExecutor {
             .block
             .parent_beacon_block_root
             .ok_or(BlockExecutionError::MissingParentBeaconBlockRoot)?;
-        self.transact_system_call(BEACON_ROOTS_ADDRESS, root.as_bytes().to_vec());
+        let outcome = self.transact_system_call(BEACON_ROOTS_ADDRESS, root.as_bytes().to_vec());
+        self.check_pre_execution_outcome(outcome)
+    }
+
+    /// Rejects internal EVM failures while preserving the first witness error.
+    fn check_pre_execution_outcome(
+        &self,
+        outcome: SystemCallOutcome,
+    ) -> Result<(), BlockExecutionError> {
+        self.check_witness()?;
+        if outcome.reason.is_fatal() {
+            return Err(BlockExecutionError::ExecutionFailed(outcome.reason));
+        }
         Ok(())
     }
 
@@ -252,12 +266,14 @@ impl BlockExecutor {
             let validated_tx = self
                 .validate_transaction_for_block(tx, counters)
                 .map_err(|source| BlockExecutionError::at_transaction(index, source))?;
+            self.check_witness()?;
             let tx_type = validated_tx.tx.tx_type;
             let tx_blob_count = validated_tx.blob_count;
 
             let outcome = self
                 .execute_validated_tx(validated_tx)
                 .map_err(|source| BlockExecutionError::at_transaction(index, source))?;
+            self.check_witness()?;
 
             // Validation and the executor's gas-limit contract bound this sum for valid input;
             // saturation keeps a broken upstream invariant from wrapping the block total.
