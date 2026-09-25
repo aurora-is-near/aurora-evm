@@ -206,5 +206,26 @@ Input RLP buffers are owned by the store and are not counted as index allocation
 
 The `harness-differential` CI job runs sparse checks on both hash backends under
 the existing benchmark path filter. Allocation/correctness failures fail CI;
-wall-clock timings are printed without a threshold. These are host measurements,
-not RISC Zero cycle/proof measurements; the current guest benchmarks ordered roots.
+wall-clock timings are printed without a threshold.
+
+### Sparse lookups in RISC Zero
+
+The `guest` CI job also runs a separate `sparse` binary with software and accelerated
+Keccak. It covers 0/1/128/1,024-key tries, absence proofs, sorted/reversed/duplicate
+nodes, repeated queries, and missing/malformed roots. Roots and values come from
+the host's independently checked fixtures; the guest checks every answer and error.
+
+```sh
+(cd guest && cargo build --release --bin sparse)
+cargo run --locked --release --no-default-features --features guest-host,sparse --bin sparse-guest-host -- \
+  guest/target/riscv32im-risc0-zkvm-elf/release/sparse
+(cd guest && cargo build --release --bin sparse --features tiny --target-dir target/tiny)
+cargo run --locked --release --no-default-features --features guest-host,sparse,tiny --bin sparse-guest-host -- \
+  guest/target/tiny/riscv32im-risc0-zkvm-elf/release/sparse
+```
+
+Reported guest cycles separate construction from the lookup loop. Input decoding,
+answer verification, and teardown are outside those two regions; session cycles
+include them. Node bytes describe the input, not peak memory. Allocation assertions
+remain in the host check above. Cycle counts are diagnostics without a regression
+threshold or a claim about whole-block/proving speed.

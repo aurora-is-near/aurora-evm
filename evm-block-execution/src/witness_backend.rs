@@ -374,18 +374,15 @@ impl WitnessBackend {
         &mut self.vicinity
     }
 
-    /// Applies post-block balance increments (EIP-4895 withdrawals) as the reference client's
-    /// `increment_balances`: every recipient is touched, and a touched account left EIP-161 empty
-    /// is removed once all increments are applied. Unrevealed recipients record a witness gap.
-    pub fn increment_balances(&mut self, increments: impl IntoIterator<Item = (H160, U256)>) {
-        let mut touched = Vec::new();
-        for (address, amount) in increments {
+    /// Applies increments already summed per recipient, then clears touched empty accounts.
+    /// Unrevealed recipients record a witness gap; the borrowed map also supplies the cleanup pass.
+    pub fn increment_balances(&mut self, increments: &BTreeMap<H160, U256>) {
+        for (&address, &amount) in increments {
             self.increment_balance(address, amount);
-            touched.push(address);
         }
         let accounts = self.accounts.get_mut();
-        for address in touched {
-            if let Some(entry) = accounts.get_mut(&address)
+        for address in increments.keys() {
+            if let Some(entry) = accounts.get_mut(address)
                 && matches!(entry, RevealedAccount::Present(account) if account.is_empty())
             {
                 *entry = RevealedAccount::Absent;
@@ -462,6 +459,13 @@ impl WitnessBackend {
     /// Runs `read` on the account at `address`: `None` for a *proven-absent* one. Records
     /// [`WitnessDbError::Account`] and passes `None` when the witness said nothing.
     fn with_account<R>(&self, address: H160, read: impl FnOnce(Option<&WitnessAccount>) -> R) -> R {
+        // Release this borrow before a cold lookup can populate the cache.
+        if let Some(account) = self.accounts.borrow().get(&address) {
+            return read(match account {
+                RevealedAccount::Present(account) => Some(account),
+                RevealedAccount::Absent => None,
+            });
+        }
         self.ensure_resolved(address);
         let accounts = self.accounts.borrow();
         match accounts.get(&address) {

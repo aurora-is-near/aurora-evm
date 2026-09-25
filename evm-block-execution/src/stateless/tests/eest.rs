@@ -2,7 +2,7 @@
 //!
 //! Every fixture starts from its `pre` allocation. Each block is decoded, recovered, validated
 //! against its verified ancestors, executed, and its header commitments recomputed from the
-//! execution output; blocks marked `expectException` must be rejected at some stage. The final
+//! execution output; `expectException` must fail at a stage allowed by that exception. The final
 //! state is compared with `postState`. Only Cancun-or-later networks are executable here.
 //!
 //! Two modes share the checks: complete-state mode drives the executor over the full state, and
@@ -189,10 +189,81 @@ enum Mode {
 /// Keeps stateless errors typed until the fixture result has been classified.
 enum BlockFailure {
     Stateless(Box<StatelessValidationError>),
+    Execution(Box<BlockExecutionError>),
+    Commitment(Commitment),
     Other(String),
 }
 
+/// Header fields recomputed by the harness after production execution has succeeded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Commitment {
+    GasUsed,
+    BlobGasUsed,
+    ReceiptsRoot,
+    LogsBloom,
+    RequestsHash,
+    StateRoot,
+}
+
+/// Separates invalid blocks from unavailable evidence and internal execution failures.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FailureStage {
+    PreExecution,
+    Execution,
+    Commitment,
+    Witness,
+    Internal,
+}
+
 impl BlockFailure {
+    fn stage(&self) -> FailureStage {
+        match self {
+            Self::Stateless(error) => match error.as_ref() {
+                StatelessValidationError::Execution(error) => execution_failure_stage(error),
+                StatelessValidationError::Witness(_) => FailureStage::Witness,
+                _ => FailureStage::PreExecution,
+            },
+            Self::Execution(error) => execution_failure_stage(error),
+            Self::Commitment(_) => FailureStage::Commitment,
+            Self::Other(_) => FailureStage::PreExecution,
+        }
+    }
+
+    /// Transaction exceptions require execution; block exceptions select their permitted stage.
+    fn matches_exception(&self, exception: &str) -> bool {
+        exception.split('|').any(|exception| {
+            let stage = self.stage();
+            match exception {
+                "BlockException.INVALID_DEPOSIT_EVENT_LAYOUT"
+                | "BlockException.SYSTEM_CONTRACT_CALL_FAILED"
+                | "BlockException.SYSTEM_CONTRACT_EMPTY" => stage == FailureStage::Execution,
+                "BlockException.INVALID_REQUESTS" => {
+                    matches!(self, Self::Commitment(Commitment::RequestsHash))
+                }
+                "BlockException.RLP_STRUCTURES_ENCODING"
+                | "BlockException.BLOB_GAS_USED_ABOVE_LIMIT"
+                | "BlockException.INCORRECT_BLOB_GAS_USED"
+                | "BlockException.INCORRECT_EXCESS_BLOB_GAS"
+                | "BlockException.INVALID_BASEFEE_PER_GAS"
+                | "BlockException.INVALID_GASLIMIT"
+                | "BlockException.INVALID_WITHDRAWALS_ROOT"
+                | "BlockException.INVALID_BLOCK_HASH" => stage == FailureStage::PreExecution,
+                // Fixed-width destinations are checked by the codec; block blob limits also
+                // have a header-level check before transaction execution.
+                "TransactionException.TYPE_3_TX_CONTRACT_CREATION"
+                | "TransactionException.TYPE_4_TX_CONTRACT_CREATION"
+                | "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED"
+                | "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
+                    matches!(stage, FailureStage::PreExecution | FailureStage::Execution)
+                }
+                exception if exception.starts_with("TransactionException.") => {
+                    stage == FailureStage::Execution
+                }
+                _ => false,
+            }
+        })
+    }
+
     fn is_unproven(&self) -> bool {
         matches!(self, Self::Stateless(error) if matches!(error.as_ref(),
             StatelessValidationError::Execution(BlockExecutionError::MissingWitness(
@@ -204,6 +275,15 @@ impl BlockFailure {
             ))
                 | StatelessValidationError::Witness(WitnessStateError::PreStateRootNotRevealed { .. })
         ))
+    }
+}
+
+fn execution_failure_stage(error: &BlockExecutionError) -> FailureStage {
+    match error {
+        BlockExecutionError::Transaction { source, .. } => execution_failure_stage(source),
+        BlockExecutionError::MissingWitness(_) => FailureStage::Witness,
+        BlockExecutionError::ExecutionFailed(_) => FailureStage::Internal,
+        _ => FailureStage::Execution,
     }
 }
 
@@ -222,6 +302,8 @@ impl fmt::Display for BlockFailure {
                 core::error::Error::source(error.as_ref())
             ),
             Self::Other(error) => f.write_str(error),
+            Self::Execution(error) => write!(f, "execution: {error:?}"),
+            Self::Commitment(field) => write!(f, "post-execution mismatch: {field:?}"),
         }
     }
 }
@@ -269,12 +351,59 @@ fn witness_rejections_are_classified_by_type_not_message() {
     }
 }
 
+#[test]
+fn negative_execution_cases_cannot_pass_via_a_commitment_or_witness_failure() {
+    let nonce = BlockExecutionError::at_transaction(
+        0,
+        BlockExecutionError::InvalidNonce {
+            tx: U256::from(u64::MAX),
+            state: U256::from(u64::MAX),
+        },
+    );
+    for error in [
+        BlockFailure::Execution(Box::new(nonce.clone())),
+        BlockFailure::Stateless(Box::new(StatelessValidationError::Execution(nonce))),
+    ] {
+        assert!(error.matches_exception("TransactionException.NONCE_IS_MAX"));
+        assert!(!error.matches_exception("BlockException.INVALID_REQUESTS"));
+    }
+    for error in [
+        BlockFailure::Commitment(Commitment::ReceiptsRoot),
+        BlockFailure::Other("decode".into()),
+        BlockFailure::Execution(Box::new(BlockExecutionError::MissingWitness(
+            WitnessDbError::Account {
+                address: H160::zero(),
+            },
+        ))),
+        BlockFailure::Execution(Box::new(BlockExecutionError::ExecutionFailed(
+            aurora_evm::ExitReason::Fatal(aurora_evm::ExitFatal::UnhandledInterrupt),
+        ))),
+    ] {
+        assert!(!error.matches_exception("TransactionException.NONCE_IS_MAX"));
+        assert!(!error.matches_exception("BlockException.SYSTEM_CONTRACT_EMPTY"));
+    }
+    assert!(
+        BlockFailure::Commitment(Commitment::RequestsHash)
+            .matches_exception("BlockException.INVALID_REQUESTS")
+    );
+    assert!(
+        !BlockFailure::Commitment(Commitment::StateRoot)
+            .matches_exception("BlockException.INVALID_REQUESTS")
+    );
+    assert!(BlockFailure::Other("decode".into()).matches_exception(
+        "BlockException.RLP_STRUCTURES_ENCODING|TransactionException.TYPE_3_TX_CONTRACT_CREATION",
+    ));
+    assert!(!BlockFailure::Other("decode".into()).matches_exception("BlockException.UNKNOWN"));
+}
+
 /// Why a fixture block did not behave as the fixture says.
 enum Failure {
     /// A block marked `expectException` was executed and matched its header.
     AcceptedInvalid { exception: String },
     /// A valid block was rejected.
     RejectedValid { error: String },
+    /// An invalid block failed outside the stages permitted by its expected exception.
+    WrongRejection { exception: String, error: String },
     /// A valid block executed with a different commitment than its header carries.
     Mismatch { field: &'static str },
     /// The final state differs from `postState`.
@@ -288,6 +417,12 @@ impl fmt::Display for Failure {
                 write!(f, "accepted a block expected to fail with {exception}")
             }
             Self::RejectedValid { error } => write!(f, "rejected a valid block: {error}"),
+            Self::WrongRejection { exception, error } => {
+                write!(
+                    f,
+                    "expected {exception}, got an unrelated rejection: {error}"
+                )
+            }
             Self::Mismatch { field } => write!(f, "{field} mismatch"),
             Self::PostState { address } => write!(f, "post-state differs at {address:?}"),
         }
@@ -317,7 +452,19 @@ fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -
         let exception = block.get("expectException").and_then(Value::as_str);
         let raw = hex_bytes(&block["rlp"]);
         let window_start = recent_headers.len().saturating_sub(256);
-        let result = execute_block(mode, &chain, &raw, &recent_headers[window_start..], &state);
+        // Negative cases need complete evidence to test their rejection reason.
+        let block_mode = if mode == Mode::WitnessWithholding && exception.is_some() {
+            Mode::Witness
+        } else {
+            mode
+        };
+        let result = execute_block(
+            block_mode,
+            &chain,
+            &raw,
+            &recent_headers[window_start..],
+            &state,
+        );
         if mode == Mode::WitnessWithholding
             && let Err(error) = &result
             && exception.is_none()
@@ -330,7 +477,20 @@ fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -
             }
         }
         match (result, exception) {
-            (Err(_), Some(_)) => outcome.negative_blocks += 1,
+            (Err(error), Some(exception)) => {
+                if !error.matches_exception(exception) {
+                    outcome.failures.push((
+                        name.to_owned(),
+                        index,
+                        Failure::WrongRejection {
+                            exception: exception.to_owned(),
+                            error: error.to_string(),
+                        },
+                    ));
+                    return Some(());
+                }
+                outcome.negative_blocks += 1;
+            }
             (Err(error), None) => {
                 outcome.failures.push((
                     name.to_owned(),
@@ -361,37 +521,37 @@ fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -
         }
     }
 
+    if let Err(failure) = check_final_state(&state, fixture, last_hash) {
+        outcome
+            .failures
+            .push((name.to_owned(), usize::MAX, failure));
+    }
+    Some(())
+}
+
+/// Checks the exact final account set and the last accepted block's hash.
+fn check_final_state(
+    state: &BTreeMap<H160, MemoryAccount>,
+    fixture: &Value,
+    last_hash: H256,
+) -> Result<(), Failure> {
     let expected = state_from_json(&fixture["postState"]);
     for (address, account) in &expected {
         if state.get(address) != Some(account) {
-            outcome.failures.push((
-                name.to_owned(),
-                usize::MAX,
-                Failure::PostState { address: *address },
-            ));
-            return Some(());
+            return Err(Failure::PostState { address: *address });
         }
     }
     for address in state.keys() {
         if !expected.contains_key(address) {
-            outcome.failures.push((
-                name.to_owned(),
-                usize::MAX,
-                Failure::PostState { address: *address },
-            ));
-            return Some(());
+            return Err(Failure::PostState { address: *address });
         }
     }
     if hex_h256(&fixture["lastblockhash"]) != last_hash {
-        outcome.failures.push((
-            name.to_owned(),
-            usize::MAX,
-            Failure::Mismatch {
-                field: "lastblockhash",
-            },
-        ));
+        return Err(Failure::Mismatch {
+            field: "lastblockhash",
+        });
     }
-    Some(())
+    Ok(())
 }
 
 /// Decodes, validates and executes one block over `state`, checking every header commitment
@@ -436,7 +596,7 @@ fn execute_block(
                 active_spec,
             )
             .execute()
-            .map_err(|error| format!("execution: {error}"))?;
+            .map_err(|error| BlockFailure::Execution(Box::new(error)))?;
             (
                 output.result,
                 fold_post_state(BTreeMap::new(), output.state),
@@ -458,7 +618,7 @@ fn execute_block(
             )
         }
     };
-    check_commitments(&header, &result, &post_state)?;
+    check_commitments(&header, &result, &post_state).map_err(BlockFailure::Commitment)?;
     Ok((header, post_state))
 }
 
@@ -467,31 +627,30 @@ fn check_commitments(
     header: &Header,
     result: &BlockExecutionResult,
     post_state: &BTreeMap<H160, MemoryAccount>,
-) -> Result<(), String> {
-    let mismatch = |field: &'static str| format!("post-execution mismatch: {field}");
+) -> Result<(), Commitment> {
     if result.gas_used != header.gas_used {
-        return Err(mismatch("gas_used"));
+        return Err(Commitment::GasUsed);
     }
     if result.blob_gas_used != header.blob_gas_used.unwrap_or_default() {
-        return Err(mismatch("blob_gas_used"));
+        return Err(Commitment::BlobGasUsed);
     }
     if receipts_root(&result.receipts) != header.receipts_root {
-        return Err(mismatch("receipts_root"));
+        return Err(Commitment::ReceiptsRoot);
     }
     let mut bloom = Bloom::zero();
     for receipt in &result.receipts {
         bloom.accrue_bloom(&receipt.bloom);
     }
     if bloom != header.logs_bloom {
-        return Err(mismatch("logs_bloom"));
+        return Err(Commitment::LogsBloom);
     }
     if let Some(expected) = header.requests_hash
         && result.requests.requests_hash() != expected
     {
-        return Err(mismatch("requests_hash"));
+        return Err(Commitment::RequestsHash);
     }
     if state_root(post_state) != header.state_root {
-        return Err(mismatch("state_root"));
+        return Err(Commitment::StateRoot);
     }
     Ok(())
 }

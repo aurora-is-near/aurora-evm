@@ -1,4 +1,5 @@
 mod eest;
+mod minimal_witness;
 
 use super::{StatelessValidationError, stateless_validation};
 use crate::block::{

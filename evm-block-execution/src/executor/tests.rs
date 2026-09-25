@@ -1436,6 +1436,23 @@ fn absent_pre_execution_contracts_are_a_no_op_not_an_error() {
 }
 
 #[test]
+fn reverted_or_halted_pre_execution_calls_do_not_invalidate_the_block() {
+    for target in [HISTORY_STORAGE_ADDRESS, BEACON_ROOTS_ADDRESS] {
+        for ending in [vec![0x5f, 0x5f, 0xfd], vec![0xfe]] {
+            let mut code = vec![0x60, 0x01, 0x5f, 0x55]; // SSTORE(0, 1)
+            code.extend(ending);
+            let mut state = system_contracts();
+            state.insert(target, account(0, 1, code));
+            let blk = prague_block(7, H256::zero(), Some(H256::zero()));
+            let output = execute(Spec::Prague, blk, state, vec![]).unwrap();
+            assert_eq!(slot_of(&output.state, target, 0), H256::zero());
+            assert_eq!(output.result.gas_used, 0);
+            assert!(output.result.receipts.is_empty());
+        }
+    }
+}
+
+#[test]
 fn request_contracts_must_have_code_from_prague() {
     let blk = prague_block(7, H256::repeat_byte(0x51), Some(H256::repeat_byte(0xbe)));
     let mut state = system_contracts();

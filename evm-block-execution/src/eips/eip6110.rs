@@ -1,10 +1,8 @@
 //! [EIP-6110] deposit requests parsed from deposit-contract logs.
 //!
 //! The deposit contract emits `DepositEvent(bytes pubkey, bytes withdrawal_credentials,
-//! bytes amount, bytes signature, bytes index)`. Every field has a fixed size, so the ABI layout
-//! of a genuine event is one exact byte pattern: five offset words, then each field as a length
-//! word followed by its zero-padded bytes. A log at the deposit address with the event topic but
-//! any other layout makes the block invalid (execution-specs `parse_deposit_data`).
+//! bytes amount, bytes signature, bytes index)`. The parser checks the total length, five offsets
+//! and five field sizes, as in execution-specs `parse_deposit_data`; padding bytes are ignored.
 //!
 //! The request data is the concatenation of the five raw fields (192 bytes per deposit), in log
 //! order across the block's receipts.
@@ -126,7 +124,7 @@ fn word(data: &[u8], position: usize) -> Option<usize> {
     Some(usize::from_be_bytes(low.try_into().ok()?))
 }
 
-/// Appends the five raw fields of one canonically encoded deposit event to `out`.
+/// Appends the five raw fields of a deposit event with the required ABI layout to `out`.
 ///
 /// # Errors
 /// [`DepositLogError`] if the data deviates from the canonical layout in length, any offset or
