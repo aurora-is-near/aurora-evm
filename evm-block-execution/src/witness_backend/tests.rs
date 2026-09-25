@@ -797,7 +797,7 @@ fn a_complete_state_treats_absence_as_proof() {
     assert_eq!(db.missing(), None);
 
     // Writes and credits to unknown addresses create them without a gap.
-    db.increment_balances([(addr(0xee), U256::from(3u64))]);
+    db.increment_balances(&BTreeMap::from([(addr(0xee), U256::from(3u64))]));
     db.apply(
         vec![Apply::Modify {
             address: addr(0xdd),
@@ -838,10 +838,10 @@ fn increments_add_to_present_create_from_absent_and_poison_unknown() {
         vec![],
     );
 
-    db.increment_balances([(present, U256::from(10u64))]);
+    db.increment_balances(&BTreeMap::from([(present, U256::from(10u64))]));
     assert_eq!(db.basic(present).balance, U256::from(17u64));
 
-    db.increment_balances([(absent, U256::from(4u64))]);
+    db.increment_balances(&BTreeMap::from([(absent, U256::from(4u64))]));
     let RevealedAccount::Present(created) = db.accounts()[&absent].clone() else {
         panic!("the increment creates the account");
     };
@@ -852,7 +852,7 @@ fn increments_add_to_present_create_from_absent_and_poison_unknown() {
     );
     assert_eq!(db.missing(), None);
 
-    db.increment_balances([(unknown, U256::one())]);
+    db.increment_balances(&BTreeMap::from([(unknown, U256::one())]));
     assert_eq!(db.basic(unknown).balance, U256::one());
     assert_eq!(
         db.missing(),
@@ -873,7 +873,10 @@ fn a_zero_increment_touches_without_creating() {
         ],
         vec![],
     );
-    db.increment_balances([(empty, U256::zero()), (absent, U256::zero())]);
+    db.increment_balances(&BTreeMap::from([
+        (empty, U256::zero()),
+        (absent, U256::zero()),
+    ]));
     assert_eq!(db.accounts()[&empty], RevealedAccount::Absent);
     assert_eq!(db.accounts()[&absent], RevealedAccount::Absent);
     assert_eq!(db.missing(), None);
@@ -884,14 +887,13 @@ fn a_zero_increment_touches_without_creating() {
         vec![(alive, RevealedAccount::Present(account_with_code()))],
         vec![],
     );
-    db.increment_balances([(alive, U256::zero())]);
+    db.increment_balances(&BTreeMap::from([(alive, U256::zero())]));
     assert_eq!(db.basic(alive).balance, U256::from(7u64));
 }
 
-/// Removal follows the whole phase, not the single increment: an empty account incremented by zero
-/// and then funded survives with the storage an immediate removal would have wiped.
+/// A funded recipient keeps its storage; duplicate withdrawals are aggregated by the caller.
 #[test]
-fn a_zero_increment_before_a_funding_one_keeps_the_account_and_its_storage() {
+fn an_aggregated_increment_keeps_the_account_and_its_storage() {
     let who = addr(0xe0);
     let empty_with_storage = WitnessAccount {
         storage_root: H256::repeat_byte(0x5a),
@@ -903,7 +905,7 @@ fn a_zero_increment_before_a_funding_one_keeps_the_account_and_its_storage() {
         vec![],
     );
 
-    db.increment_balances([(who, U256::zero()), (who, U256::from(5u64))]);
+    db.increment_balances(&BTreeMap::from([(who, U256::from(5u64))]));
 
     let RevealedAccount::Present(account) = db.accounts()[&who].clone() else {
         panic!("the funded account must survive the phase");

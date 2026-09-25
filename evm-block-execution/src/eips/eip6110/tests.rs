@@ -83,6 +83,19 @@ fn mainnet_deposits_produce_the_published_request_bytes() {
 }
 
 #[test]
+fn abi_padding_does_not_change_the_deposit_request() {
+    let mut data = LOG_A;
+    for padding in [240..256, 360..384, 552..576] {
+        data[padding].fill(0xff);
+    }
+    let receipts = [receipt(vec![deposit_log(data.to_vec())])];
+    assert_eq!(
+        parse_deposits_from_receipts(&receipts, MAINNET_DEPOSIT_CONTRACT_ADDRESS).unwrap(),
+        EXPECTED[..DEPOSIT_REQUEST_LENGTH]
+    );
+}
+
+#[test]
 fn foreign_logs_and_other_topics_are_ignored() {
     let mut other_address = deposit_log(LOG_A.to_vec());
     other_address.address = H160::repeat_byte(0x11);

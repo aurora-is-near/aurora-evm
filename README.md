@@ -39,6 +39,7 @@ Supported Ethereum hard forks:
 - [x] Shanghai
 - [x] Cancun
 - [x] Prague
+- [x] Osaka
 
 ## Ethereum tests supported
 
