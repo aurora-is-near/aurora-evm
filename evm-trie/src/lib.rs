@@ -3,7 +3,7 @@
 //! Values are consumed in lexicographic key order without sorting or retaining encoded leaves.
 //! The builder uses bounded stack scratch through 65,536 items and a depth-sized heap buffer above
 //! that. It does not support arbitrary or secure-trie keys.
-//! Read-only witness lookups for arbitrary byte paths are provided separately by [`sparse`].
+//! Witness lookups and updates of already-hashed secure keys are provided separately by [`sparse`].
 //!
 //! The default hash backend is `sha3`. The `tiny-keccak` feature selects the same Keccak-256
 //! primitive through `tiny-keccak`; VM acceleration requires the guest's matching dependency patch.

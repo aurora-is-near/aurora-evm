@@ -3,7 +3,7 @@ name = "aurora-evm-trie"
 authors.workspace = true
 edition.workspace = true
 version.workspace = true
-description = "Streaming Ethereum ordered Merkle-Patricia trie roots"
+description = "Ethereum ordered Merkle-Patricia roots and sparse witness tries"
 repository.workspace = true
 license.workspace = true
 
@@ -23,6 +23,7 @@ tiny-keccak = ["dep:tiny-keccak"]
 test-utils = []
 
 [dev-dependencies]
+hex.workspace = true
 hash-db.workspace = true
 plain_hasher.workspace = true
 triehash.workspace = true

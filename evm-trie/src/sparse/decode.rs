@@ -26,6 +26,7 @@ pub(super) enum Decoded {
 }
 
 /// A validated child reference.
+#[derive(Clone, Copy)]
 pub(super) enum Child<'a> {
     Hash([u8; 32]),
     Embedded(&'a [u8]),

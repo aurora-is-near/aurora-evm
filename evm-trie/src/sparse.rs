@@ -1,7 +1,8 @@
-//! Read-only Merkle-Patricia trie lookups from a trusted root and witness nodes.
+//! Merkle-Patricia trie lookups and secure-key updates over witness nodes.
 //!
 //! [`NodeStore`] indexes RLP nodes by Keccak-256 and follows hashed or embedded children.
 //! Lookups borrow values without allocation; validated field offsets avoid rescanning branches.
+//! [`PatchTrie`] updates revealed paths while retaining references to untouched subtrees.
 //!
 //! Node formats follow the [Yellow Paper], Appendices B–D. See the
 //! [lookup algorithm and trust boundary](crate#sparse-witness-lookups) for implementation details.
@@ -12,7 +13,9 @@ use crate::crypto::keccak256;
 use crate::sparse::decode::{Child, Decoded, Malformed, Node};
 
 mod decode;
+mod patch;
 mod sort;
+pub use patch::{PatchError, PatchTrie};
 #[cfg(any(test, feature = "test-utils"))]
 mod tests;
 #[cfg(feature = "test-utils")]

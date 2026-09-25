@@ -155,3 +155,56 @@ backends; timing results are diagnostic, without unstable wall-clock thresholds.
 The `test-utils` feature exposes `sparse::reference::hashed_nodes`. This recursive
 builder constructs witnesses from complete maps and is checked against
 `triehash`; it is an allocating test oracle, not the production lookup algorithm.
+
+## Sparse secure-trie updates
+
+`sparse::PatchTrie` is an isolated mutable overlay over `NodeStore`. Its keys are
+exactly 32 bytes, already hashed; it neither hashes keys nor interprets account or
+storage values. Values must be nonempty. State-root integration belongs to the
+block-execution layer and is not provided by this overlay.
+
+### Updates and canonicalization
+
+- Start from an authenticated root, or the canonical empty root. Unchanged hash
+  references need not be revealed, even during finalization.
+- Follow borrowed witness nodes until a modification is necessary. Equal-value
+  inserts and absent-key removals allocate no overlay nodes or value bytes.
+- Split leaves/extensions at the first differing nibble. Branches have no terminal
+  value for these fixed-length keys. Reached leaves must exhaust the remaining
+  path; reached branches and extensions must leave room for their descendants.
+- After deletion, compress unary branches and merge adjoining short paths.
+  Compression needs the surviving child's node, not just its hash. A withheld
+  sibling returns `BlindedNode`; invalid reached structure returns `MalformedNode`.
+- Apply upserts before removals, as in zeth's `SparseState::calculate_state_root`
+  and reth's canonical witness generator. This avoids requiring siblings solely
+  because of transient branch collapse. A full witness and a minimized witness
+  have the same root, but need not support the same intermediate update order.
+
+An update may have changed the overlay before discovering a witness gap. Its
+first error is therefore sticky: subsequent updates and `root_hash` return it.
+There is no per-operation rollback or full-trie clone. `reset(root)` explicitly
+discards both changes and the error, retaining capacity for another trie in the
+same immutable store.
+
+### Encoding and memory
+
+Only changed ancestors lose their cached commitments. Finalization visits dirty
+nodes bottom-up, using one RLP stream. Encodings shorter than 32 bytes are cached
+inline; other nodes retain their Keccak hash. A repeated `root_hash` without
+updates performs no encoding, hashing, or allocation. List-completion assertions
+guard encoder bugs before reading raw bytes; they do not replace witness checks.
+
+Nodes, branch arrays, and new value bytes occupy separate reusable arenas.
+Witness values remain borrowed. Paths use packed 32-byte storage and nibble
+offsets, not individually allocated vectors. Obsolete changed nodes/value ranges
+remain until reset: this is a batch-oriented overlay, not a long-lived database.
+Arena growth can allocate and copy backing buffers; under a bump allocator those
+old allocations are not reclaimed. Reusing one overlay for successive storage
+tries avoids repeating that growth once capacities suffice. Recursion consumes
+at least one nibble per edge and is bounded by the 64-nibble key length.
+
+Tests compare intermediate roots with `triehash`, exercise withheld collapse
+siblings, 31/32-byte child encodings, no-op hash/allocation invariants, malformed
+paths, and an official EEST v5.4.0 account/storage transition. The isolated RV32
+benchmark additionally checks roots against Alloy and measures cold versus reset
+arenas; it does not claim end-to-end block execution performance.
