@@ -1,7 +1,7 @@
 //! EIP-4844 constants and helpers for blob gas pricing.
 
-use crate::types::transaction::Transaction;
 use crate::types::StateEnv;
+use crate::types::transaction::Transaction;
 use aurora_evm::Config;
 use primitive_types::U256;
 use serde::Deserialize;
@@ -157,11 +157,9 @@ pub fn fake_exponential(factor: u64, numerator: u64, denominator: u64) -> u128 {
 #[must_use]
 pub fn calc_max_data_fee(config: &Config, tx: &Transaction) -> Option<U256> {
     config.has_shard_blob_transactions.then(|| {
-        tx.max_fee_per_blob_gas
-            .unwrap_or_default()
-            .saturating_mul(U256::from(get_total_blob_gas(
-                tx.blob_versioned_hashes.len(),
-            )))
+        U256::from(tx.max_fee_per_blob_gas.unwrap_or_default()).saturating_mul(U256::from(
+            get_total_blob_gas(tx.blob_versioned_hashes.len()),
+        ))
     })
 }
 

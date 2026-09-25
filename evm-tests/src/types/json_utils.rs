@@ -49,6 +49,23 @@ pub fn u256_from_hex_str<'de, D: Deserializer<'de>>(value: &str) -> Result<U256,
     U256::from_str_radix(value, 16).map_err(|e| convert_error::<D>(e, "U256"))
 }
 
+/// Converts a hexadecimal string into a `u128` value.
+///
+/// EIP-4844 types `max_fee_per_blob_gas` as `uint256`, but the value only ever appears in a
+/// *valid* (affordable) blob transaction, which bounds it far below `u128::MAX`; `u128` is
+/// therefore sufficient here and matches the transaction type. Returns an error if the string has
+/// more than 32 hex digits or parsing fails.
+pub fn u128_from_hex_str<'de, D: Deserializer<'de>>(value: &str) -> Result<u128, D::Error> {
+    if value.len() > 32 {
+        return Err(Error::custom(format!(
+            "u128 value too big (length={})",
+            value.len()
+        )));
+    }
+
+    u128::from_str_radix(value, 16).map_err(|e| convert_error::<D>(e, "u128"))
+}
+
 /// Converts a hexadecimal string into a `H160` value.
 /// Returns an error if the string length is greater than 40 or parsing fails.
 pub fn h160_from_hex_str<'de, D: Deserializer<'de>>(value: &str) -> Result<H160, D::Error> {
@@ -153,6 +170,15 @@ pub fn deserialize_u256_from_str_opt<'de, D: Deserializer<'de>>(
 ) -> Result<Option<U256>, D::Error> {
     Option::<String>::deserialize(deserializer)?
         .map(|s| u256_from_hex_str::<D>(strip_0x_prefix(&s)))
+        .transpose()
+}
+
+/// Deserializes an optional hex string into `Option<u128>` (see [`u128_from_hex_str`]).
+pub fn deserialize_u128_from_str_opt<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u128>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .map(|s| u128_from_hex_str::<D>(strip_0x_prefix(&s)))
         .transpose()
 }
 

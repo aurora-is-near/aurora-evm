@@ -1,0 +1,58 @@
+[package]
+name = "aurora-evm-trie-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# This harness is excluded from the repository workspace; keep benchmark versions explicit.
+aurora-evm-trie = { path = "../evm-trie" }
+alloy-trie = { version = "=0.9.5", default-features = false }
+alloy-primitives = { version = "=1.7.2", default-features = false, features = ["rlp"] }
+sha3 = "=0.10.9"
+tiny-keccak = { version = "=2.0.2", features = ["keccak"], optional = true }
+hash-db = "=0.15.2"
+plain_hasher = "=0.2.3"
+rlp = "=0.6.1"
+triehash = "=0.8.4"
+hex = "=0.4.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
+aurora-evm-block-execution = { path = "../evm-block-execution", optional = true }
+risc0-zkvm = { version = "=3.0.6", default-features = false, features = ["client"], optional = true }
+risc0-binfmt = { version = "=3.0.5", optional = true }
+risc0-zkos-v1compat = { version = "=2.2.3", optional = true }
+
+[features]
+default = ["corpus"]
+corpus = ["dep:serde_json", "dep:aurora-evm-block-execution"]
+allocations = []
+sparse = ["aurora-evm-trie/test-utils"]
+tiny = ["dep:tiny-keccak", "alloy-primitives/tiny-keccak", "aurora-evm-trie/tiny-keccak"]
+guest-host = ["dep:risc0-zkvm", "dep:risc0-binfmt", "dep:risc0-zkos-v1compat"]
+
+[[bin]]
+name = "corpus"
+required-features = ["corpus"]
+
+[[bin]]
+name = "bench"
+required-features = ["corpus"]
+
+[[bin]]
+name = "sparse"
+required-features = ["sparse"]
+
+[[bin]]
+name = "guest-host"
+required-features = ["guest-host", "corpus"]
+
+[[bin]]
+name = "sparse-guest-host"
+required-features = ["guest-host", "sparse"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

@@ -1,0 +1,37 @@
+[package]
+name = "aurora-evm-block-execution"
+authors.workspace = true
+edition.workspace = true
+version.workspace = true
+description = "Aurora EVM block execution library"
+categories.workspace = true
+keywords.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+
+[lints]
+workspace = true
+
+[dependencies]
+aurora-evm = { workspace = true, features = ["with-serde"] }
+aurora-evm-trie.workspace = true
+aurora-engine-precompiles.workspace = true
+c-kzg = "2.1"
+hash-db.workspace = true
+hex-literal.workspace = true
+libsecp256k1.workspace = true
+primitive-types = { workspace = true, features = ["rlp", "serde", "std"] }
+plain_hasher.workspace = true
+rlp = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
+sha3.workspace = true
+triehash.workspace = true
+
+[dev-dependencies]
+aurora-evm-trie = { workspace = true, features = ["test-utils"] }
+hex = "0.4"
+serde_json = "1.0"
+
+[features]
