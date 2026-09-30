@@ -279,4 +279,6 @@ pub enum InvalidTxReason {
     CreateTransaction,
     GasFloorMoreThanGasLimit,
     AccessListNotSupported,
+    /// EIP-7825: transaction gas limit above the Osaka cap
+    GasLimitExceedsMaximum,
 }

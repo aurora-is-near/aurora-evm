@@ -7,6 +7,8 @@ pub const GAS_PER_BLOB: u64 = 1 << 17;
 /// Max number of blobs per block: EIP-7691
 pub const MAX_BLOBS_PER_BLOCK_ELECTRA: u64 = 9;
 pub const MAX_BLOBS_PER_BLOCK_CANCUN: u64 = 6;
+/// Max number of blobs per transaction: EIP-7594 (Osaka)
+pub const MAX_BLOBS_PER_TX_OSAKA: u64 = 6;
 /// Target consumable blob gas for data blobs per block: EIP-7691
 pub const TARGET_BLOB_GAS_PER_BLOCK: u64 = 786_432;
 /// Minimum gas price for data blobs.

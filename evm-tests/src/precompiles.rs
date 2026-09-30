@@ -13,6 +13,7 @@ use aurora_engine_precompiles::{
     identity::Identity,
     modexp::ModExp,
     secp256k1::ECRecover,
+    secp256r1::Secp256r1,
     Berlin, Byzantium, EthGas, Istanbul, Osaka, Precompile,
 };
 use aurora_evm::executor::stack::{
@@ -168,6 +169,8 @@ impl Precompiles {
         map.insert(BlsPairingCheck::ADDRESS.raw(), Box::new(BlsPairingCheck));
         map.insert(BlsMapFpToG1::ADDRESS.raw(), Box::new(BlsMapFpToG1));
         map.insert(BlsMapFp2ToG2::ADDRESS.raw(), Box::new(BlsMapFp2ToG2));
+        // EIP-7951: P256VERIFY at 0x100
+        map.insert(Secp256r1::ADDRESS.raw(), Box::new(Secp256r1));
         Self(map)
     }
 }

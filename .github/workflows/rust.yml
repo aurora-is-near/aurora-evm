@@ -67,6 +67,13 @@ jobs:
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
           ethereum-spec-tests/fixtures/state_tests/
 
+      - name: Run Ethereum state tests (Osaka)
+        run: |
+          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f -s Osaka \
+          ethtests/GeneralStateTests/ \
+          ethtests/LegacyTests/Cancun/GeneralStateTests/ \
+          ethereum-spec-tests/fixtures/state_tests/
+
       - name: Run Ethereum vm tests
         run: |
           cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
@@ -115,6 +122,11 @@ jobs:
             tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
             cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
+              ethtests/GeneralStateTests/ \
+              ethtests/LegacyTests/Cancun/GeneralStateTests/ \
+              ethereum-spec-tests/fixtures/state_tests/
+
+            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f -s Osaka \
               ethtests/GeneralStateTests/ \
               ethtests/LegacyTests/Cancun/GeneralStateTests/ \
               ethereum-spec-tests/fixtures/state_tests/
