@@ -274,6 +274,46 @@ pub fn check_validate_exit_reason(
                         "unexpected exception {exception:?} for TooManyBlobs for test: [{spec:?}] {name}"
                     );
                 }
+                InvalidTxReason::InvalidSignature => {
+                    let check_result = exception == "TransactionException.INVALID_SIGNATURE_VRS"
+                        || exception == "TransactionException.INVALID_SIGNATURE_VRS|TransactionException.INVALID_CHAINID";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for InvalidSignature for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::InvalidChainId => {
+                    let check_result = exception == "TransactionException.INVALID_CHAINID"
+                        || exception == "TransactionException.INVALID_SIGNATURE_VRS|TransactionException.INVALID_CHAINID";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for InvalidChainId for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::NonceIsMax => {
+                    let check_result = exception == "TransactionException.NONCE_IS_MAX"
+                        || exception == "TR_NonceHasMaxValue";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for NonceIsMax for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::NonceTooHigh => {
+                    let check_result =
+                        exception == "TransactionException.NONCE_MISMATCH_TOO_HIGH";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for NonceTooHigh for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::NonceTooLow => {
+                    let check_result =
+                        exception == "TransactionException.NONCE_MISMATCH_TOO_LOW";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for NonceTooLow for test: [{spec:?}] {name}"
+                    );
+                }
                 InvalidTxReason::GasLimitExceedsMaximum => {
                     let check_result =
                         exception == "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM";

@@ -99,6 +99,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
         let caller = test.transaction.get_caller_from_secret_key();
 
         let caller_balance = original_state.caller_balance(caller);
+        let caller_nonce = original_state.caller_nonce(caller);
         // EIP-3607
         let caller_code = original_state.caller_code(caller);
         // EIP-7702 - check if it's delegated designation. If it's a delegation designation, then,
@@ -125,6 +126,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             let valid_tx = test.transaction.validate(
                 test.env.block_gas_limit,
                 caller_balance,
+                caller_nonce,
                 &gasometer_config,
                 &vicinity,
                 blob_gas_price,

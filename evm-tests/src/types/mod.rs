@@ -4,11 +4,12 @@ use crate::types::blob::BlobExcessGasAndPrice;
 use crate::types::json_utils::{
     deserialize_bytes_from_str, deserialize_bytes_from_str_opt, deserialize_h160_from_str,
     deserialize_h256_from_u256_str, deserialize_h256_from_u256_str_opt, deserialize_u256_from_str,
-    deserialize_u64_from_str_opt,
+    deserialize_u64_from_str_opt, IgnoredField,
 };
 use aurora_evm::backend::MemoryVicinity;
 use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
+use sha3::{Digest, Keccak256};
 use std::collections::BTreeMap;
 
 pub mod account_state;
@@ -104,11 +105,17 @@ impl StateTestCase {
 
         let blob_hashes = tx.blob_versioned_hashes.clone();
 
+        // State tests convention: hash of block `n` is `keccak256(n.to_string())` (last 256 blocks)
+        let block_hashes = (1..=256u64)
+            .map_while(|depth| self.env.block_number.checked_sub(U256::from(depth)))
+            .map(|number| H256::from(<[u8; 32]>::from(Keccak256::digest(number.to_string()))))
+            .collect();
+
         Ok(MemoryVicinity {
             gas_price,
             effective_gas_price,
             origin: self.transaction.get_caller_from_secret_key(),
-            block_hashes: Vec::new(),
+            block_hashes,
             block_number: self.env.block_number,
             block_coinbase: self.env.block_coinbase,
             block_timestamp: self.env.block_timestamp,
@@ -243,6 +250,9 @@ pub struct PostState {
     /// Post Accounts state
     #[serde(default)]
     pub post_state: Option<AccountsState>,
+    /// Transaction receipt: its effects are already covered by the post state hash
+    #[serde(default)]
+    pub receipt: Option<IgnoredField>,
 }
 
 /// Post State indexes.
@@ -281,4 +291,14 @@ pub enum InvalidTxReason {
     AccessListNotSupported,
     /// EIP-7825: transaction gas limit above the Osaka cap
     GasLimitExceedsMaximum,
+    /// Invalid `v`, `r` or `s` signature values
+    InvalidSignature,
+    /// Transaction chain ID differs from the chain ID
+    InvalidChainId,
+    /// EIP-2681: transaction nonce is `2^64-1`
+    NonceIsMax,
+    /// Transaction nonce is above the sender nonce
+    NonceTooHigh,
+    /// Transaction nonce is below the sender nonce
+    NonceTooLow,
 }

@@ -8,9 +8,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v17.0
-  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_stable.tar.gz
-  # Same release, `develop` build (filled up to BPO4): the only v5.4.0 build with Osaka state tests
-  ETHEREUM_SPEC_TESTS_DEVELOP_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_develop.tar.gz
+  # EEST tests@v20.0.2: a single build for all forks up to Osaka
+  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.2/fixtures.tar.gz
 
 jobs:
   unit-tests:
@@ -73,13 +72,7 @@ jobs:
         run: |
           curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
           mkdir ethereum-spec-tests
-          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
-
-      - name: Download Ethereum spec tests develop fixtures (Osaka)
-        run: |
-          curl -L ${{ env.ETHEREUM_SPEC_TESTS_DEVELOP_URL }} -o ethereum-spec-tests-develop.tar.gz
-          mkdir ethereum-spec-tests-develop
-          tar -xzf ethereum-spec-tests-develop.tar.gz -C ethereum-spec-tests-develop fixtures/state_tests
+          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests fixtures/state_tests
 
       - name: Run Ethereum state tests
         run: |
@@ -87,11 +80,6 @@ jobs:
           ethtests/GeneralStateTests/ \
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
           ethereum-spec-tests/fixtures/state_tests/
-
-      - name: Run Ethereum state tests (Osaka)
-        run: |
-          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f -s Osaka \
-          ethereum-spec-tests-develop/fixtures/state_tests/
 
       - name: Run Ethereum vm tests
         run: |

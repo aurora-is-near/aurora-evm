@@ -15,6 +15,57 @@ use sha3::Digest;
 /// EIP-7825: maximum transaction gas limit starting from Osaka (2^24).
 const MAX_TX_GAS_LIMIT_OSAKA: u64 = 1 << 24;
 
+/// The order of the secp256k1 curve.
+const SECP256K1N: U256 = U256([
+    0xBFD2_5E8C_D036_4141,
+    0xBAAE_DCE6_AF48_A03B,
+    0xFFFF_FFFF_FFFF_FFFE,
+    0xFFFF_FFFF_FFFF_FFFF,
+]);
+
+/// Signature values `(v, r, s)` of a signed transaction (`v` is `y_parity` for typed ones).
+fn signature_values(tx_bytes: &[u8]) -> Option<(U256, U256, U256)> {
+    let tx_type = TxType::from_tx_bytes(tx_bytes);
+    let payload = if tx_type == TxType::Legacy {
+        tx_bytes
+    } else {
+        tx_bytes.get(1..)?
+    };
+
+    let mut rlp = rlp::Rlp::new(payload);
+    // EIP-4844 network form wraps the transaction together with blobs
+    if tx_type == TxType::ShardBlob && rlp.at(0).ok()?.is_list() {
+        rlp = rlp.at(0).ok()?;
+    }
+
+    let count = rlp.item_count().ok()?;
+    let value = |index: usize| -> Option<U256> {
+        let bytes = rlp.at(index).ok()?.data().ok()?;
+        (bytes.len() <= 32).then(|| U256::from_big_endian(bytes))
+    };
+
+    Some((
+        value(count.checked_sub(3)?)?,
+        value(count - 2)?,
+        value(count - 1)?,
+    ))
+}
+
+/// Signature validity: `0 < r < n`, `0 < s <= n/2` (EIP-2) and a well-formed `v`.
+fn is_valid_signature(tx_bytes: &[u8]) -> bool {
+    let Some((v, r, s)) = signature_values(tx_bytes) else {
+        return false;
+    };
+    let is_valid_v = if TxType::from_tx_bytes(tx_bytes) == TxType::Legacy {
+        // Pre EIP-155 `27/28` or EIP-155 `chain_id * 2 + 35/36`
+        v == U256::from(27) || v == U256::from(28) || v >= U256::from(35)
+    } else {
+        v <= U256::one()
+    };
+
+    is_valid_v && !r.is_zero() && r < SECP256K1N && !s.is_zero() && s <= eip_7702::SECP256K1N_HALF
+}
+
 /// Transaction data.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +76,9 @@ pub struct Transaction {
         deserialize_with = "deserialize_u8_from_str_opt"
     )]
     pub tx_type: Option<u8>,
+    /// Transaction chain ID (absent in legacy fixtures)
+    #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
+    pub chain_id: Option<U256>,
     #[serde(deserialize_with = "deserialize_vec_of_hex")]
     pub data: Vec<Vec<u8>>,
     #[serde(deserialize_with = "deserialize_vec_u256_from_str")]
@@ -101,13 +155,18 @@ impl Transaction {
             .collect()
     }
 
-    /// Get caller from transaction's secret key.
+    /// Get caller from transaction's secret key, or from `sender` when the fixture has no key
+    /// (transactions with an invalid signature can't be signed by the filler).
     ///
     /// # Panics
-    /// If the transaction secret is missing or if parsing the secret key fails.
+    /// If both the secret key and the sender are missing, or if parsing the secret key fails.
     #[must_use]
     pub fn get_caller_from_secret_key(&self) -> H160 {
-        let hash = self.secret_key.unwrap();
+        let Some(hash) = self.secret_key else {
+            return self
+                .sender
+                .expect("expect transaction secret key or sender");
+        };
         let mut secret_key = [0; 32];
         secret_key.copy_from_slice(hash.as_bytes());
         let secret = libsecp256k1::SecretKey::parse(&secret_key);
@@ -152,6 +211,7 @@ impl Transaction {
         &self,
         block_gas_limit: U256,
         caller_balance: U256,
+        caller_nonce: U256,
         config: &aurora_evm::Config,
         vicinity: &MemoryVicinity,
         blob_gas_price: Option<BlobExcessGasAndPrice>,
@@ -161,6 +221,31 @@ impl Transaction {
     ) -> Result<Vec<Authorization>, InvalidTxReason> {
         let gas_limit = self.get_gas_limit(state);
         let mut authorization_list: Vec<Authorization> = vec![];
+
+        // The sender is defined only by a valid signature for the expected chain
+        if !is_valid_signature(&state.tx_bytes) {
+            return Err(InvalidTxReason::InvalidSignature);
+        }
+
+        if self
+            .chain_id
+            .is_some_and(|chain_id| chain_id != vicinity.chain_id)
+        {
+            return Err(InvalidTxReason::InvalidChainId);
+        }
+
+        // EIP-2681: transaction nonce must be below 2^64-1, then it must match the sender nonce
+        if self.nonce >= U256::from(u64::MAX) {
+            return Err(InvalidTxReason::NonceIsMax);
+        }
+
+        if self.nonce > caller_nonce {
+            return Err(InvalidTxReason::NonceTooHigh);
+        }
+
+        if self.nonce < caller_nonce {
+            return Err(InvalidTxReason::NonceTooLow);
+        }
 
         // EIP-7825: the cap is checked before any other gas validation
         if *spec >= Spec::Osaka && gas_limit > U256::from(MAX_TX_GAS_LIMIT_OSAKA) {
