@@ -24,6 +24,8 @@ jobs:
 
       - name: Use Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
 
       - name: Install 32-bit toolchain support
         if: matrix.arch == '32-bit'
@@ -47,6 +49,8 @@ jobs:
 
       - name: Use Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
 
       - name: Checkout ethereum/tests
         uses: actions/checkout@v7
