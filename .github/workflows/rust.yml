@@ -9,44 +9,51 @@ env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v17.0
   ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_stable.tar.gz
+  # Same release, `develop` build (filled up to BPO4): the only v5.4.0 build with Osaka state tests
+  ETHEREUM_SPEC_TESTS_DEVELOP_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_develop.tar.gz
 
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ 64-bit, 32-bit ]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+
+      - name: Install 32-bit toolchain support
+        if: matrix.arch == '32-bit'
+        run: |
+          rustup target add i686-unknown-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
 
       - name: Run tests
         run: cargo test --all --verbose
 
-  unit-tests-32-bit:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Run tests 32 bit
-        uses: vxcontrol/run-on-arch-action@0.9.0
-        id: tests
-        with:
-          arch: i386
-          distro: bullseye
-          githubToken: ${{ github.token }}
-          run: |
-            apt-get update && apt-get install -y curl clang llvm
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            export PATH="$PATH:$HOME/.cargo/bin"
-            cargo test --all --verbose
-
   ethereum-tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ 64-bit, 32-bit ]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
 
       - name: Checkout ethereum/tests
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ethereum/tests
           path: ethtests
@@ -54,11 +61,25 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      - name: Install 32-bit toolchain support
+        if: matrix.arch == '32-bit'
+        run: |
+          rustup target add i686-unknown-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib curl wget
+          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
+
       - name: Download Ethereum spec tests fixtures
         run: |
           curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
           mkdir ethereum-spec-tests
           tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
+
+      - name: Download Ethereum spec tests develop fixtures (Osaka)
+        run: |
+          curl -L ${{ env.ETHEREUM_SPEC_TESTS_DEVELOP_URL }} -o ethereum-spec-tests-develop.tar.gz
+          mkdir ethereum-spec-tests-develop
+          tar -xzf ethereum-spec-tests-develop.tar.gz -C ethereum-spec-tests-develop fixtures/state_tests
 
       - name: Run Ethereum state tests
         run: |
@@ -66,6 +87,11 @@ jobs:
           ethtests/GeneralStateTests/ \
           ethtests/LegacyTests/Cancun/GeneralStateTests/ \
           ethereum-spec-tests/fixtures/state_tests/
+
+      - name: Run Ethereum state tests (Osaka)
+        run: |
+          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f -s Osaka \
+          ethereum-spec-tests-develop/fixtures/state_tests/
 
       - name: Run Ethereum vm tests
         run: |
@@ -82,53 +108,3 @@ jobs:
             ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
             ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
             ethtests/LegacyTests/Constantinople/VMTests/vmTests
-
-  ethereum-tests-32-bit:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Checkout ethereum/tests
-        uses: actions/checkout@v4
-        with:
-          repository: ethereum/tests
-          path: ethtests
-          ref: ${{ env.ETHTESTS_VERSION }}
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Run Ethereum state tests 32 bit
-        uses: vxcontrol/run-on-arch-action@0.9.0
-        id: tests
-        with:
-          arch: i386
-          distro: bullseye
-          githubToken: ${{ github.token }}
-          run: |
-            apt-get update && apt-get install -y curl wget clang llvm
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            export PATH="$PATH:$HOME/.cargo/bin"
-
-            curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
-            mkdir ethereum-spec-tests
-            tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
-
-            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
-              ethtests/GeneralStateTests/ \
-              ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-              ethereum-spec-tests/fixtures/state_tests/
-
-            cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
-              ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
-              ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
-              ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
-              ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
-              ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
-              ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
-              ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
-              ethtests/LegacyTests/Constantinople/VMTests/vmTests

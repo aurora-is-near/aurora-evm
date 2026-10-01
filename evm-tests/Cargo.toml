@@ -13,7 +13,7 @@ publish = false
 workspace = true
 
 [dependencies]
-aurora-engine-precompiles = "2.1.0"
+aurora-engine-precompiles = "2.1.1"
 aurora-evm = { workspace = true, features = ["with-serde"] }
 clap = { version = "4.5", features = ["cargo"] }
 c-kzg = "1.0"

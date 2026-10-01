@@ -12,6 +12,9 @@ use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
 use sha3::Digest;
 
+/// EIP-7825: maximum transaction gas limit starting from Osaka (2^24).
+const MAX_TX_GAS_LIMIT_OSAKA: u64 = 1 << 24;
+
 /// Transaction data.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,6 +162,11 @@ impl Transaction {
         let gas_limit = self.get_gas_limit(state);
         let mut authorization_list: Vec<Authorization> = vec![];
 
+        // EIP-7825: the cap is checked before any other gas validation
+        if *spec >= Spec::Osaka && gas_limit > U256::from(MAX_TX_GAS_LIMIT_OSAKA) {
+            return Err(InvalidTxReason::GasLimitExceedsMaximum);
+        }
+
         let (intrinsic_gas, floor_gas) = self.intrinsic_gas_and_gas_floor(config, state);
         if gas_limit < U256::from(intrinsic_gas) {
             return Err(InvalidTxReason::IntrinsicGas);
@@ -233,6 +241,14 @@ impl Transaction {
                     eip_4844::MAX_BLOBS_PER_BLOCK_ELECTRA
                 };
                 if self.blob_versioned_hashes.len() > usize::try_from(max_blob_len).unwrap() {
+                    return Err(InvalidTxReason::TooManyBlobs);
+                }
+
+                // EIP-7594: per-transaction blob limit starting from Osaka
+                if *spec >= Spec::Osaka
+                    && self.blob_versioned_hashes.len()
+                        > usize::try_from(eip_4844::MAX_BLOBS_PER_TX_OSAKA).unwrap()
+                {
                     return Err(InvalidTxReason::TooManyBlobs);
                 }
             }

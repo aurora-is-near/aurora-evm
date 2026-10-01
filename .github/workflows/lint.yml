@@ -13,7 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Rustfmt
         run: cargo fmt --all -- --check
@@ -31,7 +34,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --verbose

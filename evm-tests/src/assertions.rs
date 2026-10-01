@@ -156,7 +156,7 @@ pub fn assert_vicinity_validation(
                 panic!("Unexpected validation reason: {reason:?} [{spec:?}] {name}\n{file_name:?}")
             }
         },
-        Spec::Prague => match reason {
+        Spec::Prague | Spec::Osaka => match reason {
             InvalidTxReason::PriorityFeeTooLarge => {
                 for (i, state) in states.iter().enumerate() {
                     let expected = state.expect_exception.as_deref().unwrap_or_else(|| {
@@ -267,10 +267,19 @@ pub fn check_validate_exit_reason(
                 InvalidTxReason::TooManyBlobs => {
                     let check_result = exception == "TR_BLOBLIST_OVERSIZE"
                         || exception == "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED"
+                        || exception == "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED"
                         || exception == "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED|TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED";
                     assert!(
                         check_result,
                         "unexpected exception {exception:?} for TooManyBlobs for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::GasLimitExceedsMaximum => {
+                    let check_result =
+                        exception == "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for GasLimitExceedsMaximum for test: [{spec:?}] {name}"
                     );
                 }
                 InvalidTxReason::EmptyBlobs => {
