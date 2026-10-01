@@ -15,34 +15,29 @@ env:
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ 64-bit, 32-bit ]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
 
-      - name: Run tests
-        run: cargo test --all --verbose
-
-  unit-tests-32-bit:
-    runs-on: ubuntu-latest
-    env:
-      CARGO_BUILD_TARGET: i686-unknown-linux-gnu
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v7
-
-      - name: Install 32-bit Rust target
-        run: rustup target add i686-unknown-linux-gnu
-
-      - name: Install 32-bit linker support
+      - name: Install 32-bit toolchain support
+        if: matrix.arch == '32-bit'
         run: |
+          rustup target add i686-unknown-linux-gnu
           sudo apt-get update
           sudo apt-get install -y gcc-multilib
+          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
 
       - name: Run tests
         run: cargo test --all --verbose
 
   ethereum-tests:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ 64-bit, 32-bit ]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -55,6 +50,14 @@ jobs:
           ref: ${{ env.ETHTESTS_VERSION }}
           submodules: recursive
           fetch-depth: 1
+
+      - name: Install 32-bit toolchain support
+        if: matrix.arch == '32-bit'
+        run: |
+          rustup target add i686-unknown-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib curl wget
+          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
 
       - name: Download Ethereum spec tests fixtures
         run: |
@@ -82,62 +85,6 @@ jobs:
 
       - name: Run Ethereum vm tests
         run: |
-          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
-            ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
-            ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
-            ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
-            ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
-            ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
-            ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
-            ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
-            ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
-            ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
-            ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
-            ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
-            ethtests/LegacyTests/Constantinople/VMTests/vmTests
-
-  ethereum-tests-32-bit:
-    runs-on: ubuntu-latest
-    env:
-      CARGO_BUILD_TARGET: i686-unknown-linux-gnu
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v7
-
-      - name: Checkout ethereum/tests
-        uses: actions/checkout@v7
-        with:
-          repository: ethereum/tests
-          path: ethtests
-          ref: ${{ env.ETHTESTS_VERSION }}
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Install 32-bit Rust target
-        run: rustup target add i686-unknown-linux-gnu
-
-      - name: Install 32-bit linker support
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib curl wget
-
-      - name: Run Ethereum state tests 32 bit
-        run: |
-          curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
-          mkdir ethereum-spec-tests
-          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
-          curl -L ${{ env.ETHEREUM_SPEC_TESTS_DEVELOP_URL }} -o ethereum-spec-tests-develop.tar.gz
-          mkdir ethereum-spec-tests-develop
-          tar -xzf ethereum-spec-tests-develop.tar.gz -C ethereum-spec-tests-develop fixtures/state_tests
-          
-          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
-            ethtests/GeneralStateTests/ \
-            ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-            ethereum-spec-tests/fixtures/state_tests/
-          
-          cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f -s Osaka \
-            ethereum-spec-tests-develop/fixtures/state_tests/
-          
           cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
             ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
             ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
