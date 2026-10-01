@@ -6,7 +6,8 @@ use std::fmt::Display;
 use std::str::FromStr;
 
 /// Placeholder for informational fixture fields that the runner doesn't validate
-/// (e.g. `post[].receipt`, `_info.metadata`), so `deny_unknown_fields` still applies to the rest.
+/// (e.g. `_info.metadata`, the derived `post[].receipt.bloom`), so `deny_unknown_fields` still
+/// applies to the rest.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct IgnoredField;
 
@@ -139,7 +140,6 @@ pub fn deserialize_u256_from_str<'de, D: Deserializer<'de>>(
 
 /// Deserializes a hexadecimal string into a `u64` value.
 /// Returns an error if parsing fails.
-#[allow(dead_code)]
 pub fn deserialize_u64_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<u64, D::Error> {
@@ -251,7 +251,6 @@ pub fn deserialize_vec_u256_from_str<'de, D: Deserializer<'de>>(
 }
 
 /// Deserializes strings to `Vec<H256>`.
-#[allow(dead_code)]
 pub fn deserialize_vec_h256_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<H256>, D::Error> {
