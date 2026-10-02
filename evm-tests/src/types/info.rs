@@ -1,3 +1,4 @@
+use super::json_utils::IgnoredField;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -30,6 +31,9 @@ pub struct Info {
     pub reference_spec_version: Option<String>,
     #[serde(rename = "eels-resolution")]
     pub eels_resolution: Option<EelsResolution>,
+    /// Filler statistics (opcode counts), not used by the runner
+    #[serde(default)]
+    pub metadata: Option<IgnoredField>,
 }
 
 #[derive(Debug, Clone, Ord, PartialOrd, PartialEq, Eq, Deserialize)]

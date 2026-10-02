@@ -9,6 +9,7 @@ use crate::types::json_utils::{
 use aurora_evm::backend::MemoryVicinity;
 use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
+use sha3::{Digest, Keccak256};
 use std::collections::BTreeMap;
 
 pub mod account_state;
@@ -17,6 +18,7 @@ pub mod eip_4844;
 pub mod eip_7702;
 mod info;
 mod json_utils;
+pub mod receipt;
 pub mod spec;
 pub mod transaction;
 mod vm;
@@ -40,10 +42,12 @@ pub struct StateTestCase {
 
     /// The expected state of accounts after the transaction execution for various forks.
     /// Maps fork specifications to a list of possible outcomes (results).
-    ///
-    /// NOTE: field `config` skipped as it is not used in the current context.
     #[serde(rename = "post")]
     pub post_states: BTreeMap<Spec, Vec<PostState>>,
+
+    /// Chain configuration of the fixture; older fixtures have none and assume chain id 1.
+    #[serde(default)]
+    pub config: StateTestConfig,
 
     /// The transaction(s) to be executed in the test case.
     /// Can represent different transaction types across forks.
@@ -55,6 +59,29 @@ pub struct StateTestCase {
     /// Additional information or metadata about the state test.
     #[serde(rename = "_info")]
     pub info: info::Info,
+}
+
+/// `config` of an EEST fixture; only the chain id is used by the runner.
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
+pub struct StateTestConfig {
+    /// Chain id the transaction is signed for
+    #[serde(
+        default = "default_chain_id",
+        deserialize_with = "deserialize_u256_from_str"
+    )]
+    pub chainid: U256,
+}
+
+const fn default_chain_id() -> U256 {
+    U256::one()
+}
+
+impl Default for StateTestConfig {
+    fn default() -> Self {
+        Self {
+            chainid: default_chain_id(),
+        }
+    }
 }
 
 impl StateTestCase {
@@ -111,17 +138,23 @@ impl StateTestCase {
 
         let blob_hashes = tx.blob_versioned_hashes.clone();
 
+        // State tests convention: hash of block `n` is `keccak256(n.to_string())` (last 256 blocks)
+        let block_hashes = (1..=256u64)
+            .map_while(|depth| self.env.block_number.checked_sub(U256::from(depth)))
+            .map(|number| H256::from(<[u8; 32]>::from(Keccak256::digest(number.to_string()))))
+            .collect();
+
         Ok(MemoryVicinity {
             gas_price,
             effective_gas_price,
             origin: self.transaction.get_caller_from_secret_key(),
-            block_hashes: Vec::new(),
+            block_hashes,
             block_number: self.env.block_number,
             block_coinbase: self.env.block_coinbase,
             block_timestamp: self.env.block_timestamp,
             block_difficulty: self.env.block_difficulty,
             block_gas_limit: self.env.block_gas_limit,
-            chain_id: U256::one(),
+            chain_id: self.config.chainid,
             block_base_fee_per_gas,
             block_randomness: self.env.random,
             blob_gas_price: blob_gas_price.map(|bgp| bgp.blob_gas_price),
@@ -250,6 +283,10 @@ pub struct PostState {
     /// Post Accounts state
     #[serde(default)]
     pub post_state: Option<AccountsState>,
+    /// Receipt of the executed transaction (fixtures from `tests@v20`): its status, gas used and
+    /// logs are not part of the post state hash and are compared separately
+    #[serde(default)]
+    pub receipt: Option<receipt::Receipt>,
 }
 
 /// Post State indexes.
@@ -286,4 +323,16 @@ pub enum InvalidTxReason {
     CreateTransaction,
     GasFloorMoreThanGasLimit,
     AccessListNotSupported,
+    /// EIP-7825: transaction gas limit above the Osaka cap
+    GasLimitExceedsMaximum,
+    /// Invalid `v`, `r` or `s` signature values
+    InvalidSignature,
+    /// Transaction chain ID differs from the chain ID
+    InvalidChainId,
+    /// EIP-2681: transaction nonce is `2^64-1`
+    NonceIsMax,
+    /// Transaction nonce is above the sender nonce
+    NonceTooHigh,
+    /// Transaction nonce is below the sender nonce
+    NonceTooLow,
 }

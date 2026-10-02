@@ -11,8 +11,11 @@ pub struct FailedTestDetails {
     pub name: String,
     pub spec: Spec,
     pub index: usize,
+    /// Hashes of the compared object (post state root or logs), see `reason`
     pub expected_hash: H256,
     pub actual_hash: H256,
+    /// What did not match
+    pub reason: String,
     pub state: BTreeMap<H160, MemoryAccount>,
 }
 

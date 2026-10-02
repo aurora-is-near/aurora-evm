@@ -92,8 +92,10 @@ impl FromStr for Spec {
         match value {
             "Frontier" => Ok(Self::Frontier),
             "Homestead" | "FrontierToHomesteadAt5" => Ok(Self::Homestead),
-            "EIP150" | "HomesteadToDaoAt5" | "HomesteadToEIP150At5" => Ok(Self::Tangerine),
-            "EIP158" => Ok(Self::SpuriousDragon),
+            "EIP150" | "TangerineWhistle" | "HomesteadToDaoAt5" | "HomesteadToEIP150At5" => {
+                Ok(Self::Tangerine)
+            }
+            "EIP158" | "SpuriousDragon" => Ok(Self::SpuriousDragon),
             "Byzantium" | "EIP158ToByzantiumAt5" => Ok(Self::Byzantium),
             "Constantinople"
             | "ConstantinopleFix"
