@@ -16,9 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: cargo fmt check
         run: cargo fmt --all -- --check
@@ -38,9 +41,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Build aurora-evm
         run: cargo build -p aurora-evm

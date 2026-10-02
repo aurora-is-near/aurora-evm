@@ -183,6 +183,10 @@ impl MemoryAccountsState {
             .map_or_else(U256::zero, |acc| acc.balance)
     }
 
+    pub fn caller_nonce(&self, caller: H160) -> U256 {
+        self.0.get(&caller).map_or_else(U256::zero, |acc| acc.nonce)
+    }
+
     pub fn caller_code(&self, caller: H160) -> Vec<u8> {
         self.0
             .get(&caller)

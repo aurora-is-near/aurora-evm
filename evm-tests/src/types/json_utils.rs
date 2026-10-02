@@ -5,6 +5,18 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::str::FromStr;
 
+/// Placeholder for informational fixture fields that the runner doesn't validate
+/// (e.g. `_info.metadata`, the derived `post[].receipt.bloom`), so `deny_unknown_fields` still
+/// applies to the rest.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct IgnoredField;
+
+impl<'de> Deserialize<'de> for IgnoredField {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer).map(|_| Self)
+    }
+}
+
 /// Removes the "0x" prefix from a string if it exists.
 pub fn strip_0x_prefix(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
@@ -145,7 +157,6 @@ pub fn deserialize_u256_from_str<'de, D: Deserializer<'de>>(
 
 /// Deserializes a hexadecimal string into a `u64` value.
 /// Returns an error if parsing fails.
-#[allow(dead_code)]
 pub fn deserialize_u64_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<u64, D::Error> {
@@ -266,7 +277,6 @@ pub fn deserialize_vec_u256_from_str<'de, D: Deserializer<'de>>(
 }
 
 /// Deserializes strings to `Vec<H256>`.
-#[allow(dead_code)]
 pub fn deserialize_vec_h256_from_str<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<H256>, D::Error> {

@@ -13,6 +13,131 @@ use primitive_types::{H160, H256, U256};
 use serde::Deserialize;
 use sha3::Digest;
 
+/// EIP-7825: maximum transaction gas limit starting from Osaka (2^24).
+const MAX_TX_GAS_LIMIT_OSAKA: u64 = 1 << 24;
+
+/// The order of the secp256k1 curve.
+const SECP256K1N: U256 = U256([
+    0xBFD2_5E8C_D036_4141,
+    0xBAAE_DCE6_AF48_A03B,
+    0xFFFF_FFFF_FFFF_FFFE,
+    0xFFFF_FFFF_FFFF_FFFF,
+]);
+
+/// Signature of a signed transaction: the chain id it is signed for (`None` for pre-EIP-155
+/// legacy transactions), `v` (`y_parity` for typed ones), `r` and `s`.
+struct TxSignature {
+    chain_id: Option<U256>,
+    v: U256,
+    r: U256,
+    s: U256,
+    signing_hash: [u8; 32],
+}
+
+impl TxSignature {
+    /// Parses the signature fields from the RLP of a signed transaction.
+    fn parse(tx_bytes: &[u8]) -> Option<Self> {
+        let prefix = *tx_bytes.first()?;
+        let tx_type = TxType::from_tx_bytes(tx_bytes);
+        let payload = if tx_type == TxType::Legacy {
+            tx_bytes
+        } else {
+            tx_bytes.get(1..)?
+        };
+
+        let mut rlp = rlp::Rlp::new(payload);
+        // EIP-4844 network form wraps the transaction together with blobs
+        if tx_type == TxType::ShardBlob && rlp.at(0).ok()?.is_list() {
+            rlp = rlp.at(0).ok()?;
+        }
+
+        let count = rlp.item_count().ok()?;
+        let expected_count = match tx_type {
+            TxType::Legacy => 9,
+            TxType::AccessList => 11,
+            TxType::DynamicFee => 12,
+            TxType::ShardBlob => 14,
+            TxType::EOAAccountCode => 13,
+        };
+        if count != expected_count {
+            return None;
+        }
+        let value = |index| rlp.val_at::<U256>(index).ok();
+
+        let v = value(count - 3)?;
+        let chain_id = if tx_type == TxType::Legacy {
+            // EIP-155: `v = chain_id * 2 + 35/36`; pre-EIP-155 `27/28` carry no chain id
+            (v >= U256::from(35)).then(|| (v - U256::from(35)) / U256::from(2))
+        } else {
+            Some(value(0)?)
+        };
+
+        // The signature covers all payload fields except v/r/s. Protected legacy transactions
+        // append the EIP-155 chain id and two zeroes; typed transactions include the type byte.
+        let protected_legacy = tx_type == TxType::Legacy && chain_id.is_some();
+        let signing_count = if protected_legacy { count } else { count - 3 };
+        let mut signing_payload = rlp::RlpStream::new_list(signing_count);
+        for index in 0..count - 3 {
+            signing_payload.append_raw(rlp.at(index).ok()?.as_raw(), 1);
+        }
+
+        if protected_legacy {
+            signing_payload.append(&chain_id?).append(&0u8).append(&0u8);
+        }
+
+        let mut hasher = sha3::Keccak256::new();
+        if tx_type != TxType::Legacy {
+            hasher.update([prefix]);
+        }
+
+        hasher.update(signing_payload.as_raw());
+
+        Some(Self {
+            chain_id,
+            v,
+            r: value(count - 2)?,
+            s: value(count - 1)?,
+            signing_hash: hasher.finalize().into(),
+        })
+    }
+
+    /// Enforces signature ranges and EIP-2, then recovers the public key from the signing hash.
+    /// Recovery rejects both an r without a curve point and a resulting key at infinity.
+    fn recover_public_key(&self, legacy: bool) -> Option<libsecp256k1::PublicKey> {
+        let parity = if !legacy {
+            self.v
+        } else if self.v == U256::from(27) || self.v == U256::from(28) {
+            self.v - U256::from(27)
+        } else if self.v >= U256::from(35) {
+            (self.v - U256::from(35)) % U256::from(2)
+        } else {
+            return None;
+        };
+
+        if parity > U256::one()
+            || self.r.is_zero()
+            || self.r >= SECP256K1N
+            || self.s.is_zero()
+            || self.s > eip_7702::SECP256K1N_HALF
+        {
+            return None;
+        }
+        let recovery_id = libsecp256k1::RecoveryId::parse(u8::from(parity == U256::one())).ok()?;
+        let mut bytes = [0u8; 64];
+        bytes[..32].copy_from_slice(&self.r.to_big_endian());
+        bytes[32..].copy_from_slice(&self.s.to_big_endian());
+        let signature = libsecp256k1::Signature::parse_standard(&bytes).ok()?;
+        let message = libsecp256k1::Message::parse(&self.signing_hash);
+        libsecp256k1::recover(&message, &signature, &recovery_id).ok()
+    }
+}
+
+/// Ethereum address of a public key: the last 20 bytes of the keccak256 of its uncompressed form.
+fn public_key_address(public_key: &libsecp256k1::PublicKey) -> H160 {
+    let hash = sha3::Keccak256::digest(&public_key.serialize()[1..]);
+    H160::from_slice(&hash[12..])
+}
+
 /// Transaction data.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +148,9 @@ pub struct Transaction {
         deserialize_with = "deserialize_u8_from_str_opt"
     )]
     pub tx_type: Option<u8>,
+    /// Transaction chain ID (absent in legacy fixtures)
+    #[serde(default, deserialize_with = "deserialize_u256_from_str_opt")]
+    pub chain_id: Option<U256>,
     #[serde(deserialize_with = "deserialize_vec_of_hex")]
     pub data: Vec<Vec<u8>>,
     #[serde(deserialize_with = "deserialize_vec_u256_from_str")]
@@ -99,13 +227,18 @@ impl Transaction {
             .collect()
     }
 
-    /// Get caller from transaction's secret key.
+    /// Get caller from transaction's secret key, or from `sender` when the fixture has no key
+    /// (transactions with an invalid signature can't be signed by the filler).
     ///
     /// # Panics
-    /// If the transaction secret is missing or if parsing the secret key fails.
+    /// If both the secret key and the sender are missing, or if parsing the secret key fails.
     #[must_use]
     pub fn get_caller_from_secret_key(&self) -> H160 {
-        let hash = self.secret_key.unwrap();
+        let Some(hash) = self.secret_key else {
+            return self
+                .sender
+                .expect("expect transaction secret key or sender");
+        };
         let mut secret_key = [0; 32];
         secret_key.copy_from_slice(hash.as_bytes());
         let secret = libsecp256k1::SecretKey::parse(&secret_key);
@@ -150,6 +283,7 @@ impl Transaction {
         &self,
         block_gas_limit: U256,
         caller_balance: U256,
+        caller_nonce: U256,
         config: &aurora_evm::Config,
         vicinity: &MemoryVicinity,
         blob_gas_price: Option<BlobExcessGasAndPrice>,
@@ -159,6 +293,45 @@ impl Transaction {
     ) -> Result<Vec<Authorization>, InvalidTxReason> {
         let gas_limit = self.get_gas_limit(state);
         let mut authorization_list: Vec<Authorization> = vec![];
+
+        // The sender is defined only by a valid signature for the expected chain
+        let Some(signature) = TxSignature::parse(&state.tx_bytes) else {
+            return Err(InvalidTxReason::InvalidSignature);
+        };
+        let Some(public_key) =
+            signature.recover_public_key(TxType::from_tx_bytes(&state.tx_bytes) == TxType::Legacy)
+        else {
+            return Err(InvalidTxReason::InvalidSignature);
+        };
+        // The signature must belong to the sender the fixture executes the transaction with
+        if public_key_address(&public_key) != vicinity.origin {
+            return Err(InvalidTxReason::InvalidSignature);
+        }
+
+        // The signed chain id (protected legacy and typed transactions) and the fixture field,
+        // when present, must both be the chain of the test
+        let wrong_chain = |chain_id: U256| chain_id != vicinity.chain_id;
+        if signature.chain_id.is_some_and(wrong_chain) || self.chain_id.is_some_and(wrong_chain) {
+            return Err(InvalidTxReason::InvalidChainId);
+        }
+
+        // EIP-2681: transaction nonce must be below 2^64-1, then it must match the sender nonce
+        if self.nonce >= U256::from(u64::MAX) {
+            return Err(InvalidTxReason::NonceIsMax);
+        }
+
+        if self.nonce > caller_nonce {
+            return Err(InvalidTxReason::NonceTooHigh);
+        }
+
+        if self.nonce < caller_nonce {
+            return Err(InvalidTxReason::NonceTooLow);
+        }
+
+        // EIP-7825: the cap is checked before any other gas validation
+        if *spec >= Spec::Osaka && gas_limit > U256::from(MAX_TX_GAS_LIMIT_OSAKA) {
+            return Err(InvalidTxReason::GasLimitExceedsMaximum);
+        }
 
         let (intrinsic_gas, floor_gas) = self.intrinsic_gas_and_gas_floor(config, state);
         if gas_limit < U256::from(intrinsic_gas) {
@@ -233,6 +406,14 @@ impl Transaction {
                     eip_4844::MAX_BLOBS_PER_BLOCK_ELECTRA
                 };
                 if self.blob_versioned_hashes.len() > usize::try_from(max_blob_len).unwrap() {
+                    return Err(InvalidTxReason::TooManyBlobs);
+                }
+
+                // EIP-7594: per-transaction blob limit starting from Osaka
+                if *spec >= Spec::Osaka
+                    && self.blob_versioned_hashes.len()
+                        > usize::try_from(eip_4844::MAX_BLOBS_PER_TX_OSAKA).unwrap()
+                {
                     return Err(InvalidTxReason::TooManyBlobs);
                 }
             }
@@ -392,5 +573,218 @@ impl TxType {
                 "Unknown tx type. You may need to update the TxType enum if Ethereum introduced new enveloped transaction types."
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::*;
+    use rlp::RlpStream;
+
+    /// x-coordinate of the secp256k1 generator; `5` has no curve point
+    const CURVE_X: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+
+    fn legacy(v: u64, r: U256, s: U256) -> Vec<u8> {
+        let mut stream = RlpStream::new_list(9);
+        for _ in 0..6 {
+            stream.append(&0u8);
+        }
+        stream.append(&v).append(&r).append(&s);
+        stream.out().to_vec()
+    }
+
+    fn typed(tx_type: u8, chain_id: U256, y_parity: u8, r: U256, s: U256) -> Vec<u8> {
+        let count = match tx_type {
+            1 => 11,
+            2 => 12,
+            3 => 14,
+            4 => 13,
+            _ => unreachable!(),
+        };
+        let mut stream = RlpStream::new_list(count);
+        stream.append(&chain_id);
+        for _ in 1..count - 3 {
+            stream.append(&0u8);
+        }
+        stream.append(&y_parity).append(&r).append(&s);
+        let mut bytes = vec![tx_type];
+        bytes.extend(stream.out());
+        bytes
+    }
+
+    #[test]
+    fn legacy_signature_chain_id_and_validity() {
+        let r = U256::from_str_radix(CURVE_X, 16).unwrap();
+        let signature = TxSignature::parse(&legacy(37, r, U256::one())).unwrap();
+        assert_eq!(signature.chain_id, Some(U256::one()));
+        assert!(signature.recover_public_key(true).is_some());
+        assert_eq!(
+            TxSignature::parse(&legacy(28, r, U256::one()))
+                .unwrap()
+                .chain_id,
+            None
+        );
+        assert_eq!(
+            TxSignature::parse(&legacy(2 * 1337 + 36, r, U256::one()))
+                .unwrap()
+                .chain_id,
+            Some(U256::from(1337))
+        );
+        // `r` without a curve point, `s` above n/2 and a malformed `v` are invalid
+        assert!(
+            TxSignature::parse(&legacy(37, U256::from(5), U256::one()))
+                .unwrap()
+                .recover_public_key(true)
+                .is_none()
+        );
+        assert!(
+            TxSignature::parse(&legacy(37, r, SECP256K1N - U256::one()))
+                .unwrap()
+                .recover_public_key(true)
+                .is_none()
+        );
+        assert!(
+            TxSignature::parse(&legacy(34, r, U256::one()))
+                .unwrap()
+                .recover_public_key(true)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn typed_signature_chain_id_and_validity() {
+        let r = U256::from_str_radix(CURVE_X, 16).unwrap();
+        let signature = TxSignature::parse(&typed(2, U256::from(2), 1, r, U256::one())).unwrap();
+        assert_eq!(signature.chain_id, Some(U256::from(2)));
+        assert!(signature.recover_public_key(false).is_some());
+        assert!(
+            TxSignature::parse(&typed(1, U256::one(), 2, r, U256::one()))
+                .unwrap()
+                .recover_public_key(false)
+                .is_none()
+        );
+    }
+
+    // ethereum/tests v17.0 rangesExample (unprotected legacy), followed by EEST tests@v20.0.2
+    // invalid_chain_id (protected legacy and types 1-4). The latter signatures are valid on chain 2.
+    const SIGNED_TRANSACTIONS: &[(&str, &str)] = &[
+        (
+            "f863800a83061a8094095e7baea6a6c7c4c2dfeb977efac326af552d87830186a0011ca064f084caf7c68cc95d8d2681b780c9743198f0d751564bd2b6d090c140375e86a07d65260b3168acbdbf8d9bd3eea906fffe193e75d5a0ea6edd0689dafb2f3846",
+            "a94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+        ),
+        (
+            "f861800a840100000094f89a03b42ea1412874da2cf1ae48956f73d06039018027a0b10bbb1ed080a26a866e80656874b633fbc34aa4a61e96434b387ca4be6ecce3a00b0700ce8087ed706466c9a5f65e9daf4781023a20bda97f3ea57953a74f96ad",
+            "f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff",
+        ),
+        (
+            "01f86302800a840100000094f89a03b42ea1412874da2cf1ae48956f73d060390180c080a0ff85d50df3c32b3b0e622493c84cd1027c91ca684ed9844f83f82f66802aedfda04c5842ca3f95a084b950b86a7645696609a18dd1ec075e7ad0f25fd1beb119ba",
+            "f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff",
+        ),
+        (
+            "02f86402808007840100000094f89a03b42ea1412874da2cf1ae48956f73d060390180c001a05403282ccd84522eaaac7e09597cd42623aa5154d42f2770cd4043c8307c71a6a01fb5041dd091818086d4e92e7adac0ab91c23684b38138fb17330574f4e70928",
+            "f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff",
+        ),
+        (
+            "03f88702808007840100000094f89a03b42ea1412874da2cf1ae48956f73d060390180c001e1a0010000000000000000000000000000000000000000000000000000000000000080a0d582783cdf1d4f3e7eb547b6f2431585cc63a4ca3b2d4e78b935a0915603e738a014b88fa885b03afead6b672d7e64d838a0aeef158b9e949c897c6d9452e88114",
+            "f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff",
+        ),
+        (
+            "04f86502808007840100000094f89a03b42ea1412874da2cf1ae48956f73d060390180c0c001a090abe3293b7fe840d0358e760fd4c61a8c006438cfdab7f1128c41311af488b2a05a2b3d61820cb18ea2292025f195d59a66c726bff56cc982c331bf48a181e25b",
+            "f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff",
+        ),
+    ];
+
+    #[test]
+    fn recovery_matches_reference_senders_for_every_envelope() {
+        for (encoded, sender) in SIGNED_TRANSACTIONS {
+            let bytes = hex::decode(encoded).unwrap();
+            let legacy = TxType::from_tx_bytes(&bytes) == TxType::Legacy;
+            let signature = TxSignature::parse(&bytes).unwrap();
+            let key = signature.recover_public_key(legacy).unwrap();
+            let hash = sha3::Keccak256::digest(&key.serialize()[1..]);
+            assert_eq!(hex::encode(&hash[12..]), *sender);
+        }
+    }
+
+    fn replace_signature(bytes: &[u8], v: U256, r: U256, s: U256) -> Vec<u8> {
+        let legacy = TxType::from_tx_bytes(bytes) == TxType::Legacy;
+        let payload = rlp::Rlp::new(if legacy { bytes } else { &bytes[1..] });
+        let count = payload.item_count().unwrap();
+        let mut stream = RlpStream::new_list(count);
+        for index in 0..count - 3 {
+            stream.append_raw(payload.at(index).unwrap().as_raw(), 1);
+        }
+
+        stream.append(&v).append(&r).append(&s);
+        let mut result = Vec::new();
+        if !legacy {
+            result.push(bytes[0]);
+        }
+
+        result.extend(stream.out());
+        result
+    }
+
+    #[test]
+    fn recovery_rejects_infinity_for_every_envelope_and_checks_parity() {
+        for (encoded, _) in SIGNED_TRANSACTIONS {
+            let bytes = hex::decode(encoded).unwrap();
+            let legacy = TxType::from_tx_bytes(&bytes) == TxType::Legacy;
+            let signature = TxSignature::parse(&bytes).unwrap();
+            // Construct R = zG and s = 1. Both scalars and R are valid, but recovery produces
+            // Q = r^-1 * (sR - zG) = infinity. This does not require finding a hash preimage.
+            let scalar = libsecp256k1::SecretKey::parse(&signature.signing_hash).unwrap();
+            let point = libsecp256k1::PublicKey::from_secret_key(&scalar).serialize_compressed();
+            let r = U256::from_big_endian(&point[1..]);
+            assert!(!r.is_zero() && r < SECP256K1N);
+
+            let parity = U256::from(point[0] & 1);
+            let base_v = if legacy {
+                signature.chain_id.map_or_else(
+                    || U256::from(27),
+                    |chain_id| chain_id * U256::from(2) + U256::from(35),
+                )
+            } else {
+                U256::zero()
+            };
+
+            let forged = replace_signature(&bytes, base_v + parity, r, U256::one());
+            let parsed = TxSignature::parse(&forged).unwrap();
+            assert_eq!(parsed.signing_hash, signature.signing_hash);
+            assert!(parsed.recover_public_key(legacy).is_none());
+
+            // The opposite parity gives -R, so the resulting public key is finite.
+            let opposite =
+                replace_signature(&bytes, base_v + (U256::one() - parity), r, U256::one());
+            assert!(
+                TxSignature::parse(&opposite)
+                    .unwrap()
+                    .recover_public_key(legacy)
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn blob_sidecar_is_excluded_from_signing_hash() {
+        let (encoded, _) = SIGNED_TRANSACTIONS[4];
+        let bytes = hex::decode(encoded).unwrap();
+        let bare = TxSignature::parse(&bytes).unwrap();
+        let mut stream = RlpStream::new_list(4);
+        stream.append_raw(&bytes[1..], 1);
+        // Sidecar contents do not participate in signature recovery.
+        for _ in 0..3 {
+            stream.begin_list(1).append(&vec![0x42u8; 48]);
+        }
+
+        let mut wrapped = vec![3];
+        wrapped.extend(stream.out());
+        let parsed = TxSignature::parse(&wrapped).unwrap();
+        assert_eq!(parsed.signing_hash, bare.signing_hash);
+        assert_eq!(parsed.chain_id, bare.chain_id);
+        assert_eq!(
+            parsed.recover_public_key(false),
+            bare.recover_public_key(false)
+        );
     }
 }

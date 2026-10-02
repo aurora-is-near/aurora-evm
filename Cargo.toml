@@ -30,7 +30,7 @@ as_conversions = "deny"
 module_name_repetitions = "allow"
 
 [workspace.dependencies]
-aurora-engine-precompiles = "2.1"
+aurora-engine-precompiles = "2.2"
 aurora-evm = { path = "evm" }
 aurora-evm-trie = { path = "evm-trie" }
 auto_impl = "1.0"

@@ -21,7 +21,7 @@ ethereum = "0.18"
 hex.workspace = true
 hex-literal.workspace = true
 libsecp256k1.workspace = true
-primitive-types = { workspace = true, features = ["serde", "std"] }
+primitive-types = { workspace = true, features = ["rlp", "serde", "std"] }
 rlp = { workspace = true, features = ["std"] }
 sha2.workspace = true
 sha3.workspace = true

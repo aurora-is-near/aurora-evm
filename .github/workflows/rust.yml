@@ -11,16 +11,23 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v17.0
-  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_stable.tar.gz
+  # EEST tests@v20.0.2: a single build for all forks up to Osaka
+  ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.2/fixtures.tar.gz
+  # The block execution EEST harness stays on v5.4.0: tests@v20.0.2 adds `test_bad_v_r_s` cases
+  # whose rejection reasons it does not map to the expected exceptions yet
+  BLOCK_EXECUTION_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_stable.tar.gz
 
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         run: cargo test --all --verbose
@@ -36,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -70,7 +77,7 @@ jobs:
     steps:
       # Full history keeps the previous tip available for multi-commit pushes.
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -130,12 +137,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Checkout ethereum/tests
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ethereum/tests
           path: ethtests
@@ -147,7 +157,7 @@ jobs:
         run: |
           curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
           mkdir ethereum-spec-tests
-          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
+          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests fixtures/state_tests
 
       - name: Run Ethereum state tests
         run: |
@@ -181,12 +191,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Checkout ethereum/tests
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ethereum/tests
           path: ethtests
@@ -206,7 +216,7 @@ jobs:
 
               curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
               mkdir -p ethereum-spec-tests
-              tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
+              tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests fixtures/state_tests
 
               cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
                 ethtests/GeneralStateTests/ \
@@ -237,13 +247,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Download Ethereum spec tests fixtures
         run: |
-          curl --fail --location "$ETHEREUM_SPEC_TESTS_URL" -o ethereum-spec-tests.tar.gz
+          curl --fail --location "$BLOCK_EXECUTION_SPEC_TESTS_URL" -o ethereum-spec-tests.tar.gz
           mkdir ethereum-spec-tests
           tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
 
