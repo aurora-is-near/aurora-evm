@@ -229,3 +229,10 @@ answer verification, and teardown are outside those two regions; session cycles
 include them. Node bytes describe the input, not peak memory. Allocation assertions
 remain in the host check above. Cycle counts are diagnostics without a regression
 threshold or a claim about whole-block/proving speed.
+
+## Sparse patch acceptance
+
+The isolated stage-1 sparse overlay has a separate RV32 runner and
+[measured results](PATCH_RESULTS.md), including reset reuse, no-op updates, and
+the maximum secure-key depth. It does not execute blocks or replace the existing
+ordered-trie and read-only sparse benchmarks.
