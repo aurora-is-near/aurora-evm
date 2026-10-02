@@ -184,6 +184,14 @@ jobs:
           cargo run --locked --release --no-default-features --features guest-host,sparse,tiny --bin sparse-guest-host -- \
             guest/target/tiny/riscv32im-risc0-zkvm-elf/release/sparse
 
+      - name: Check sparse patch roots and arena reuse on RV32
+        working-directory: evm-trie-bench
+        run: |
+          cargo run --locked --release --no-default-features --features guest-host,sparse --bin patch-guest-host -- \
+            guest/target/riscv32im-risc0-zkvm-elf/release/patch
+          cargo run --locked --release --no-default-features --features guest-host,sparse,tiny --bin patch-guest-host -- \
+            guest/target/tiny/riscv32im-risc0-zkvm-elf/release/patch
+
       - name: Check RV32 index boundaries and the heap tier
         working-directory: evm-trie-bench
         run: |

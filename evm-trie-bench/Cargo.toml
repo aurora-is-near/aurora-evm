@@ -51,6 +51,10 @@ required-features = ["guest-host", "corpus"]
 name = "sparse-guest-host"
 required-features = ["guest-host", "sparse"]
 
+[[bin]]
+name = "patch-guest-host"
+required-features = ["guest-host", "sparse"]
+
 [profile.release]
 opt-level = 3
 lto = "fat"
