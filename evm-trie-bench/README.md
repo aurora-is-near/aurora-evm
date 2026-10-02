@@ -73,8 +73,9 @@ root mismatches fail the run. Expected-negative blocks are counted separately.
 cargo run --release --bin corpus -- \
   /path/to/fixtures_stable-v5.4.0 ../evm-block-execution/testdata/ordered-roots.json
 
-# From the repository root: also checks private length calculations and the whole body.
-EEST_PATH=/path/to/fixtures_stable-v5.4.0 cargo test -p aurora-evm-block-execution --release eest_body_lengths_and_roots_match_every_positive_block -- --ignored --nocapture
+# From the repository root: also checks private length calculations and the whole body
+# over the EEST tests@v20.0.2 fixtures that CI uses.
+EEST_PATH=/path/to/tests@v20.0.2/fixtures cargo test -p aurora-evm-block-execution --release eest_body_lengths_and_roots_match_every_positive_block -- --ignored --nocapture
 ```
 
 This is a codec/commitment differential, not execution of every EEST state test.

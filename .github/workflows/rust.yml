@@ -13,12 +13,39 @@ env:
   ETHTESTS_VERSION: v17.0
   # EEST tests@v20.0.2: a single build for all forks up to Osaka
   ETHEREUM_SPEC_TESTS_URL: https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.2/fixtures.tar.gz
-  # The block execution EEST harness stays on v5.4.0: tests@v20.0.2 adds `test_bad_v_r_s` cases
-  # whose rejection reasons it does not map to the expected exceptions yet
-  BLOCK_EXECUTION_SPEC_TESTS_URL: https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_stable.tar.gz
 
 jobs:
   unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ 64-bit, 32-bit ]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+
+      - name: Install 32-bit toolchain support
+        if: matrix.arch == '32-bit'
+        run: |
+          rustup target add i686-unknown-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
+
+      - name: Run tests
+        run: cargo test --all --verbose
+
+  # Runs that only add build and feature coverage, so a 64-bit host is enough: `unit-tests`
+  # already runs every crate's tests, including the pointer-width-dependent ones, on both
+  # architectures.
+  unit-tests-64-bit-only:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
@@ -29,41 +56,14 @@ jobs:
       - name: Use Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
-        run: cargo test --all --verbose
-
+      # Builds the crate with its own dependency features, without the workspace-wide unification.
       - name: Test aurora-evm-block-execution
         run: cargo test -p aurora-evm-block-execution
 
       # `--all` builds aurora-evm-trie with default features only; the optional backend needs its own run.
+      # The trie benchmark workflow runs that backend on RV32 guests.
       - name: Test aurora-evm-trie with the tiny-keccak backend
         run: cargo test -p aurora-evm-trie --all-features --verbose
-
-  unit-tests-32-bit:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # A plain `docker run` rather than run-on-arch-action: that action ships one Dockerfile per
-      # distro and has none past `i386.bullseye`, and bullseye is EOL -- its `-security` Release
-      # file has expired and its pool is pruned, so hiding that suite leaves the image's installed
-      # packages unresolvable while keeping it 404s `libc6-dev`. Choosing the image directly gets
-      # us a supported release. i386 needs no emulation on an amd64 host, only `--platform`, which
-      # also makes the container report `i686` to `uname`.
-      - name: Run tests 32 bit
-        run: |
-          docker run --rm --platform linux/386 -v "$PWD":/work -w /work \
-            i386/debian:bookworm sh -eux -c '
-              apt-get -qq update
-              apt-get install -y curl clang llvm
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-                | sh -s -- -y --profile minimal --default-host i686-unknown-linux-gnu
-              . "$HOME/.cargo/env"
-              cargo test --all --verbose
-            '
 
   # Gate Ethereum integration tests and the block body differential independently.
   # For PRs targeting any branch, compare the tested merge tree with its base tip.
@@ -130,11 +130,15 @@ jobs:
     needs: changes
     # Run only after a successful comparison found a matching change.
     if: ${{ needs.changes.outputs.integration_tests == 'true' }}
-    # Eligible jobs share a concurrency group per PR; distinct master commits have separate groups.
+    # Eligible jobs share a concurrency group per PR and architecture, so the matrix entries never
+    # cancel each other; distinct master commits have separate groups.
     concurrency:
-      group: rust-ethereum-tests-${{ github.event.pull_request.number || github.sha }}
+      group: rust-ethereum-tests-${{ matrix.arch }}-${{ github.event.pull_request.number || github.sha }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ 64-bit, 32-bit ]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -143,6 +147,8 @@ jobs:
 
       - name: Use Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
 
       - name: Checkout ethereum/tests
         uses: actions/checkout@v7
@@ -152,6 +158,14 @@ jobs:
           ref: ${{ env.ETHTESTS_VERSION }}
           submodules: recursive
           fetch-depth: 1
+
+      - name: Install 32-bit toolchain support
+        if: matrix.arch == '32-bit'
+        run: |
+          rustup target add i686-unknown-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib curl wget
+          echo "CARGO_BUILD_TARGET=i686-unknown-linux-gnu" >> "$GITHUB_ENV"
 
       - name: Download Ethereum spec tests fixtures
         run: |
@@ -182,62 +196,8 @@ jobs:
             ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
             ethtests/LegacyTests/Constantinople/VMTests/vmTests
 
-  ethereum-tests-32-bit:
-    needs: changes
-    if: ${{ needs.changes.outputs.integration_tests == 'true' }}
-    concurrency:
-      group: rust-ethereum-tests-32-bit-${{ github.event.pull_request.number || github.sha }}
-      cancel-in-progress: true
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Checkout ethereum/tests
-        uses: actions/checkout@v7
-        with:
-          repository: ethereum/tests
-          path: ethtests
-          ref: ${{ env.ETHTESTS_VERSION }}
-          submodules: recursive
-          fetch-depth: 1
-
-      - name: Run Ethereum state tests 32 bit
-        run: |
-          docker run --rm --platform linux/386 -v "$PWD":/work -w /work \
-            i386/debian:bookworm sh -eux -c '
-              apt-get -qq update
-              apt-get install -y curl wget clang llvm
-              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-                | sh -s -- -y --profile minimal --default-host i686-unknown-linux-gnu
-              . "$HOME/.cargo/env"
-
-              curl -L ${{ env.ETHEREUM_SPEC_TESTS_URL }} -o ethereum-spec-tests.tar.gz
-              mkdir -p ethereum-spec-tests
-              tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests fixtures/state_tests
-
-              cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- state -f \
-                ethtests/GeneralStateTests/ \
-                ethtests/LegacyTests/Cancun/GeneralStateTests/ \
-                ethereum-spec-tests/fixtures/state_tests/
-
-              cargo run -r -p aurora-evm-jsontests -F enable-slow-tests -- vm -f \
-                ethtests/LegacyTests/Constantinople/VMTests/vmArithmeticTest \
-                ethtests/LegacyTests/Constantinople/VMTests/vmBitwiseLogicOperation \
-                ethtests/LegacyTests/Constantinople/VMTests/vmBlockInfoTest \
-                ethtests/LegacyTests/Constantinople/VMTests/vmEnvironmentalInfo \
-                ethtests/LegacyTests/Constantinople/VMTests/vmIOandFlowOperations \
-                ethtests/LegacyTests/Constantinople/VMTests/vmLogTest \
-                ethtests/LegacyTests/Constantinople/VMTests/vmPerformance \
-                ethtests/LegacyTests/Constantinople/VMTests/vmPushDupSwapTest \
-                ethtests/LegacyTests/Constantinople/VMTests/vmRandomTest \
-                ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
-                ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
-                ethtests/LegacyTests/Constantinople/VMTests/vmTests
-            '
-
+  # The EEST differentials stay on a 64-bit host: the largest blockchain fixtures are over 100 MB of
+  # JSON (EIP-7934 `@bigmem` cases), parsed whole into memory.
   block-body-differential:
     needs: changes
     if: ${{ needs.changes.outputs.block_body == 'true' }}
@@ -251,11 +211,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # Both runs read only `blockchain_tests`; the whole archive unpacks to about 8.5 GB.
       - name: Download Ethereum spec tests fixtures
         run: |
-          curl --fail --location "$BLOCK_EXECUTION_SPEC_TESTS_URL" -o ethereum-spec-tests.tar.gz
+          curl --fail --location "$ETHEREUM_SPEC_TESTS_URL" -o ethereum-spec-tests.tar.gz
           mkdir ethereum-spec-tests
-          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests
+          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests fixtures/blockchain_tests
 
       - name: Run EEST block body differential
         run: |
@@ -274,9 +235,8 @@ jobs:
     needs:
       - changes
       - unit-tests
-      - unit-tests-32-bit
+      - unit-tests-64-bit-only
       - ethereum-tests
-      - ethereum-tests-32-bit
       - block-body-differential
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -288,9 +248,8 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
-          UNIT_32_RESULT: ${{ needs.unit-tests-32-bit.result }}
+          UNIT_64_ONLY_RESULT: ${{ needs.unit-tests-64-bit-only.result }}
           ETHEREUM_RESULT: ${{ needs.ethereum-tests.result }}
-          ETHEREUM_32_RESULT: ${{ needs.ethereum-tests-32-bit.result }}
           BLOCK_BODY_RESULT: ${{ needs.block-body-differential.result }}
           INTEGRATION_REQUIRED: ${{ needs.changes.outputs.integration_tests }}
           BLOCK_BODY_REQUIRED: ${{ needs.changes.outputs.block_body }}
@@ -317,8 +276,7 @@ jobs:
 
           require_result changes "$CHANGES_RESULT" success
           require_result unit-tests "$UNIT_RESULT" success
-          require_result unit-tests-32-bit "$UNIT_32_RESULT" success
+          require_result unit-tests-64-bit-only "$UNIT_64_ONLY_RESULT" success
           require_conditional_result ethereum-tests "$ETHEREUM_RESULT" "$INTEGRATION_REQUIRED"
-          require_conditional_result ethereum-tests-32-bit "$ETHEREUM_32_RESULT" "$INTEGRATION_REQUIRED"
           require_conditional_result block-body-differential "$BLOCK_BODY_RESULT" "$BLOCK_BODY_REQUIRED"
           exit "$failed"
