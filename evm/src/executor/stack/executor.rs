@@ -1120,11 +1120,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             return Capture::Exit((ExitError::MaxNonce.into(), Vec::new()));
         }
 
-        // Warm address for EIP-2929
         let address = self.create_address(scheme);
-        self.state
-            .metadata_mut()
-            .access_addresses([caller, address].iter().copied());
 
         event!(Create {
             caller,
@@ -1148,6 +1144,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         if self.balance(caller) < value {
             return Capture::Exit((ExitError::OutOfFund.into(), Vec::new()));
         }
+
+        // Warm address for EIP-2929: only after the depth and balance checks have passed
+        self.state
+            .metadata_mut()
+            .access_addresses([caller, address].iter().copied());
 
         let gas_limit = try_or_fail!(self.calc_gas_limit_and_record(target_gas, take_l64));
 

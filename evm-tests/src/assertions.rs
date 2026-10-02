@@ -1,7 +1,91 @@
 use crate::config::TestConfig;
 use crate::types::Spec;
 use crate::types::{InvalidTxReason, PostState};
+use aurora_evm::backend::Log;
 use aurora_evm::{ExitError, ExitReason};
+use hex_literal::hex;
+use primitive_types::H256;
+use sha3::{Digest, Keccak256};
+
+/// `keccak256(rlp([]))`: the `logs` hash of a transaction without logs.
+pub const EMPTY_LOGS_HASH: H256 = H256(hex!(
+    "1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"
+));
+
+/// `keccak256(rlp(logs))` as recorded in the `post[].logs` field of a fixture.
+#[must_use]
+pub fn logs_hash(logs: &[Log]) -> H256 {
+    let mut stream = rlp::RlpStream::new_list(logs.len());
+    for log in logs {
+        stream.begin_list(3);
+        stream.append(&log.address);
+        stream.begin_list(log.topics.len());
+        for topic in &log.topics {
+            stream.append(topic);
+        }
+        stream.append(&log.data);
+    }
+
+    H256::from(<[u8; 32]>::from(Keccak256::digest(stream.out())))
+}
+
+/// Compares the logs and the receipt of an executed transaction with the fixture: the logs hash
+/// (every fixture format), then the receipt status and gas used.
+pub fn check_execution_log_result(
+    state: &PostState,
+    exit_reason: &ExitReason,
+    used_gas: u64,
+    logs: &[Log],
+) -> Result<(), String> {
+    let actual_logs_hash = logs_hash(logs);
+    if actual_logs_hash != state.logs {
+        let expected_logs = state.receipt.as_ref().map(|receipt| &receipt.logs);
+        return Err(format!(
+            "logs mismatch: expected hash {:?}, actual hash {actual_logs_hash:?}; expected logs {expected_logs:?}, actual logs {logs:?}",
+            state.logs
+        ));
+    }
+
+    let Some(receipt) = state.receipt.as_ref() else {
+        return Ok(());
+    };
+    if receipt
+        .status
+        .is_some_and(|status| status != exit_reason.is_succeed())
+    {
+        return Err(format!(
+            "receipt status mismatch: expected success = {:?}, exit reason {exit_reason:?}",
+            receipt.status
+        ));
+    }
+
+    if receipt.cumulative_gas_used != used_gas {
+        return Err(format!(
+            "receipt gas mismatch: expected {}, used {used_gas}",
+            receipt.cumulative_gas_used
+        ));
+    }
+
+    Ok(())
+}
+
+/// A transaction the runner did not execute must have neither logs nor a receipt in the fixture.
+pub fn check_skipped_log_result(state: &PostState) -> Result<(), String> {
+    if state.logs != EMPTY_LOGS_HASH {
+        return Err(format!(
+            "transaction was not executed, but the fixture expects logs {:?}",
+            state.logs
+        ));
+    }
+
+    if state.receipt.is_some() {
+        return Err(String::from(
+            "transaction was not executed, but the fixture contains a receipt",
+        ));
+    }
+
+    Ok(())
+}
 
 /// Assert vicinity validation to ensure that the test expected validation error
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -274,6 +358,46 @@ pub fn check_validate_exit_reason(
                         "unexpected exception {exception:?} for TooManyBlobs for test: [{spec:?}] {name}"
                     );
                 }
+                InvalidTxReason::InvalidSignature => {
+                    let check_result = exception == "TransactionException.INVALID_SIGNATURE_VRS"
+                        || exception == "TransactionException.INVALID_SIGNATURE_VRS|TransactionException.INVALID_CHAINID";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for InvalidSignature for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::InvalidChainId => {
+                    let check_result = exception == "TransactionException.INVALID_CHAINID"
+                        || exception == "TransactionException.INVALID_SIGNATURE_VRS|TransactionException.INVALID_CHAINID";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for InvalidChainId for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::NonceIsMax => {
+                    let check_result = exception == "TransactionException.NONCE_IS_MAX"
+                        || exception == "TR_NonceHasMaxValue";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for NonceIsMax for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::NonceTooHigh => {
+                    let check_result =
+                        exception == "TransactionException.NONCE_MISMATCH_TOO_HIGH";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for NonceTooHigh for test: [{spec:?}] {name}"
+                    );
+                }
+                InvalidTxReason::NonceTooLow => {
+                    let check_result =
+                        exception == "TransactionException.NONCE_MISMATCH_TOO_LOW";
+                    assert!(
+                        check_result,
+                        "unexpected exception {exception:?} for NonceTooLow for test: [{spec:?}] {name}"
+                    );
+                }
                 InvalidTxReason::GasLimitExceedsMaximum => {
                     let check_result =
                         exception == "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM";
@@ -450,4 +574,32 @@ pub fn check_create_exit_reason(
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use primitive_types::H160;
+
+    #[test]
+    fn empty_logs_hash_is_rlp_of_empty_list() {
+        assert_eq!(logs_hash(&[]), EMPTY_LOGS_HASH);
+    }
+
+    #[test]
+    fn logs_hash_matches_fixture_value() {
+        // `opcodes_transaction_init` (EEST tests@v20.0.2, Osaka, variant d115): one LOG0 without
+        // topics and data emitted by the created contract
+        let log = Log {
+            address: H160(hex!("6295ee1b4f6dd65047762f924ecd367c17eabf8f")),
+            topics: vec![],
+            data: vec![],
+        };
+        assert_eq!(
+            logs_hash(&[log]),
+            H256(hex!(
+                "e58a23a23abf5fc595f4b78cda7a0e64dca7aa9fb2f8876981fa14249023614d"
+            ))
+        );
+    }
 }

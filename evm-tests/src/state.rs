@@ -9,10 +9,11 @@ use crate::state_dump::{StateTestsDump, StateTestsDumper};
 use crate::types::account_state::MemoryAccountsState;
 use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
 use crate::types::transaction::TxType;
-use crate::types::{Spec, StateTestCase};
-use aurora_evm::backend::{Apply, ApplyBackend, MemoryBackend};
+use crate::types::{PostState, Spec, StateTestCase};
+use aurora_evm::backend::{Apply, ApplyBackend, Log, MemoryBackend};
 use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
 use aurora_evm::utils::U256_ZERO;
+use aurora_evm::ExitReason;
 use primitive_types::H160;
 use std::str::FromStr;
 
@@ -34,6 +35,48 @@ pub fn test(test_config: TestConfig, test: StateTestCase) -> TestExecutionResult
 
     // Wait for the thread to join
     child.join().unwrap()
+}
+
+/// Records a failed case and reports it in the verbose-failed output.
+fn fail(
+    tests_result: &mut TestExecutionResult,
+    test_config: &TestConfig,
+    details: FailedTestDetails,
+) {
+    if test_config.verbose_output.verbose_failed {
+        println!(
+            "\n[{:?}] {}:{} ... failed: {}\t<----",
+            details.spec, details.name, details.index, details.reason
+        );
+    }
+    tests_result.failed_tests.push(details);
+    tests_result.failed += 1;
+}
+
+/// The fixture must not expect logs or a receipt from a transaction the runner did not execute.
+fn check_not_executed_with_log(
+    tests_result: &mut TestExecutionResult,
+    test_config: &TestConfig,
+    spec: &Spec,
+    index: usize,
+    state: &PostState,
+    pre_state: &MemoryAccountsState,
+) {
+    if let Err(reason) = assertions::check_skipped_log_result(state) {
+        fail(
+            tests_result,
+            test_config,
+            FailedTestDetails {
+                name: test_config.name.clone(),
+                spec: spec.clone(),
+                index,
+                expected_hash: state.logs,
+                actual_hash: assertions::EMPTY_LOGS_HASH,
+                reason,
+                state: pre_state.0.clone(),
+            },
+        );
+    }
 }
 
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -79,6 +122,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                     index: 0,
                     name: String::from_str(&test_config.name).unwrap(),
                     spec: spec.clone(),
+                    reason: String::from("post state hash mismatch"),
                     state: original_state.0,
                 });
                 if test_config.verbose_output.verbose_failed {
@@ -91,6 +135,18 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 continue;
             }
             assert_vicinity_validation(&tx_err, states, spec, test_config);
+
+            for (i, state) in states.iter().enumerate() {
+                check_not_executed_with_log(
+                    &mut tests_result,
+                    test_config,
+                    spec,
+                    i,
+                    state,
+                    &original_state,
+                );
+            }
+
             // As it's an expected validation error-skip the test run
             continue;
         }
@@ -99,6 +155,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
         let caller = test.transaction.get_caller_from_secret_key();
 
         let caller_balance = original_state.caller_balance(caller);
+        let caller_nonce = original_state.caller_nonce(caller);
         // EIP-3607
         let caller_code = original_state.caller_code(caller);
         // EIP-7702 - check if it's delegated designation. If it's a delegation designation, then,
@@ -116,6 +173,15 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 && TxType::from_tx_bytes(&state.tx_bytes) != TxType::Legacy
                 && state.expect_exception.as_deref() == Some("TR_TypeNotSupported")
             {
+                check_not_executed_with_log(
+                    &mut tests_result,
+                    test_config,
+                    spec,
+                    i,
+                    state,
+                    &original_state,
+                );
+
                 continue;
             }
 
@@ -125,6 +191,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             let valid_tx = test.transaction.validate(
                 test.env.block_gas_limit,
                 caller_balance,
+                caller_nonce,
                 &gasometer_config,
                 &vicinity,
                 blob_gas_price,
@@ -143,7 +210,16 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         spec,
                     ) =>
                 {
-                    continue
+                    check_not_executed_with_log(
+                        &mut tests_result,
+                        test_config,
+                        spec,
+                        i,
+                        state,
+                        &original_state,
+                    );
+
+                    continue;
                 }
                 Err(err) => panic!("transaction validation error: {err:?}"),
             };
@@ -174,6 +250,8 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
             let value = test.transaction.get_value(state);
 
+            // `None` when the transaction is not executed (EIP-3607)
+            let mut exit_reason: Option<ExitReason> = None;
             // EIP-3607: Reject transactions from senders with deployed code
             // EIP-7702: Accept transaction even if the caller has code.
             if caller_code.is_empty() || is_delegated {
@@ -186,8 +264,8 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         access_list.clone(),
                     );
 
-                    // Exit reason for the call is not analyzed as it mostly does not expect exceptions
-                    let _reason = executor.transact_call(
+                    // The exit reason of a call is only compared with the receipt status
+                    let (reason, _) = executor.transact_call(
                         caller,
                         to,
                         value,
@@ -196,6 +274,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         access_list.clone(),
                         authorization_list.clone(),
                     );
+                    exit_reason = Some(reason);
                     assert_call_exit_exception(
                         state.expect_exception.as_ref(),
                         &test_config.name,
@@ -216,8 +295,19 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         state.expect_exception.as_ref(),
                         &format!("{spec:?}-{}-{i}", test_config.name),
                     ) {
+                        check_not_executed_with_log(
+                            &mut tests_result,
+                            test_config,
+                            spec,
+                            i,
+                            state,
+                            &original_state,
+                        );
+
                         continue;
                     }
+
+                    exit_reason = Some(reason.0);
                 }
             } else {
                 // According to EIP7702 - https://eips.ethereum.org/EIPS/eip-7702#transaction-origination:
@@ -261,6 +351,18 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                 .deposit(caller, amount_to_return_for_caller);
 
             let (values, logs) = executor.into_state().deconstruct();
+            let logs: Vec<Log> = logs.into_iter().collect();
+
+            // Logs and the receipt are not part of the post state hash and are compared separately;
+            // the result is reported with the post state check below, so a case counts once
+            let execution_failure = exit_reason
+                .as_ref()
+                .map_or_else(
+                    || assertions::check_skipped_log_result(state),
+                    |reason| assertions::check_execution_log_result(state, reason, used_gas, &logs),
+                )
+                .err()
+                .map(|reason| (reason, assertions::logs_hash(&logs)));
 
             // Separate Apply and dump logic to avoid dumping transactions
             if test_config.verbose_output.dump_transactions.is_some() {
@@ -330,20 +432,21 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
             let backend_state = MemoryAccountsState(backend.state().clone());
             let (is_valid_hash, actual_hash) = backend_state.check_valid_hash(&state.hash);
             if !is_valid_hash {
+                let reason = execution_failure.as_ref().map_or_else(
+                    || String::from("post state hash mismatch"),
+                    |(reason, _)| format!("post state hash mismatch; {reason}"),
+                );
                 let failed_res = FailedTestDetails {
                     expected_hash: state.hash,
                     actual_hash,
                     index: i,
                     name: test_config.name.clone(),
                     spec: spec.clone(),
+                    reason,
                     state: backend.state().clone(),
                 };
-                tests_result.failed_tests.push(failed_res);
-                tests_result.failed += 1;
 
-                if test_config.verbose_output.verbose_failed {
-                    println!("\n[{spec:?}] {}:{i} ... failed\t<----", test_config.name);
-                }
+                fail(&mut tests_result, test_config, failed_res);
 
                 if test_config.verbose_output.print_state {
                     // Print detailed state data
@@ -366,6 +469,20 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
                         println!("-> expect_exception: {e}");
                     }
                 }
+            } else if let Some((reason, actual_logs_hash)) = execution_failure {
+                fail(
+                    &mut tests_result,
+                    test_config,
+                    FailedTestDetails {
+                        name: test_config.name.clone(),
+                        spec: spec.clone(),
+                        index: i,
+                        expected_hash: state.logs,
+                        actual_hash: actual_logs_hash,
+                        reason,
+                        state: backend.state().clone(),
+                    },
+                );
             } else if test_config.verbose_output.very_verbose
                 && !test_config.verbose_output.verbose_failed
             {
