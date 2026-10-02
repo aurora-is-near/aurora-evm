@@ -131,6 +131,12 @@ impl TxSignature {
     }
 }
 
+/// Ethereum address of a public key: the last 20 bytes of the keccak256 of its uncompressed form.
+fn public_key_address(public_key: &libsecp256k1::PublicKey) -> H160 {
+    let hash = sha3::Keccak256::digest(&public_key.serialize()[1..]);
+    H160::from_slice(&hash[12..])
+}
+
 /// Transaction data.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -291,10 +297,13 @@ impl Transaction {
         let Some(signature) = TxSignature::parse(&state.tx_bytes) else {
             return Err(InvalidTxReason::InvalidSignature);
         };
-        if signature
-            .recover_public_key(TxType::from_tx_bytes(&state.tx_bytes) == TxType::Legacy)
-            .is_none()
-        {
+        let Some(public_key) =
+            signature.recover_public_key(TxType::from_tx_bytes(&state.tx_bytes) == TxType::Legacy)
+        else {
+            return Err(InvalidTxReason::InvalidSignature);
+        };
+        // The signature must belong to the sender the fixture executes the transaction with
+        if public_key_address(&public_key) != vicinity.origin {
             return Err(InvalidTxReason::InvalidSignature);
         }
 
