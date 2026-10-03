@@ -70,7 +70,7 @@ impl Spec {
     }
 
     #[must_use]
-    pub(crate) const fn get_gasometer_config(&self) -> Option<Config> {
+    pub const fn get_gasometer_config(&self) -> Option<Config> {
         match self {
             Self::Istanbul => Some(Config::istanbul()),
             Self::Berlin => Some(Config::berlin()),
