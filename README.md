@@ -40,6 +40,7 @@ Supported Ethereum hard forks:
 - [x] Cancun
 - [x] Prague
 - [x] Osaka
+- [ ] Amsterdam
 
 ## Ethereum tests supported
 
@@ -52,7 +53,7 @@ To get started, add the following dependency to your `Cargo.toml`:
 
 ```toml 
 [dependencies]
-aurora-evm = "3.0"
+aurora-evm = "3"
 ```
 
 ## License: [MIT](LICENSE)

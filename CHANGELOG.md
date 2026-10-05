@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-10-05
+> **EEST `tests@v20.0.2` Release**
+>
+> The test suite moves to the EEST `tests@v20.0.2` fixtures, a single build for every fork up to
+> Osaka, and now runs the **Osaka** state tests in CI: neither the `execution-spec-tests` v5.4.0
+> stable bundle nor `ethereum/tests` v17.0 contains state tests for Osaka. It also checks logs
+> and receipts, and validates the transaction signature, chain ID and nonce.
+>
+> The new fixtures uncovered an **EIP-2929** bug in the `CREATE` / `CREATE2` address warming;
+> its fix is the only change to the EVM core. The public API of `aurora-evm` is unchanged, but
+> transactions that hit the bug now use more gas (see **Fixed**).
+
+### Added
+- **EEST `tests@v20.0.2` fixture support** in the test suite [[#128]]:
+  - The strictly parsed `_info` and `post[]` objects now accept the new `metadata` (ignored) and `receipt` fields. The receipt is parsed strictly as well; its `bloom`, `rlp`, `transactionHash`, `type` and pre-Byzantium `postState` fields are accepted but not verified.
+  - `config.chainid` sets the chain ID of the test instead of the hard-coded `1`, which stays the default for fixtures without it; `transaction.chainId` is parsed too.
+  - Recognized the `TangerineWhistle` and `SpuriousDragon` fork names, as aliases of `EIP150` and `EIP158`.
+  - The transaction origin falls back to the fixture `sender` when the fixture has no secret key, as for transactions with an invalid signature.
+- **Logs and receipt verification** of state tests [[#128]]:
+  - The `keccak256(rlp(logs))` hash of the emitted logs is compared with `post[].logs` for every fixture; this field was parsed before but never checked. On a mismatch, the expected logs from the receipt, when present, are printed next to the actual ones.
+  - For fixtures with a `post[].receipt`, its `status` and `cumulativeGasUsed` are compared with the exit reason and the gas used by the transaction.
+  - A transaction that the runner does not execute (an expected validation error, an unsupported transaction type, a sender with code per **EIP-3607**, or a contract creation rejected with an expected exception) must have neither logs nor a receipt in the fixture.
+  - Every failure states what did not match in the new `FailedTestDetails::reason` field, which the verbose failed output prints; `expected_hash` / `actual_hash` hold the post-state hash or the logs hash accordingly.
+- **Transaction validity checks** in the test suite [[#128]]:
+  - **Signature** (`InvalidTxReason::InvalidSignature`, `TransactionException.INVALID_SIGNATURE_VRS`): the signed transaction (`txbytes`) is decoded for every envelope — legacy, types 1-4 and the EIP-4844 network form with blobs. It must satisfy `0 < r < secp256k1n` and `0 < s <= secp256k1n / 2` (**EIP-2**) with a well-formed `v` / `y_parity`, its public key must be recoverable from the signing hash, and the recovered address must be the sender the fixture executes the transaction with.
+  - **Chain ID** (`InvalidTxReason::InvalidChainId`, `TransactionException.INVALID_CHAINID`): the signed chain ID of **EIP-155** legacy and typed transactions, and `transaction.chainId` when present, must match the chain ID of the test.
+  - **Nonce**: `InvalidTxReason::NonceIsMax` (`TransactionException.NONCE_IS_MAX`, `TR_NonceHasMaxValue`) for a nonce of `2^64 - 1` (**EIP-2681**), and `NonceTooHigh` / `NonceTooLow` (`TransactionException.NONCE_MISMATCH_TOO_HIGH` / `TransactionException.NONCE_MISMATCH_TOO_LOW`) when the nonce differs from the sender nonce.
+  - The composite `TransactionException.INVALID_SIGNATURE_VRS|TransactionException.INVALID_CHAINID` is accepted for both `InvalidSignature` and `InvalidChainId`.
+- **Osaka rules** in the test suite [[#127]]:
+  - **EIP-7825**: a transaction gas limit above `2^24` is rejected with the new `InvalidTxReason::GasLimitExceedsMaximum` (`TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM`), checked before the other gas validations.
+  - **EIP-7594**: a blob transaction carries at most 6 blobs (`InvalidTxReason::TooManyBlobs`); `TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED` alone is now also accepted for this reason.
+  - **EIP-7951**: added the `P256VERIFY` (`secp256r1`) precompile at `0x100` to the Osaka precompile set of the test runner.
+  - Osaka shares the Prague handling of the vicinity validation errors `PriorityFeeTooLarge` and `GasPriceLessThanBlockBaseFee`.
+- Added unit tests for the logs hash, and for the signature decoding and public key recovery of every transaction envelope [[#128]].
+
+### Changed
+- **CI fixtures**: replaced the `execution-spec-tests` **v5.4.0** stable bundle with the single EEST **`tests@v20.0.2`** build, now published in `ethereum/execution-specs`. It covers every fork up to Osaka, so the Osaka state tests now run in CI [[#128]].
+  [[#127]] had first enabled them with the v5.4.0 `develop` bundle, which this build replaced.
+- **CI 32-bit jobs**: the unit and Ethereum tests run in a `64-bit` / `32-bit` matrix, whose `32-bit` entry cross-compiles for `i686-unknown-linux-gnu` with `gcc-multilib` on `ubuntu-latest`. It replaces the separate i386 Debian bullseye container jobs based on `vxcontrol/run-on-arch-action` [[#127]].
+- **CI**: added `Swatinem/rust-cache@v2` to every job, keyed by the matrix architecture in the test workflow, and bumped `actions/checkout` from v4 to v7 [[#127]].
+- **Test suite dependencies**: bumped `aurora-engine-precompiles` from 2.1.0 to 2.1.1 [[#127]] and then to **2.2.0** [[#128]], and enabled the `rlp` feature of `primitive-types` for the logs hash and the signature decoding [[#128]].
+
+### Fixed
+- **`CREATE` / `CREATE2` address warming** (**EIP-2929**): the address of the contract being created is now added to the accessed addresses only after the call depth (`CallTooDeep`) and caller balance (`OutOfFund`) checks have passed, matching the Ethereum execution specs [[#128]].
+  Previously it was warmed before these checks, so a `CREATE` / `CREATE2` that failed one of them left the would-be contract address warm, and later accesses to it were charged `WARM_STORAGE_READ_COST` (100 gas) instead of `COLD_ACCOUNT_ACCESS_COST` (2600 gas). This affects Berlin and later forks; contract creation transactions are not affected, as their address is warm from the start of the transaction. Uncovered by the new EEST test `tests/berlin/eip2929_gas_cost_increases/test_create.py::test_create_insufficient_balance`.
+- **`BLOCKHASH` in state tests**: the test vicinity now provides hashes for the 256 most recent blocks (fewer near genesis), computed as `keccak256` of the decimal block number per the state test convention. Previously it provided none, so `BLOCKHASH` always returned zero [[#128]].
+
 ## [3.0.0] - 2026-09-03
 > **Osaka Hard Fork Release**
 >
@@ -163,6 +210,7 @@ This release marks the final transformation of the project from a SputnikVM fork
 
 [//]: # (Link Definitions)
 
+[3.1.0]: https://github.com/aurora-is-near/aurora-evm/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/aurora-is-near/aurora-evm/compare/v2.2.1...v3.0.0
 [2.2.1]: https://github.com/aurora-is-near/aurora-evm/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/aurora-is-near/aurora-evm/compare/v2.1.3...v2.2.0
@@ -173,6 +221,8 @@ This release marks the final transformation of the project from a SputnikVM fork
 [2.0.0]: https://github.com/aurora-is-near/aurora-evm/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/aurora-is-near/aurora-evm/releases/tag/v1.0.0
 
+[#128]: https://github.com/aurora-is-near/aurora-evm/pull/128
+[#127]: https://github.com/aurora-is-near/aurora-evm/pull/127
 [#115]: https://github.com/aurora-is-near/aurora-evm/pull/115
 [#111]: https://github.com/aurora-is-near/aurora-evm/pull/111
 [#110]: https://github.com/aurora-is-near/aurora-evm/pull/110
