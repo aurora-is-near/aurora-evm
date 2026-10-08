@@ -1,6 +1,7 @@
 //! Merkle-Patricia trie roots and account trie encoding.
 //!
-//! Ordered roots use the known RLP-index key shape; secure state/storage roots use `triehash`.
+//! Ordered roots use RLP-index keys. Full state/storage maps use `triehash`; witness-backed
+//! post-state roots patch only changed paths in the authenticated sparse trie.
 
 use crate::crypto::keccak256;
 use aurora_evm::backend::MemoryAccount;
@@ -12,6 +13,9 @@ use primitive_types::{H160, H256, U256};
 
 #[cfg(test)]
 mod tests;
+
+mod witness;
+pub use witness::{StateRootError, witness_state_root};
 
 /// Account trie encoding, with an optional code-version extension.
 ///

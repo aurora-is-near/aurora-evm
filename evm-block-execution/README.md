@@ -59,8 +59,11 @@ so it is handled in two modes:
   `state_root` is computed as a pure `sec_trie_root` over the whole map — simple and fast, with no
   persistent trie.
 - **Witness / stateless.** When only a witness is available, a plain `sec_trie_root` over
-  the sparse state would be wrong (missing sibling nodes). In that case this crate emits the
-  post-state diff and the root is computed by an external witness-backed sparse trie.
+  the revealed accounts would omit untouched subtrees. `witness_state_root` instead patches
+  the retained pre-state trie using recorded account and storage writes, reusing untouched
+  hashes and storage-overlay buffers. Missing collapse siblings return an error, not a root.
+  This function is available independently; `stateless_validation` does not yet call it or
+  compare the result with the header. Read account results through `WitnessState::accounts()`.
 
 All other roots (`receipts_root`, `withdrawals_root`, `logs_bloom`, `requests_hash`) are computed
 from complete lists and are therefore always available as pure functions.

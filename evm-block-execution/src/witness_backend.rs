@@ -16,7 +16,7 @@ use aurora_evm_trie::sparse::{LookupError, NodeStore};
 use core::cell::{Cell, RefCell};
 use core::fmt;
 use primitive_types::{H160, H256, U256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[cfg(test)]
 mod tests;
@@ -196,12 +196,23 @@ enum Slot {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WitnessState {
     /// Every account execution revealed or touched, as it left them.
-    pub accounts: BTreeMap<H160, RevealedAccount>,
+    pub(crate) accounts: BTreeMap<H160, RevealedAccount>,
     /// Code bytes keyed by hash, including code created by execution.
     pub codes: BTreeMap<H256, Vec<u8>>,
     /// Original nodes and pre-state root, moved from a witness-backed backend.
     /// `None` for materialized maps, including complete state; an empty witness trie is `Some`.
     pub(crate) trie: Option<RevealedTrie>,
+    /// Written accounts (including deletions) and slots since the pre-state root.
+    /// Read caches are excluded; entries may still be net no-ops across transactions.
+    pub(crate) changes: BTreeMap<H160, BTreeSet<H256>>,
+}
+
+impl WitnessState {
+    /// Revealed accounts and execution writes. Read-only so writes cannot bypass change tracking.
+    #[must_use]
+    pub const fn accounts(&self) -> &BTreeMap<H160, RevealedAccount> {
+        &self.accounts
+    }
 }
 
 /// An EVM backend with lazy witness proofs and an owned execution environment.
@@ -219,6 +230,8 @@ pub struct WitnessBackend {
     coverage: Coverage,
     /// The first read that had no proof, if any.
     missing: Cell<Option<WitnessDbError>>,
+    /// Only witness-backed execution needs a changeset for sparse root reconstruction.
+    changes: BTreeMap<H160, BTreeSet<H256>>,
 }
 
 impl WitnessBackend {
@@ -356,6 +369,7 @@ impl WitnessBackend {
             trie,
             coverage,
             missing: Cell::new(None),
+            changes: BTreeMap::new(),
         }
     }
 
@@ -400,6 +414,9 @@ impl WitnessBackend {
                 && matches!(entry, RevealedAccount::Present(account) if account.is_empty())
             {
                 *entry = RevealedAccount::Absent;
+                if self.trie.is_some() {
+                    self.changes.entry(*address).or_default().clear();
+                }
             }
         }
     }
@@ -418,7 +435,11 @@ impl WitnessBackend {
         match entry {
             RevealedAccount::Present(account) => {
                 // Total supply is far below 2^256, so a real chain cannot overflow here.
-                account.balance = account.balance.saturating_add(amount);
+                let balance = account.balance.saturating_add(amount);
+                if balance != account.balance && self.trie.is_some() {
+                    self.changes.entry(address).or_default();
+                }
+                account.balance = balance;
             }
             RevealedAccount::Absent => {
                 if !amount.is_zero() {
@@ -428,6 +449,9 @@ impl WitnessBackend {
                         storage_wiped: true,
                         ..WitnessAccount::empty()
                     });
+                    if self.trie.is_some() {
+                        self.changes.entry(address).or_default();
+                    }
                 }
             }
         }
@@ -445,6 +469,7 @@ impl WitnessBackend {
                 accounts: self.accounts.into_inner(),
                 codes: self.codes,
                 trie: self.trie,
+                changes: self.changes,
             }),
         }
     }
@@ -708,7 +733,8 @@ impl ApplyBackend for WitnessBackend {
                     // skips deleted addresses in its `Modify` loop and appends every `Delete`
                     // after it (`executor/stack/memory.rs:91-93,128-130`), so within one batch a
                     // `Delete` never precedes a `Modify` for the same address.
-                    if matches!(entry, RevealedAccount::Absent) {
+                    let created = matches!(entry, RevealedAccount::Absent);
+                    if created {
                         // `storage_wiped`, not just the empty `storage_root` that
                         // `WitnessAccount::empty` supplies: deletion destroyed the storage, and the
                         // two fields are one encoding that must agree (see `storage_root`).
@@ -721,12 +747,17 @@ impl ApplyBackend for WitnessBackend {
                         unreachable!("just replaced any Absent entry with a Present one");
                     };
 
+                    let mut changed = created
+                        || reset_storage
+                        || account.balance != basic.balance
+                        || account.nonce != basic.nonce;
                     account.balance = basic.balance;
                     account.nonce = basic.nonce;
                     if let Some(code) = code {
                         // Register the bytes under their own hash and point the leaf at it, so a
                         // contract created in this block is readable by the very next transaction.
                         let code_hash = keccak256(&code);
+                        changed |= account.code_hash != code_hash;
                         account.code_hash = code_hash;
                         self.codes.entry(code_hash).or_insert(code);
                     }
@@ -736,10 +767,20 @@ impl ApplyBackend for WitnessBackend {
                         // unlisted slot is provably zero, and without the flag it would be
                         // indistinguishable from one the witness omitted.
                         account.storage_wiped = true;
+                        if let Some(slots) = self.changes.get_mut(&address) {
+                            slots.clear();
+                        }
                     }
                     // Zeros are kept rather than pruned — see `WitnessAccount::storage`.
                     for (index, value) in storage {
-                        account.storage.insert(index, value);
+                        let previous = account.storage.insert(index, value);
+                        if self.trie.is_some() && previous != Some(value) {
+                            self.changes.entry(address).or_default().insert(index);
+                        }
+                    }
+
+                    if changed && self.trie.is_some() {
+                        self.changes.entry(address).or_default();
                     }
 
                     // EIP-161 prunes touched empty accounts regardless of their storage.
@@ -749,6 +790,9 @@ impl ApplyBackend for WitnessBackend {
                         self.accounts
                             .get_mut()
                             .insert(address, RevealedAccount::Absent);
+                        if self.trie.is_some() {
+                            self.changes.entry(address).or_default().clear();
+                        }
                     }
                 }
                 Apply::Delete { address } => {
@@ -757,6 +801,9 @@ impl ApplyBackend for WitnessBackend {
                     self.accounts
                         .get_mut()
                         .insert(address, RevealedAccount::Absent);
+                    if self.trie.is_some() {
+                        self.changes.entry(address).or_default().clear();
+                    }
                 }
             }
         }
