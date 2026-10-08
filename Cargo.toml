@@ -11,7 +11,7 @@ exclude = ["evm-trie-bench", "evm-trie-bench/guest"]
 [workspace.package]
 authors = ["Aurora Labs <hello@aurora.dev>"]
 edition = "2024"
-version = "3.0.0"
+version = "3.1.0"
 description = "Aurora Ethereum Virtual Machine implementation written in pure Rust"
 categories = ["no-std", "compilers", "cryptography::cryptocurrencies"]
 keywords = ["aurora-evm", "evm", "ethereum", "blockchain", "no_std"]
