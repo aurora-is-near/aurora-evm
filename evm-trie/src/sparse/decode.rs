@@ -3,11 +3,11 @@
 use super::Path;
 
 /// Invalid RLP or noncanonical trie structure.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Malformed;
 
 /// Validated offsets into one immutable RLP node.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Decoded {
     Leaf {
         path_start: usize,

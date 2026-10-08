@@ -1,6 +1,7 @@
 //! Unit tests: revealed maps, lazy trie resolution, complete-state coverage and credits.
 
 mod decoding;
+mod state_transfer;
 
 use super::{
     RevealedAccount, WitnessAccount, WitnessBackend, WitnessDbError, WitnessState,
@@ -686,7 +687,9 @@ fn from_witness_resolves_accounts_and_slots_by_proof() {
     assert_eq!(resolved.storage.len(), 3);
     assert_eq!(db.accounts()[&addr(0xee)], RevealedAccount::Absent);
 
-    let WitnessState { accounts, codes } = db.try_into_state().unwrap();
+    let WitnessState {
+        accounts, codes, ..
+    } = db.try_into_state().unwrap();
     assert_eq!(accounts.len(), 3);
     assert_eq!(codes[&keccak256(CODE)], CODE);
 }

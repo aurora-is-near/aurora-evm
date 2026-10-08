@@ -99,18 +99,28 @@ enum Coverage {
     Complete,
 }
 
-/// The witness's trie nodes and the root they are proven against.
-#[derive(Clone, Debug)]
-struct RevealedTrie {
+/// Witness nodes anchored to the pre-state root; execution never modifies this trie.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RevealedTrie {
     nodes: NodeStore,
     state_root: H256,
 }
 
 impl RevealedTrie {
+    /// Original witness nodes, including paths execution did not read.
+    pub(crate) const fn nodes(&self) -> &NodeStore {
+        &self.nodes
+    }
+
+    /// The authenticated pre-state root, not the root after execution.
+    pub(crate) const fn state_root(&self) -> H256 {
+        self.state_root
+    }
+
     /// Resolves the account leaf of `address`, or its proven absence.
     fn account(&self, address: H160) -> Result<RevealedAccount, WitnessDbError> {
         let key = keccak256(address.as_bytes());
-        match self.nodes.get(self.state_root.0, key.as_bytes()) {
+        match self.nodes().get(self.state_root().0, key.as_bytes()) {
             Ok(None) => Ok(RevealedAccount::Absent),
             Ok(Some(leaf)) => {
                 let account = decode_account_leaf(leaf)
@@ -124,7 +134,7 @@ impl RevealedTrie {
     /// Resolves `slot` in the storage trie at `storage_root`; an absent leaf is a proven zero.
     fn slot(&self, address: H160, storage_root: H256, slot: H256) -> Result<H256, WitnessDbError> {
         let key = keccak256(slot.as_bytes());
-        match self.nodes.get(storage_root.0, key.as_bytes()) {
+        match self.nodes().get(storage_root.0, key.as_bytes()) {
             Ok(None) => Ok(H256::zero()),
             Ok(Some(leaf)) => {
                 decode_storage_leaf(leaf).map_err(|_| WitnessDbError::StorageLeaf { address, slot })
@@ -182,12 +192,16 @@ enum Slot {
 }
 
 /// The post-state execution leaves behind; either map may be partial.
+/// Witness-backed state retains its original trie for subsequent root reconstruction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WitnessState {
     /// Every account execution revealed or touched, as it left them.
     pub accounts: BTreeMap<H160, RevealedAccount>,
     /// Code bytes keyed by hash, including code created by execution.
     pub codes: BTreeMap<H256, Vec<u8>>,
+    /// Original nodes and pre-state root, moved from a witness-backed backend.
+    /// `None` for materialized maps, including complete state; an empty witness trie is `Some`.
+    pub(crate) trie: Option<RevealedTrie>,
 }
 
 /// An EVM backend with lazy witness proofs and an owned execution environment.
@@ -419,7 +433,8 @@ impl WitnessBackend {
         }
     }
 
-    /// Consumes the backend into its post-state, unless a read was unproven.
+    /// Moves the post-state and original trie into the result without copying witness nodes.
+    /// This does not compute or validate the post-state root.
     ///
     /// # Errors
     /// The first recorded [`WitnessDbError`]; the state is discarded.
@@ -429,6 +444,7 @@ impl WitnessBackend {
             None => Ok(WitnessState {
                 accounts: self.accounts.into_inner(),
                 codes: self.codes,
+                trie: self.trie,
             }),
         }
     }

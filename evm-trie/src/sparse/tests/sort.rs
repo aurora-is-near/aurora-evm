@@ -134,3 +134,16 @@ fn constructor_deduplicates_without_copying_surviving_buffers() {
         );
     }
 }
+
+/// Canonical order and deduplication make structural equality the equality of node sets.
+#[test]
+fn equality_ignores_input_order_and_duplicates() {
+    let mut nodes: Vec<_> = (0..8).map(|i| entry([0; 32], i).bytes).collect();
+    // A malformed node stays inert and still takes part in equality.
+    nodes.push(vec![0xc0]);
+    let mut shuffled = nodes.clone();
+    shuffled.reverse();
+    shuffled.extend_from_within(..3);
+    assert_eq!(NodeStore::new(nodes.clone()), NodeStore::new(shuffled));
+    assert_ne!(NodeStore::new(nodes[1..].to_vec()), NodeStore::new(nodes));
+}

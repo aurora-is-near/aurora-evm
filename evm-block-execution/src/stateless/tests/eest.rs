@@ -217,7 +217,9 @@ fn fold_post_state(
     mut full: BTreeMap<H160, MemoryAccount>,
     state: WitnessState,
 ) -> BTreeMap<H160, MemoryAccount> {
-    let WitnessState { accounts, codes } = state;
+    let WitnessState {
+        accounts, codes, ..
+    } = state;
     for (address, revealed) in accounts {
         match revealed {
             RevealedAccount::Present(account) => {
