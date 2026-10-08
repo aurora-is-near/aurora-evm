@@ -277,6 +277,6 @@ mod tests {
         assert_eq!(blob_versioned_hashes, vec![U256::from(1u64) << 248]);
         assert_eq!(gas_price, None);
         assert_eq!(caller, H160::zero());
-        assert!(authorization_list.is_empty());
+        assert_eq!(authorization_list, []);
     }
 }

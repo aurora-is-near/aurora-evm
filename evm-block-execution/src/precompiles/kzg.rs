@@ -138,7 +138,7 @@ mod tests {
             .unwrap();
         assert_eq!(output.cost.as_u64(), 50_000);
         assert_eq!(output.output, EXPECTED_OUTPUT);
-        assert!(output.logs.is_empty());
+        assert_eq!(output.logs, []);
     }
 
     #[test]

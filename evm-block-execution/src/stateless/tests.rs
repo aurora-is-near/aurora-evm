@@ -216,7 +216,7 @@ fn an_empty_block_is_validated_and_executed_against_its_witness() {
 
     assert_eq!(output.block_hash, expected_hash);
     assert_eq!(output.execution_output.result.gas_used, 0);
-    assert!(output.execution_output.result.receipts.is_empty());
+    assert_eq!(output.execution_output.result.receipts, []);
     assert!(output.execution_output.result.requests.is_empty());
     // The EIP-4788 system call ran against state proven by the witness.
     let RevealedAccount::Present(contract) =

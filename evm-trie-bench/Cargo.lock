@@ -352,7 +352,7 @@ dependencies = [
  "aurora-engine-modexp",
  "aurora-engine-sdk",
  "aurora-engine-types",
- "aurora-evm 3.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "aurora-evm 3.0.0",
  "ethabi",
  "hex",
  "num",
@@ -398,22 +398,6 @@ dependencies = [
 [[package]]
 name = "aurora-evm"
 version = "3.0.0"
-dependencies = [
- "auto_impl",
- "environmental",
- "log",
- "parity-scale-codec",
- "primitive-types 0.13.1",
- "rlp 0.6.1",
- "scale-info",
- "serde",
- "sha3 0.10.9",
- "smallvec",
-]
-
-[[package]]
-name = "aurora-evm"
-version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d4401754844220f7f8d5b4e49d681e2848896328e444afad07986abbaa413c3"
 dependencies = [
@@ -430,11 +414,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-evm"
+version = "3.1.0"
+dependencies = [
+ "auto_impl",
+ "environmental",
+ "log",
+ "parity-scale-codec",
+ "primitive-types 0.13.1",
+ "rlp 0.6.1",
+ "scale-info",
+ "serde",
+ "sha3 0.10.9",
+ "smallvec",
+]
+
+[[package]]
 name = "aurora-evm-block-execution"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "aurora-engine-precompiles",
- "aurora-evm 3.0.0",
+ "aurora-evm 3.1.0",
  "aurora-evm-trie",
  "c-kzg",
  "hash-db",
@@ -451,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "aurora-evm-trie"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "rlp 0.6.1",
  "sha3 0.10.9",

@@ -223,9 +223,9 @@ mod tests {
         // a value no signature covered.
         assert_eq!(max_fee_per_gas, None);
         assert_eq!(max_priority_fee_per_gas, None);
-        assert!(blob_versioned_hashes.is_empty());
+        assert_eq!(blob_versioned_hashes, []);
         assert_eq!(max_fee_per_blob_gas, 0);
         assert_eq!(caller, H160::zero());
-        assert!(authorization_list.is_empty());
+        assert_eq!(authorization_list, []);
     }
 }

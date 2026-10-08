@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn default_body_is_empty() {
         let body = BlockBody::default();
-        assert!(body.transactions.is_empty());
+        assert_eq!(body.transactions, []);
         assert!(body.withdrawals().is_none());
     }
 }

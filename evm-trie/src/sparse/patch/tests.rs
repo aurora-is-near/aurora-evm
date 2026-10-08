@@ -83,7 +83,7 @@ fn noops_preserve_witness_hashes_without_retaining_readonly_paths() {
     assert_eq!(trie.remove(&key(3)), Ok(false));
     assert_eq!(trie.root_hash(), Ok(hash));
     assert_eq!(trie.hashes, 0);
-    assert!(trie.values.is_empty());
+    assert_eq!(trie.values, b"");
     assert!(trie.nodes.is_empty() && trie.branches.is_empty());
     let node_count = trie.nodes.len();
     assert_eq!(trie.insert(&key(1), &[1; 80]), Ok(false));
@@ -348,7 +348,7 @@ fn noops_under_an_extension_do_not_dirty_or_accumulate_nodes() {
         assert!(trie.nodes.is_empty() && trie.branches.is_empty());
     }
     assert_eq!(trie.hashes, 0);
-    assert!(trie.values.is_empty());
+    assert_eq!(trie.values, b"");
     assert_eq!(
         trie.nodes.capacity() + trie.branches.capacity() + trie.values.capacity(),
         0

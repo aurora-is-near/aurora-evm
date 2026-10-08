@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn an_empty_schedule_has_nothing_active() {
         let schedule = BlobScheduleBlobParams::mainnet();
-        assert!(schedule.scheduled.is_empty());
+        assert_eq!(schedule.scheduled, []);
         assert_eq!(
             schedule.active_scheduled_params_at_timestamp(u64::MAX),
             None
