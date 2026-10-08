@@ -111,7 +111,7 @@ fn leaf_prefix_covers_every_native_key_width() {
                 .collect();
             let odd = remaining % 2 == 1;
             let mut compact = vec![if odd { 0x30 | nibbles[0] } else { 0x20 }];
-            for pair in nibbles[usize::from(odd)..].chunks_exact(2) {
+            for pair in nibbles[usize::from(odd)..].as_chunks::<2>().0 {
                 compact.push(pair[0] * 16 + pair[1]);
             }
             for value in [

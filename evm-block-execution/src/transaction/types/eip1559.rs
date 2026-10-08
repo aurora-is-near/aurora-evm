@@ -224,9 +224,9 @@ mod tests {
         assert_eq!(access_list, typed.tx.access_list.flattened());
         // The fee shape this type does not have is absent, not defaulted to a value.
         assert_eq!(gas_price, None);
-        assert!(blob_versioned_hashes.is_empty());
+        assert_eq!(blob_versioned_hashes, []);
         assert_eq!(max_fee_per_blob_gas, 0);
         assert_eq!(caller, H160::zero());
-        assert!(authorization_list.is_empty());
+        assert_eq!(authorization_list, []);
     }
 }

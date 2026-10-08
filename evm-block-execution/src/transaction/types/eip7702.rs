@@ -259,7 +259,7 @@ mod tests {
         );
         assert_eq!(access_list, typed.tx.access_list.flattened());
         assert_eq!(gas_price, None);
-        assert!(blob_versioned_hashes.is_empty());
+        assert_eq!(blob_versioned_hashes, []);
         assert_eq!(max_fee_per_blob_gas, 0);
         assert_eq!(caller, H160::zero());
         // The consensus tuples project one-to-one into recovered authorities.

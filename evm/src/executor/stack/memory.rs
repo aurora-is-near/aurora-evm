@@ -878,7 +878,7 @@ mod tests {
         stack_state.reset_balance(addr1);
         // Get from cache and code from backend.
         assert!(stack_state.is_empty(addr1));
-        assert!(stack_state.code(addr1).is_empty());
+        assert_eq!(stack_state.code(addr1), b"");
 
         stack_state.reset_balance(addr2);
         let acc2 = stack_state.substate.accounts.get(&addr2).unwrap();

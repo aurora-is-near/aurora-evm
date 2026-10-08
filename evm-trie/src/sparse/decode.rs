@@ -3,11 +3,11 @@
 use super::Path;
 
 /// Invalid RLP or noncanonical trie structure.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Malformed;
 
 /// Validated offsets into one immutable RLP node.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Decoded {
     Leaf {
         path_start: usize,
@@ -186,7 +186,7 @@ impl Decoded {
 }
 
 /// Decodes the flags of an already validated compact path.
-fn path_view(bytes: &[u8]) -> Path<'_> {
+const fn path_view(bytes: &[u8]) -> Path<'_> {
     Path {
         key: bytes,
         start: if bytes[0] & 0x10 != 0 { 1 } else { 2 },

@@ -273,7 +273,7 @@ mod tests {
         // Through `SealedHeader` to `Header`.
         assert_eq!(sealed.number, 11);
         assert_eq!(sealed.hash(), expected);
-        assert!(sealed.transactions().is_empty());
+        assert_eq!(sealed.transactions(), []);
     }
 
     #[test]

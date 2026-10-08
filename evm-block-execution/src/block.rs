@@ -142,7 +142,7 @@ mod tests {
     fn split_returns_the_parts() {
         let (header, body) = block().split();
         assert_eq!(header.number, 7);
-        assert!(body.transactions.is_empty());
+        assert_eq!(body.transactions, []);
     }
 
     #[test]

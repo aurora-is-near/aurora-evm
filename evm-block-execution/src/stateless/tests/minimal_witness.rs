@@ -1,6 +1,7 @@
 //! Hand-built minimal proofs for a block that reads and overwrites beacon-root storage.
 
 use super::{EIP4788_CODE, cancun_child, cancun_parent, chain_spec};
+use crate::block::Header;
 use crate::crypto::keccak256;
 use crate::errors::BlockExecutionError;
 use crate::execution_types::witness::ExecutionWitness;
@@ -9,6 +10,7 @@ use crate::system_calls::BEACON_ROOTS_ADDRESS;
 use crate::trie::{TrieAccount, state_root, storage_root};
 use crate::witness_backend::{RevealedAccount, WitnessDbError, WitnessStateError};
 use aurora_evm::backend::MemoryAccount;
+use aurora_evm_trie::sparse::LookupError;
 use primitive_types::{H160, H256, U256};
 use rlp::RlpStream;
 use std::collections::BTreeMap;
@@ -134,20 +136,39 @@ fn a_minimal_witness_proves_storage_presence_and_absence_without_sibling_nodes()
     assert!(!account.storage.contains_key(&unrelated_slot));
     assert!(!output.execution_output.state.accounts.contains_key(&holder));
 
-    // Every supplied trie node is necessary, unlike a full-state witness superset.
+    // The executor transfers the sparse pre-state trie, not a rebuilt trie of cached writes.
+    let trie = output.execution_output.state.trie.as_ref().unwrap();
+    assert_eq!(trie.state_root(), root);
+    assert_eq!(trie.nodes().len(), witness.state.len());
+    assert_eq!(
+        trie.nodes().get(storage_hash.0, key.as_bytes()).unwrap(),
+        Some(rlp::encode(&7u64).as_ref())
+    );
+    let holder_key = keccak256(holder.as_bytes());
+    let withheld = keccak256(&leaf(holder_key, &account_leaf(&holder_account)));
+    assert_eq!(
+        trie.nodes().get(root.0, holder_key.as_bytes()),
+        Err(LookupError::BlindedNode(withheld.0))
+    );
+
+    assert_every_node_is_required(&witness, &parent, beacon_root);
+}
+
+/// Every supplied node must be necessary, unlike a full-state witness superset.
+fn assert_every_node_is_required(witness: &ExecutionWitness, parent: &Header, beacon_root: H256) {
     for index in 0..witness.state.len() {
         let mut incomplete = witness.clone();
         let hash = keccak256(&incomplete.state.remove(index));
         let error = stateless_validation(
-            cancun_child(&parent, beacon_root),
+            cancun_child(parent, beacon_root),
             &[],
             incomplete,
             chain_spec(),
         )
         .unwrap_err();
-        let expected = if hash == root {
+        let expected = if hash == parent.state_root {
             StatelessValidationError::Witness(WitnessStateError::PreStateRootNotRevealed {
-                pre_state_root: root,
+                pre_state_root: parent.state_root,
             })
         } else {
             StatelessValidationError::Execution(BlockExecutionError::MissingWitness(

@@ -13,6 +13,7 @@ use crate::block::{Block, BlockEnv, ExecutionParts, Header, derive_ancestors, re
 use crate::bloom::Bloom;
 use crate::chain_spec::ChainSpec;
 use crate::eips::eip1559::BaseFeeParams;
+use crate::eips::eip7840::BlobParams;
 use crate::eips::eip7892::BlobScheduleBlobParams;
 use crate::errors::BlockExecutionError;
 use crate::execution_types::execution::BlockExecutionResult;
@@ -101,25 +102,108 @@ fn state_from_json(alloc: &Value) -> BTreeMap<H160, MemoryAccount> {
         .collect()
 }
 
+/// Timestamp at which the `*AtTime15k` transition networks switch forks.
+const TRANSITION_TIMESTAMP: u64 = 15_000;
+
+/// A fixture network: its fork boundary, the fork activation timestamps, and the BPO forks
+/// scheduled on top of Osaka by activation timestamp.
+type Network = (Spec, Vec<(Spec, u64)>, Vec<(u64, &'static str)>);
+
 /// The chain configuration of a fixture network, `None` for networks this crate cannot execute.
-fn chain_spec(network: &str, chain_id: u64) -> Option<ChainSpec> {
-    let (spec, timestamps): (Spec, Vec<(Spec, u64)>) = match network {
-        "Cancun" => (Spec::Cancun, vec![(Spec::Cancun, 0)]),
-        "Prague" => (Spec::Prague, vec![(Spec::Cancun, 0), (Spec::Prague, 0)]),
+///
+/// BPO forks are scheduled blob-parameter updates on top of Osaka. The fixture's
+/// `config.blobSchedule` must agree with every fork the crate has constants for; the test-only
+/// BPO3 and BPO4 take their values from the fixture.
+fn chain_spec(network: &str, chain_id: u64, blob_schedule: &Value) -> Option<ChainSpec> {
+    let osaka_at = |timestamp| {
+        vec![
+            (Spec::Cancun, 0),
+            (Spec::Prague, 0),
+            (Spec::Osaka, timestamp),
+        ]
+    };
+    let (spec, timestamps, bpos): Network = match network {
+        "Cancun" => (Spec::Cancun, vec![(Spec::Cancun, 0)], Vec::new()),
+        "Prague" => (
+            Spec::Prague,
+            vec![(Spec::Cancun, 0), (Spec::Prague, 0)],
+            Vec::new(),
+        ),
         "CancunToPragueAtTime15k" => (
             Spec::Prague,
-            vec![(Spec::Cancun, 0), (Spec::Prague, 15_000)],
+            vec![(Spec::Cancun, 0), (Spec::Prague, TRANSITION_TIMESTAMP)],
+            Vec::new(),
+        ),
+        "Osaka" => (Spec::Osaka, osaka_at(0), Vec::new()),
+        "PragueToOsakaAtTime15k" => (Spec::Osaka, osaka_at(TRANSITION_TIMESTAMP), Vec::new()),
+        "OsakaToBPO1AtTime15k" => (
+            Spec::Osaka,
+            osaka_at(0),
+            vec![(TRANSITION_TIMESTAMP, "BPO1")],
+        ),
+        "BPO1ToBPO2AtTime15k" => (
+            Spec::Osaka,
+            osaka_at(0),
+            vec![(0, "BPO1"), (TRANSITION_TIMESTAMP, "BPO2")],
+        ),
+        "BPO2ToBPO3AtTime15k" => (
+            Spec::Osaka,
+            osaka_at(0),
+            vec![(0, "BPO2"), (TRANSITION_TIMESTAMP, "BPO3")],
+        ),
+        "BPO3ToBPO4AtTime15k" => (
+            Spec::Osaka,
+            osaka_at(0),
+            vec![(0, "BPO3"), (TRANSITION_TIMESTAMP, "BPO4")],
         ),
         _ => return None,
     };
+    let mainnet = BlobScheduleBlobParams::mainnet();
+    for (fork, constants) in [
+        ("Cancun", mainnet.cancun),
+        ("Prague", mainnet.prague),
+        ("Osaka", mainnet.osaka),
+        ("BPO1", BlobParams::bpo1()),
+        ("BPO2", BlobParams::bpo2()),
+    ] {
+        if !blob_schedule[fork].is_null() {
+            assert_eq!(
+                fixture_blob_params(blob_schedule, fork, constants),
+                constants,
+                "{network}: the {fork} blob schedule differs from the crate constants"
+            );
+        }
+    }
+    let scheduled: Vec<_> = bpos
+        .into_iter()
+        .map(|(timestamp, fork)| {
+            (
+                timestamp,
+                fixture_blob_params(blob_schedule, fork, BlobParams::osaka()),
+            )
+        })
+        .collect();
     Some(ChainSpec {
         chain_id,
         spec,
         hard_forks_timestamps: timestamps.into_iter().collect(),
         deposit_contract_address: None,
         base_fee_params: BaseFeeParams::ethereum(),
-        blob_schedule: BlobScheduleBlobParams::mainnet(),
+        blob_schedule: mainnet.with_scheduled(scheduled),
     })
+}
+
+/// The `fork` entry of a fixture's `config.blobSchedule` applied over `defaults`.
+fn fixture_blob_params(blob_schedule: &Value, fork: &str, defaults: BlobParams) -> BlobParams {
+    let entry = &blob_schedule[fork];
+    assert!(entry.is_object(), "blobSchedule has no {fork} entry");
+    let field = |name| u64::try_from(hex_u256(&entry[name])).unwrap();
+    BlobParams {
+        target_blob_count: field("target"),
+        max_blob_count: field("max"),
+        update_fraction: field("baseFeeUpdateFraction"),
+        ..defaults
+    }
 }
 
 /// Folds the accounts execution touched into the full state.
@@ -133,7 +217,9 @@ fn fold_post_state(
     mut full: BTreeMap<H160, MemoryAccount>,
     state: WitnessState,
 ) -> BTreeMap<H160, MemoryAccount> {
-    let WitnessState { accounts, codes } = state;
+    let WitnessState {
+        accounts, codes, ..
+    } = state;
     for (address, revealed) in accounts {
         match revealed {
             RevealedAccount::Present(account) => {
@@ -247,13 +333,17 @@ impl BlockFailure {
                 | "BlockException.INVALID_BASEFEE_PER_GAS"
                 | "BlockException.INVALID_GASLIMIT"
                 | "BlockException.INVALID_WITHDRAWALS_ROOT"
-                | "BlockException.INVALID_BLOCK_HASH" => stage == FailureStage::PreExecution,
+                | "BlockException.INVALID_BLOCK_HASH"
+                | "BlockException.RLP_BLOCK_LIMIT_EXCEEDED" => stage == FailureStage::PreExecution,
                 // Fixed-width destinations are checked by the codec; block blob limits also
-                // have a header-level check before transaction execution.
+                // have a header-level check before transaction execution. The codec rejects an
+                // out-of-range `v` or `y_parity`, and sender recovery a non-normalized `s`
+                // (EIP-2) or an `r` without a curve point, before any transaction executes.
                 "TransactionException.TYPE_3_TX_CONTRACT_CREATION"
                 | "TransactionException.TYPE_4_TX_CONTRACT_CREATION"
                 | "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED"
-                | "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED" => {
+                | "TransactionException.TYPE_3_TX_BLOB_COUNT_EXCEEDED"
+                | "TransactionException.INVALID_SIGNATURE_VRS" => {
                     matches!(stage, FailureStage::PreExecution | FailureStage::Execution)
                 }
                 exception if exception.starts_with("TransactionException.") => {
@@ -394,6 +484,88 @@ fn negative_execution_cases_cannot_pass_via_a_commitment_or_witness_failure() {
         "BlockException.RLP_STRUCTURES_ENCODING|TransactionException.TYPE_3_TX_CONTRACT_CREATION",
     ));
     assert!(!BlockFailure::Other("decode".into()).matches_exception("BlockException.UNKNOWN"));
+    // Signatures are rejected while decoding or recovering senders, oversized blocks by consensus.
+    for stage in ["decode", "recover"] {
+        assert!(BlockFailure::Other(stage.into()).matches_exception(
+            "TransactionException.INVALID_SIGNATURE_VRS|TransactionException.INVALID_CHAINID",
+        ));
+    }
+    assert!(
+        BlockFailure::Other("consensus".into())
+            .matches_exception("BlockException.RLP_BLOCK_LIMIT_EXCEEDED")
+    );
+    for exception in [
+        "TransactionException.INVALID_SIGNATURE_VRS",
+        "BlockException.RLP_BLOCK_LIMIT_EXCEEDED",
+    ] {
+        assert!(!BlockFailure::Commitment(Commitment::StateRoot).matches_exception(exception));
+    }
+}
+
+/// Transition networks switch forks and blob parameters exactly at their transition timestamp.
+#[test]
+fn transition_networks_switch_at_the_transition_timestamp() {
+    let fork = |target: u64, max: u64, fraction: u64| {
+        serde_json::json!({
+            "target": format!("{target:#x}"),
+            "max": format!("{max:#x}"),
+            "baseFeeUpdateFraction": format!("{fraction:#x}"),
+        })
+    };
+    // EEST tests@v20.0.2 values; BPO3 has no crate constants.
+    let schedule = serde_json::json!({
+        "Cancun": fork(3, 6, 3_338_477),
+        "Prague": fork(6, 9, 5_007_716),
+        "Osaka": fork(6, 9, 5_007_716),
+        "BPO1": fork(10, 15, 8_346_193),
+        "BPO2": fork(14, 21, 11_684_671),
+        "BPO3": fork(21, 32, 20_609_697),
+    });
+    let active = |network: &str, timestamp| {
+        let resolved = chain_spec(network, 1, &schedule)
+            .unwrap()
+            .active_spec_at_timestamp(timestamp)
+            .unwrap();
+        (resolved.spec(), resolved.blob_params())
+    };
+    let before = TRANSITION_TIMESTAMP - 1;
+    let bpo3 = BlobParams {
+        target_blob_count: 21,
+        max_blob_count: 32,
+        update_fraction: 20_609_697,
+        ..BlobParams::osaka()
+    };
+    for (network, from, to) in [
+        (
+            "CancunToPragueAtTime15k",
+            (Spec::Cancun, BlobParams::cancun()),
+            (Spec::Prague, BlobParams::prague()),
+        ),
+        (
+            "PragueToOsakaAtTime15k",
+            (Spec::Prague, BlobParams::prague()),
+            (Spec::Osaka, BlobParams::osaka()),
+        ),
+        (
+            "OsakaToBPO1AtTime15k",
+            (Spec::Osaka, BlobParams::osaka()),
+            (Spec::Osaka, BlobParams::bpo1()),
+        ),
+        (
+            "BPO1ToBPO2AtTime15k",
+            (Spec::Osaka, BlobParams::bpo1()),
+            (Spec::Osaka, BlobParams::bpo2()),
+        ),
+        (
+            "BPO2ToBPO3AtTime15k",
+            (Spec::Osaka, BlobParams::bpo2()),
+            (Spec::Osaka, bpo3),
+        ),
+    ] {
+        assert_eq!(active(network, before), from, "{network}");
+        assert_eq!(active(network, TRANSITION_TIMESTAMP), to, "{network}");
+    }
+    assert!(chain_spec("ShanghaiToCancunAtTime15k", 1, &schedule).is_none());
 }
 
 /// Why a fixture block did not behave as the fixture says.
@@ -441,7 +613,11 @@ struct Outcome {
 /// Runs one fixture; `None` when its network is not executable here.
 fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -> Option<()> {
     let chain_id = u64::try_from(hex_u256(&fixture["config"]["chainid"])).unwrap();
-    let chain = chain_spec(fixture["network"].as_str().unwrap(), chain_id)?;
+    let chain = chain_spec(
+        fixture["network"].as_str().unwrap(),
+        chain_id,
+        &fixture["config"]["blobSchedule"],
+    )?;
 
     let mut state = state_from_json(&fixture["pre"]);
     let genesis = Block::decode_exact(&hex_bytes(&fixture["genesisRLP"])).unwrap();
@@ -656,7 +832,8 @@ fn check_commitments(
 }
 
 fn run_all(mode: Mode) {
-    let directory = std::env::var("EEST_PATH").expect("set EEST_PATH to fixtures_stable-v5.4.0");
+    let directory =
+        std::env::var("EEST_PATH").expect("set EEST_PATH to the EEST tests@v20.0.2 fixtures");
     let mut paths = Vec::new();
     collect_files(&Path::new(&directory).join("blockchain_tests"), &mut paths);
     assert!(!paths.is_empty(), "no EEST blockchain fixtures found");

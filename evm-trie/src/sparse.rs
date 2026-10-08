@@ -22,13 +22,15 @@ mod tests;
 pub use tests::reference;
 
 /// Witness RLP nodes indexed by Keccak-256.
-#[derive(Clone, Debug, Default)]
+///
+/// Entries are sorted by hash and deduplicated, so equal stores hold the same set of nodes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NodeStore {
     nodes: Vec<Entry>,
 }
 
 /// Indexed bytes and validated field offsets; malformed unused nodes remain inert.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
     hash: [u8; 32],
     bytes: Vec<u8>,

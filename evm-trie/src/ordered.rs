@@ -141,7 +141,7 @@ struct NodeBuffer<'a> {
 impl NodeBuffer<'_> {
     /// Appends one byte to the payloads of the currently open nodes.
     #[inline]
-    fn push(&mut self, byte: u8) {
+    const fn push(&mut self, byte: u8) {
         self.data[self.len] = byte;
         self.len += 1;
     }
@@ -447,6 +447,10 @@ fn put_be(out: &mut [u8], v: usize, k: usize) {
 }
 
 /// Bytes needed for the minimal big-endian encoding of `v` (at least one).
+#[expect(
+    clippy::manual_bit_width,
+    reason = "the RV32 guests build this crate with the risc0 toolchain (Rust 1.91), where `bit_width` is unstable"
+)]
 fn byte_width(v: usize) -> usize {
     let bits = usize::BITS - v.leading_zeros();
     if bits == 0 {
@@ -458,6 +462,10 @@ fn byte_width(v: usize) -> usize {
 }
 
 /// Nibbles needed for the minimal big-endian encoding of `v` (zero for `v == 0`).
+#[expect(
+    clippy::manual_bit_width,
+    reason = "the RV32 guests build this crate with the risc0 toolchain (Rust 1.91), where `bit_width` is unstable"
+)]
 fn nibble_width(v: usize) -> usize {
     // At most two nibbles per native byte; representable on both RV32 and 64-bit hosts.
     usize::try_from((usize::BITS - v.leading_zeros()).div_ceil(4)).expect("nibble width fits usize")

@@ -21,7 +21,8 @@ fn collect_files(directory: &Path, paths: &mut Vec<std::path::PathBuf>) {
 #[test]
 #[ignore = "requires EEST_PATH pointing to the official fixtures release"]
 fn eest_body_lengths_and_roots_match_every_positive_block() {
-    let directory = std::env::var("EEST_PATH").expect("set EEST_PATH to fixtures_stable-v5.4.0");
+    let directory =
+        std::env::var("EEST_PATH").expect("set EEST_PATH to the EEST tests@v20.0.2 fixtures");
     let mut paths = Vec::new();
     collect_files(&Path::new(&directory).join("blockchain_tests"), &mut paths);
 

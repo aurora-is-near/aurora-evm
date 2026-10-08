@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn an_empty_block_needs_no_keys() {
         let recovered = recover_block_with_public_keys(block_of(Vec::new()), &[]).unwrap();
-        assert!(recovered.senders().is_empty());
+        assert_eq!(recovered.senders(), []);
     }
 
     #[test]

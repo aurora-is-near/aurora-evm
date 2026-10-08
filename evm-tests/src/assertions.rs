@@ -561,9 +561,8 @@ pub fn check_create_exit_reason(
                         )
                     }
                 }
-            } else {
-                return false;
             }
+            return false;
         }
         ExitReason::Fatal(err) => {
             panic!("Unexpected error: {err:?}")

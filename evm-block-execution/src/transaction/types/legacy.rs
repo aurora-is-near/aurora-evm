@@ -454,11 +454,11 @@ mod tests {
         // Fields a legacy transaction does not have, each as its own absent value.
         assert_eq!(max_fee_per_gas, None);
         assert_eq!(max_priority_fee_per_gas, None);
-        assert!(access_list.is_empty());
-        assert!(blob_versioned_hashes.is_empty());
+        assert_eq!(access_list, []);
+        assert_eq!(blob_versioned_hashes, []);
         assert_eq!(max_fee_per_blob_gas, 0);
         // The caller is supplied to the projection; a legacy transaction has no authorizations.
         assert_eq!(caller, H160::zero());
-        assert!(authorization_list.is_empty());
+        assert_eq!(authorization_list, []);
     }
 }

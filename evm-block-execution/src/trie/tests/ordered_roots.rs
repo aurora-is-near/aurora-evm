@@ -2,6 +2,7 @@
 
 use crate::trie::ordered_trie_root;
 
+#[allow(clippy::assert_is_empty)]
 #[test]
 fn pinned_eest_roots_are_reproduced() {
     let cases: serde_json::Value =

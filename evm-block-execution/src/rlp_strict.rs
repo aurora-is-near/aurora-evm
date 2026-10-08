@@ -77,6 +77,10 @@ pub fn declared_item_len(bytes: &[u8]) -> Result<usize, rlp::DecoderError> {
 
 /// Length of the RLP prefix for a list or a string without the single-byte exception.
 #[inline]
+#[expect(
+    clippy::manual_bit_width,
+    reason = "keeps the crate buildable with the risc0 zkVM toolchain (Rust 1.91), where `bit_width` is unstable"
+)]
 fn length_prefix_length(payload: usize) -> usize {
     if payload < 56 {
         1

@@ -301,7 +301,7 @@ mod tests {
     fn unchecked_construction_trusts_the_caller() {
         // The unchecked constructor performs no check at all, not even on the count.
         let recovered = RecoveredBlock::new_unhashed_unchecked(block(1), Vec::new());
-        assert!(recovered.senders().is_empty());
+        assert_eq!(recovered.senders(), []);
         assert_eq!(recovered.transactions().len(), 1);
     }
 
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn into_tx_envs_on_an_empty_block_yields_nothing() {
         let recovered = RecoveredBlock::try_new_unhashed(block(0), Vec::new()).unwrap();
-        assert!(recovered.into_tx_envs().unwrap().is_empty());
+        assert_eq!(recovered.into_tx_envs().unwrap(), []);
     }
 
     /// A mismatched unchecked value must fail instead of being truncated by `zip`.

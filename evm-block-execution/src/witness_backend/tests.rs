@@ -1,6 +1,7 @@
 //! Unit tests: revealed maps, lazy trie resolution, complete-state coverage and credits.
 
 mod decoding;
+mod state_transfer;
 
 use super::{
     RevealedAccount, WitnessAccount, WitnessBackend, WitnessDbError, WitnessState,
@@ -105,7 +106,7 @@ fn a_touched_account_whose_code_is_absent_is_reported_not_emptied() {
     assert_ne!(account.code_hash, KECCAK_EMPTY);
 
     // Reading the code cannot answer, so it poisons.
-    assert!(db.code(who).is_empty());
+    assert_eq!(db.code(who), b"");
     assert_eq!(
         db.missing(),
         Some(WitnessDbError::Code {
@@ -133,7 +134,7 @@ fn an_account_proven_to_have_no_code_needs_no_bytes() {
         vec![(who, RevealedAccount::Present(WitnessAccount::empty()))],
         vec![],
     );
-    assert!(db.code(who).is_empty());
+    assert_eq!(db.code(who), b"");
     assert_eq!(db.missing(), None, "KECCAK_EMPTY is a proof, not a miss");
 }
 
@@ -669,7 +670,7 @@ fn from_witness_resolves_accounts_and_slots_by_proof() {
             nonce: U256::from(3u64),
         }
     );
-    assert!(db.code(holder).is_empty());
+    assert_eq!(db.code(holder), b"");
     assert!(db.is_empty_storage(holder));
 
     // An address the state trie proves absent.
@@ -686,7 +687,9 @@ fn from_witness_resolves_accounts_and_slots_by_proof() {
     assert_eq!(resolved.storage.len(), 3);
     assert_eq!(db.accounts()[&addr(0xee)], RevealedAccount::Absent);
 
-    let WitnessState { accounts, codes } = db.try_into_state().unwrap();
+    let WitnessState {
+        accounts, codes, ..
+    } = db.try_into_state().unwrap();
     assert_eq!(accounts.len(), 3);
     assert_eq!(codes[&keccak256(CODE)], CODE);
 }
@@ -761,7 +764,7 @@ fn from_witness_reports_omitted_code_of_a_proven_account() {
     let (root, mut witness) = witness_of(&[(contract, memory_account(7, 1, CODE, &[]))]);
     witness.contract_codes.clear();
     let db = WitnessBackend::from_witness(vicinity(), witness, root, BTreeMap::new()).unwrap();
-    assert!(db.code(contract).is_empty());
+    assert_eq!(db.code(contract), b"");
     assert_eq!(
         db.missing(),
         Some(WitnessDbError::Code {

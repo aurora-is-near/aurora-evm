@@ -862,7 +862,7 @@ fn reverting_call_pays_gas_without_transfer_or_logs() {
 
     assert_eq!(result.receipts.len(), 1);
     assert!(!result.receipts[0].success); // reverted
-    assert!(result.receipts[0].logs.is_empty()); // logs rolled back
+    assert_eq!(result.receipts[0].logs, []); // logs rolled back
     // The value transfer is rolled back: the target keeps exactly its pre-state balance.
     assert_eq!(balance_of(&result.state, target), U256::from(500u64));
     // Gas was still paid (base_fee 0 → the whole fee went to the coinbase).
@@ -1364,7 +1364,7 @@ fn pre_execution_calls_record_the_parent_hash_and_beacon_root() {
     // Empty request queues yield no requests, and the call itself costs the block nothing.
     assert!(output.result.requests.is_empty());
     assert_eq!(output.result.gas_used, 0);
-    assert!(output.result.receipts.is_empty());
+    assert_eq!(output.result.receipts, []);
 }
 
 #[test]
@@ -1447,7 +1447,7 @@ fn reverted_or_halted_pre_execution_calls_do_not_invalidate_the_block() {
             let output = execute(Spec::Prague, blk, state, vec![]).unwrap();
             assert_eq!(slot_of(&output.state, target, 0), H256::zero());
             assert_eq!(output.result.gas_used, 0);
-            assert!(output.result.receipts.is_empty());
+            assert_eq!(output.result.receipts, []);
         }
     }
 }

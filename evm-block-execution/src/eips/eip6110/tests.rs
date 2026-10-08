@@ -107,10 +107,9 @@ fn foreign_logs_and_other_topics_are_ignored() {
         data: vec![0xff; 10],
     };
     let receipts = [receipt(vec![other_address, other_topic, no_topic])];
-    assert!(
-        parse_deposits_from_receipts(&receipts, MAINNET_DEPOSIT_CONTRACT_ADDRESS)
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        parse_deposits_from_receipts(&receipts, MAINNET_DEPOSIT_CONTRACT_ADDRESS).unwrap(),
+        b""
     );
 }
 
@@ -124,10 +123,9 @@ fn a_configured_contract_address_replaces_the_mainnet_one() {
         parse_deposits_from_receipts(&receipts, custom).unwrap(),
         EXPECTED[..DEPOSIT_REQUEST_LENGTH]
     );
-    assert!(
-        parse_deposits_from_receipts(&receipts, MAINNET_DEPOSIT_CONTRACT_ADDRESS)
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        parse_deposits_from_receipts(&receipts, MAINNET_DEPOSIT_CONTRACT_ADDRESS).unwrap(),
+        b""
     );
 }
 
