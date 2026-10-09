@@ -68,6 +68,13 @@ so it is handled in two modes:
 All other roots (`receipts_root`, `withdrawals_root`, `logs_bloom`, `requests_hash`) are computed
 from complete lists and are therefore always available as pure functions.
 
+## Post-execution validation
+
+`block::validate_block_post_execution` compares execution gas, blob gas, receipts root, logs bloom
+and Prague-or-later requests hash against the header, using the same `ActiveSpec` as execution.
+It is currently an isolated validator: `stateless_validation` does not call it yet. It neither
+repeats header/body consensus checks nor computes or validates the post-state root.
+
 ## Getting started
 
 This crate is not published on crates.io. Use a checkout of this repository
