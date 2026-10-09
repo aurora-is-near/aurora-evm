@@ -409,6 +409,7 @@ fn hashed_short_child_and_branch_terminal_values_are_rejected() {
     for _ in 2..17 {
         branch.append_empty_data();
     }
+
     let raw = branch.out().to_vec();
     let hash = keccak256(&raw);
     reject(vec![raw, short], hash, [0; 32], short_hash);
@@ -418,6 +419,7 @@ fn hashed_short_child_and_branch_terminal_values_are_rejected() {
     for _ in 1..16 {
         branch.append_empty_data();
     }
+
     branch.append(&1u8);
     let raw = branch.out().to_vec();
     let hash = keccak256(&raw);

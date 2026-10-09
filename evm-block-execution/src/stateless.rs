@@ -159,6 +159,13 @@ pub fn stateless_validation(
 }
 
 /// Validates a block whose senders are already established.
+///
+/// # Errors
+/// Returns [`StatelessValidationError`] for recovery, ancestor, consensus, witness, execution or
+/// post-execution failures, including missing proof nodes and reconstruction invariant failures.
+///
+/// # Panics
+/// Panics if an internal RLP or trie encoder violates its invariants.
 pub fn stateless_validation_recovered(
     current_block: RecoveredBlock,
     witness: ExecutionWitness,

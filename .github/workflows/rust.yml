@@ -224,7 +224,8 @@ jobs:
             cargo test -r -p aurora-evm-block-execution \
               eest_body_lengths_and_roots_match_every_positive_block -- --ignored --nocapture
 
-      - name: Run EEST blockchain execution
+      # The filter includes complete state, witness, node withholding and header mutations.
+      - name: Run EEST blockchain execution and adversarial validation
         run: |
           EEST_PATH="$PWD/ethereum-spec-tests/fixtures" \
             cargo test -r -p aurora-evm-block-execution \

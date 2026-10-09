@@ -351,7 +351,7 @@ pub enum BlockExecutionError {
     },
     /// A deposit-contract log is not a canonically encoded deposit event (EIP-6110).
     DepositRequestDecode(DepositLogError),
-    /// Execution read state the witness did not prove.
+    /// The witness cannot prove an execution read or supply a node needed to reconstruct the root.
     MissingWitness(WitnessDbError),
     /// EVM execution ended in an unexpected (fatal) state.
     ExecutionFailed(ExitReason),
@@ -515,7 +515,9 @@ impl fmt::Display for BlockExecutionError {
                 write!(f, "consolidation requests contract call failed: {reason:?}")
             }
             Self::DepositRequestDecode(_) => write!(f, "invalid deposit contract log"),
-            Self::MissingWitness(_) => write!(f, "execution read state the witness did not prove"),
+            Self::MissingWitness(_) => {
+                write!(f, "witness cannot support execution or root reconstruction")
+            }
             Self::ExecutionFailed(reason) => write!(f, "execution failed: {reason:?}"),
             Self::GasUsedMismatch { got, expected } => {
                 write!(f, "gas used mismatch: got {got}, expected {expected}")

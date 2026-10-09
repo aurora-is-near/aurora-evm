@@ -5,13 +5,14 @@
 //! execution output; `expectException` must fail at a stage allowed by that exception. The final
 //! state is compared with `postState`. Only Cancun-or-later networks are executable here.
 //!
-//! Two modes share the checks: complete-state mode drives the executor over the full state, and
-//! witness mode runs the production [`stateless_validation_recovered`] path against a witness
-//! derived from that state — a superset of every node the block needs, so no read may be unproven.
+//! Complete-state mode checks commitments independently. Witness modes use production validation
+//! and compare its accepted root with a full-state oracle. Withholding permits only the removed
+//! node to be missing; mutations require the exact rejection of each changed header commitment.
 
 use crate::block::{Block, BlockEnv, ExecutionParts, Header, derive_ancestors, recover_block};
 use crate::bloom::Bloom;
 use crate::chain_spec::ChainSpec;
+use crate::crypto::keccak256;
 use crate::eips::eip1559::BaseFeeParams;
 use crate::eips::eip7840::BlobParams;
 use crate::eips::eip7892::BlobScheduleBlobParams;
@@ -21,7 +22,7 @@ use crate::executor::BlockExecutor;
 use crate::spec::Spec;
 use crate::stateless::{StatelessValidationError, stateless_validation_recovered};
 use crate::test_utils::witness_of;
-use crate::trie::{receipts_root, state_root, witness_state_root};
+use crate::trie::{receipts_root, state_root};
 use crate::witness_backend::WitnessStateError;
 use crate::witness_backend::{RevealedAccount, WitnessBackend, WitnessDbError, WitnessState};
 use aurora_evm::backend::MemoryAccount;
@@ -30,6 +31,9 @@ use primitive_types::{H160, H256, U256};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+mod mutations;
+use mutations::check_header_mutations;
 
 fn collect_files(directory: &Path, paths: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(directory).unwrap() {
@@ -270,6 +274,8 @@ enum Mode {
     /// Witness mode with one hashed node withheld per block: the block must either be rejected as
     /// unprovable or reach exactly the commitments its header carries — never a third outcome.
     WitnessWithholding,
+    /// Valid witness blocks are also retried with each post-execution commitment corrupted.
+    WitnessMutations,
 }
 
 /// Keeps stateless errors typed until the fixture result has been classified.
@@ -278,6 +284,8 @@ enum BlockFailure {
     Execution(Box<BlockExecutionError>),
     Commitment(Commitment),
     Other(String),
+    /// The differential oracle or a controlled mutation observed an impossible outcome.
+    Oracle(String),
 }
 
 /// Header fields recomputed by the harness after production execution has succeeded.
@@ -314,6 +322,7 @@ impl BlockFailure {
             Self::Execution(error) => execution_failure_stage(error),
             Self::Commitment(_) => FailureStage::Commitment,
             Self::Other(_) => FailureStage::PreExecution,
+            Self::Oracle(_) => FailureStage::Internal,
         }
     }
 
@@ -396,7 +405,7 @@ impl fmt::Display for BlockFailure {
                 "stateless: {error} ({:?})",
                 core::error::Error::source(error.as_ref())
             ),
-            Self::Other(error) => f.write_str(error),
+            Self::Other(error) | Self::Oracle(error) => f.write_str(error),
             Self::Execution(error) => write!(f, "execution: {error:?}"),
             Self::Commitment(field) => write!(f, "post-execution mismatch: {field:?}"),
         }
@@ -638,6 +647,8 @@ enum Failure {
     Mismatch { field: &'static str },
     /// The final state differs from `postState`.
     PostState { address: H160 },
+    /// A controlled header mutation was accepted or rejected for the wrong reason.
+    Mutation { error: String },
 }
 
 impl fmt::Display for Failure {
@@ -655,6 +666,7 @@ impl fmt::Display for Failure {
             }
             Self::Mismatch { field } => write!(f, "{field} mismatch"),
             Self::PostState { address } => write!(f, "post-state differs at {address:?}"),
+            Self::Mutation { error } => write!(f, "header mutation: {error}"),
         }
     }
 }
@@ -665,18 +677,22 @@ struct Outcome {
     negative_blocks: usize,
     /// Valid blocks rejected because the withheld node was needed (withholding mode only).
     withheld_rejections: usize,
+    mutated_headers: usize,
     failures: Vec<(String, usize, Failure)>,
+}
+
+/// Resolves a fixture's supported network and chain parameters.
+fn fixture_chain_spec(fixture: &Value) -> Option<ChainSpec> {
+    chain_spec(
+        fixture["network"].as_str().unwrap(),
+        u64::try_from(hex_u256(&fixture["config"]["chainid"])).unwrap(),
+        &fixture["config"]["blobSchedule"],
+    )
 }
 
 /// Runs one fixture; `None` when its network is not executable here.
 fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -> Option<()> {
-    let chain_id = u64::try_from(hex_u256(&fixture["config"]["chainid"])).unwrap();
-    let chain = chain_spec(
-        fixture["network"].as_str().unwrap(),
-        chain_id,
-        &fixture["config"]["blobSchedule"],
-    )?;
-
+    let chain = fixture_chain_spec(fixture)?;
     let mut state = state_from_json(&fixture["pre"]);
     let genesis = Block::decode_exact(&hex_bytes(&fixture["genesisRLP"])).unwrap();
     let mut recent_headers: Vec<Vec<u8>> = vec![rlp::encode(&genesis.header).to_vec()];
@@ -703,7 +719,7 @@ fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -
             && let Err(error) = &result
             && exception.is_none()
         {
-            // The only acceptable rejection of a valid block is an unprovable read.
+            // execute_block has already restricted this to the exact withheld node.
             if error.is_unproven() {
                 outcome.withheld_rejections += 1;
                 // The state after a rejected block is unknown here; stop this fixture.
@@ -745,7 +761,26 @@ fn run_fixture(mode: Mode, name: &str, fixture: &Value, outcome: &mut Outcome) -
                 ));
                 return Some(());
             }
+
             (Ok((header, post_state)), None) => {
+                if mode == Mode::WitnessMutations {
+                    match check_header_mutations(
+                        &raw,
+                        &chain,
+                        &recent_headers[window_start..],
+                        &state,
+                    ) {
+                        Ok(count) => outcome.mutated_headers += count,
+                        Err(error) => {
+                            outcome.failures.push((
+                                name.to_owned(),
+                                index,
+                                Failure::Mutation { error },
+                            ));
+                            return Some(());
+                        }
+                    }
+                }
                 outcome.blocks += 1;
                 outcome.transactions += block["transactions"].as_array().map_or(0, Vec::len);
                 last_hash = header.hash_slow();
@@ -800,7 +835,7 @@ fn execute_block(
     let block = Block::decode_exact(raw).map_err(|error| format!("decode: {error}"))?;
     let recovered = recover_block(block).map_err(|error| format!("recover: {error}"))?;
     let header = recovered.header().clone();
-    let (result, post_state) = match mode {
+    let post_state = match mode {
         Mode::CompleteState => {
             let ancestors = derive_ancestors(recovered.header(), recent_headers)
                 .map_err(|error| format!("ancestors: {error}"))?;
@@ -831,39 +866,64 @@ fn execute_block(
             )
             .execute()
             .map_err(|error| BlockFailure::Execution(Box::new(error)))?;
-            (
-                output.result,
-                fold_post_state(BTreeMap::new(), output.state),
-            )
+            let post_state = fold_post_state(BTreeMap::new(), output.state);
+            check_commitments(&header, &output.result, &post_state)
+                .map_err(BlockFailure::Commitment)?;
+            post_state
         }
-        Mode::Witness | Mode::WitnessWithholding => {
+        Mode::Witness | Mode::WitnessWithholding | Mode::WitnessMutations => {
             let (_root, mut witness) = witness_of(state);
-            if mode == Mode::WitnessWithholding && !witness.state.is_empty() {
+            let withheld = if mode == Mode::WitnessWithholding && !witness.state.is_empty() {
                 // Deterministic per block: the header hash picks the node to withhold.
                 let pick = witness_node_index(header.hash_slow(), witness.state.len());
-                witness.state.remove(pick);
-            }
+                Some(keccak256(&witness.state.remove(pick)))
+            } else {
+                None
+            };
             witness.headers = recent_headers.to_vec();
             let output = stateless_validation_recovered(recovered, witness, chain.clone())
-                .map_err(|error| BlockFailure::Stateless(Box::new(error)))?;
-            // Independent sparse/full differential; production validation and error classification are unchanged.
-            let sparse_root = (mode == Mode::Witness).then(|| {
-                witness_state_root(&output.execution_output.state)
-                    .expect("complete witness supports root reconstruction")
-            });
+                .map_err(|error| {
+                    if mode == Mode::WitnessWithholding && !is_withheld_node_error(&error, withheld)
+                    {
+                        BlockFailure::Oracle(format!("unexpected withholding rejection: {error:?}"))
+                    } else {
+                        BlockFailure::Stateless(Box::new(error))
+                    }
+                })?;
             let post_state = fold_post_state(state.clone(), output.execution_output.state);
-            if let Some(sparse_root) = sparse_root {
-                assert_eq!(
-                    sparse_root,
-                    state_root(&post_state),
-                    "sparse/full post-state root"
-                );
-            }
-            (output.execution_output.result, post_state)
+            // Production already established sparse_root == header.state_root. Compare that
+            // accepted root to an independent full trie, without running the sparse builder twice.
+            check_full_state_root(header.state_root, &post_state)?;
+            post_state
         }
     };
-    check_commitments(&header, &result, &post_state).map_err(BlockFailure::Commitment)?;
+
     Ok((header, post_state))
+}
+
+fn check_full_state_root(
+    expected: H256,
+    state: &BTreeMap<H160, MemoryAccount>,
+) -> Result<(), BlockFailure> {
+    let got = state_root(state);
+    if got != expected {
+        return Err(BlockFailure::Oracle(format!(
+            "sparse/full post-state root: got {got:?}, expected {expected:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// Only the removed node may be unavailable; malformed data and unrelated gaps are failures.
+fn is_withheld_node_error(error: &StatelessValidationError, withheld: Option<H256>) -> bool {
+    let Some(withheld) = withheld else {
+        return false;
+    };
+    matches!(error,
+        StatelessValidationError::Execution(BlockExecutionError::MissingWitness(WitnessDbError::BlindedNode { hash })) if *hash == withheld
+    ) || matches!(error,
+        StatelessValidationError::Witness(WitnessStateError::PreStateRootNotRevealed { pre_state_root }) if *pre_state_root == withheld
+    )
 }
 
 /// Compares every commitment the header derives from execution with the execution output.
@@ -913,6 +973,7 @@ fn run_all(mode: Mode) {
         transactions: 0,
         negative_blocks: 0,
         withheld_rejections: 0,
+        mutated_headers: 0,
         failures: Vec::new(),
     };
     let (mut fixtures, mut skipped) = (0usize, 0usize);
@@ -934,15 +995,25 @@ fn run_all(mode: Mode) {
         eprintln!("FAIL {name} block {index}: {failure}");
     }
     eprintln!(
-        "fixtures={fixtures}, skipped_networks={skipped}, blocks={}, transactions={}, negative_blocks={}, withheld_rejections={}, failures={}",
+        "fixtures={fixtures}, skipped_networks={skipped}, blocks={}, transactions={}, negative_blocks={}, withheld_rejections={}, mutated_headers={}, failures={}",
         outcome.blocks,
         outcome.transactions,
         outcome.negative_blocks,
         outcome.withheld_rejections,
+        outcome.mutated_headers,
         outcome.failures.len()
     );
     assert!(outcome.failures.is_empty());
     assert!(outcome.blocks > 0 && outcome.transactions > 0);
+    if mode == Mode::WitnessMutations {
+        assert!(outcome.mutated_headers >= outcome.blocks * 4);
+    }
+}
+
+#[test]
+#[ignore = "requires EEST_PATH pointing to the official fixtures release"]
+fn eest_blockchain_tests_reject_mutated_commitments() {
+    run_all(Mode::WitnessMutations);
 }
 
 #[test]
@@ -979,4 +1050,56 @@ fn withholding_can_select_beyond_the_first_256_nodes() {
         );
     }
     assert!(witness_node_index(H256::repeat_byte(0xff), 1023) < 1023);
+}
+
+#[test]
+fn withholding_accepts_only_the_exact_removed_node() {
+    let hash = H256::repeat_byte(1);
+    let missing = |hash| {
+        StatelessValidationError::Execution(BlockExecutionError::MissingWitness(
+            WitnessDbError::BlindedNode { hash },
+        ))
+    };
+    assert!(is_withheld_node_error(&missing(hash), Some(hash)));
+    assert!(!is_withheld_node_error(&missing(hash), None));
+    assert!(!is_withheld_node_error(&missing(H256::zero()), Some(hash)));
+    assert!(is_withheld_node_error(
+        &StatelessValidationError::Witness(WitnessStateError::PreStateRootNotRevealed {
+            pre_state_root: hash
+        }),
+        Some(hash)
+    ));
+    for error in [
+        StatelessValidationError::Execution(BlockExecutionError::MissingWitness(
+            WitnessDbError::MalformedNode { hash },
+        )),
+        StatelessValidationError::Execution(BlockExecutionError::MissingWitness(
+            WitnessDbError::Code {
+                address: H160::zero(),
+                code_hash: hash,
+            },
+        )),
+        StatelessValidationError::StateRoot(crate::trie::StateRootError::NoTrie),
+        StatelessValidationError::PostExecution(BlockExecutionError::StateRootMismatch {
+            got: hash,
+            expected: H256::zero(),
+        }),
+    ] {
+        assert!(!is_withheld_node_error(&error, Some(hash)), "{error:?}");
+    }
+}
+
+#[test]
+fn full_state_oracle_rejects_an_incorrect_accepted_root() {
+    let state = BTreeMap::from([(
+        H160::repeat_byte(1),
+        MemoryAccount {
+            balance: U256::one(),
+            ..MemoryAccount::default()
+        },
+    )]);
+    assert!(check_full_state_root(state_root(&state), &state).is_ok());
+    let error = check_full_state_root(crate::constants::EMPTY_ROOT_HASH, &state).unwrap_err();
+    assert_eq!(error.stage(), FailureStage::Internal);
+    assert!(!error.is_unproven());
 }
