@@ -62,8 +62,8 @@ so it is handled in two modes:
   the revealed accounts would omit untouched subtrees. `witness_state_root` instead patches
   the retained pre-state trie using recorded account and storage writes, reusing untouched
   hashes and storage-overlay buffers. Missing collapse siblings return an error, not a root.
-  This function is available independently; `stateless_validation` does not yet call it or
-  compare the result with the header. Read account results through `WitnessState::accounts()`.
+  `stateless_validation` computes and checks this root after execution commitments pass.
+  Read account results through `WitnessState::accounts()`.
 
 All other roots (`receipts_root`, `withdrawals_root`, `logs_bloom`, `requests_hash`) are computed
 from complete lists and are therefore always available as pure functions.
@@ -72,8 +72,10 @@ from complete lists and are therefore always available as pure functions.
 
 `block::validate_block_post_execution` compares execution gas, blob gas, receipts root, logs bloom
 and Prague-or-later requests hash against the header, using the same `ActiveSpec` as execution.
-It is currently an isolated validator: `stateless_validation` does not call it yet. It neither
-repeats header/body consensus checks nor computes or validates the post-state root.
+`stateless_validation` calls it before reconstructing and comparing the witness-backed state root.
+The commitment validator itself neither repeats header/body consensus checks nor computes the
+post-state root. Missing proof nodes and malformed witness nodes remain distinct errors; internal
+reconstruction failures cannot be mistaken for insufficient witness data.
 
 ## Getting started
 
