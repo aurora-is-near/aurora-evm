@@ -21,7 +21,7 @@ use crate::executor::BlockExecutor;
 use crate::spec::Spec;
 use crate::stateless::{StatelessValidationError, stateless_validation_recovered};
 use crate::test_utils::witness_of;
-use crate::trie::{receipts_root, state_root};
+use crate::trie::{receipts_root, state_root, witness_state_root};
 use crate::witness_backend::WitnessStateError;
 use crate::witness_backend::{RevealedAccount, WitnessBackend, WitnessDbError, WitnessState};
 use aurora_evm::backend::MemoryAccount;
@@ -788,10 +788,20 @@ fn execute_block(
             witness.headers = recent_headers.to_vec();
             let output = stateless_validation_recovered(recovered, witness, chain.clone())
                 .map_err(|error| BlockFailure::Stateless(Box::new(error)))?;
-            (
-                output.execution_output.result,
-                fold_post_state(state.clone(), output.execution_output.state),
-            )
+            // Independent sparse/full differential; production validation and error classification are unchanged.
+            let sparse_root = (mode == Mode::Witness).then(|| {
+                witness_state_root(&output.execution_output.state)
+                    .expect("complete witness supports root reconstruction")
+            });
+            let post_state = fold_post_state(state.clone(), output.execution_output.state);
+            if let Some(sparse_root) = sparse_root {
+                assert_eq!(
+                    sparse_root,
+                    state_root(&post_state),
+                    "sparse/full post-state root"
+                );
+            }
+            (output.execution_output.result, post_state)
         }
     };
     check_commitments(&header, &result, &post_state).map_err(BlockFailure::Commitment)?;

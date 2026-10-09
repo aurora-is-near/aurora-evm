@@ -7,7 +7,7 @@ use crate::errors::BlockExecutionError;
 use crate::execution_types::witness::ExecutionWitness;
 use crate::stateless::{StatelessValidationError, stateless_validation};
 use crate::system_calls::BEACON_ROOTS_ADDRESS;
-use crate::trie::{TrieAccount, state_root, storage_root};
+use crate::trie::{TrieAccount, state_root, storage_root, witness_state_root};
 use crate::witness_backend::{RevealedAccount, WitnessDbError, WitnessStateError};
 use aurora_evm::backend::MemoryAccount;
 use aurora_evm_trie::sparse::LookupError;
@@ -152,6 +152,15 @@ fn a_minimal_witness_proves_storage_presence_and_absence_without_sibling_nodes()
     );
 
     assert_every_node_is_required(&witness, &parent, beacon_root);
+
+    let mut expected = pre;
+    let storage = &mut expected.get_mut(&BEACON_ROOTS_ADDRESS).unwrap().storage;
+    storage.insert(timestamp_slot, H256::from_low_u64_be(20_000));
+    storage.insert(root_slot, beacon_root);
+    assert_eq!(
+        witness_state_root(&output.execution_output.state),
+        Ok(state_root(&expected))
+    );
 }
 
 /// Every supplied node must be necessary, unlike a full-state witness superset.

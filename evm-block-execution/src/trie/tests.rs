@@ -1,6 +1,7 @@
 //! Tests for ordered, state and storage trie roots and account encoding.
 
 mod ordered_roots;
+mod witness;
 
 use super::{KeccakHasher, TrieAccount, ordered_trie_root, state_root, storage_root, trie_account};
 use crate::constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY};
