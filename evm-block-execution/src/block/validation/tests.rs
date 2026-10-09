@@ -2,6 +2,7 @@
 
 mod bench;
 mod corpus;
+mod post_execution;
 
 use super::{
     BlockValidationError, MAX_RLP_BLOCK_SIZE, MAXIMUM_GAS_LIMIT, add_blob_count,

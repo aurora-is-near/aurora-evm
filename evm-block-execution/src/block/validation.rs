@@ -1,21 +1,25 @@
-//! Parent-relative and pre-execution consensus validation for post-merge blocks.
+//! Pre- and post-execution consensus validation for Cancun-or-later blocks.
 //!
 //! Validation follows pipeline: standalone header rules, rules against the verified
 //! parent, then body commitments. This crate supports Cancun-or-later blocks only.
 //! The block codec also accepts earlier forks, but this validator intentionally rejects them.
+//! Post-execution validation checks execution commitments; the state root is checked separately.
 
 use crate::block::{BlockBody, Header, RecoveredBlock, SealedHeader};
+use crate::bloom::Bloom;
 use crate::chain_spec::{ActiveSpec, ChainSpec};
 use crate::constants::EMPTY_OMMER_ROOT_HASH;
 use crate::eips::eip1559::{BaseFeeParams, GAS_LIMIT_BOUND_DIVISOR};
 use crate::eips::eip4844::DATA_GAS_PER_BLOB;
 use crate::eips::eip7840::BlobParams;
-use crate::errors::HeaderField;
+use crate::errors::{BlockExecutionError, HeaderField};
+use crate::execution_types::execution::BlockExecutionResult;
+use crate::receipt::Receipt;
 use crate::rlp_strict::list_length;
 use crate::spec::Spec;
 use crate::transaction::types::TxLengthError;
 use crate::transaction::{SignedTxEnvelope, TxType};
-use crate::trie::ordered_trie_root_with_encoder;
+use crate::trie::{ordered_trie_root_with_encoder, receipts_root};
 use core::fmt;
 use primitive_types::{H256, U256};
 
@@ -50,6 +54,77 @@ pub fn validate_block_consensus(
     validate_block_pre_execution(block, &active_spec)?;
 
     Ok(active_spec)
+}
+
+/// Checks executed gas, EIP-4844 blob gas, receipts, bloom and EIP-7685 requests against the header.
+///
+/// Use the same timestamp-resolved context as pre-validation and execution. Receipts must come
+/// from the executor, including their cached blooms. Header/body rules and the post-state root
+/// are checked separately; this function does not establish full block validity.
+///
+/// # Errors
+/// [`BlockExecutionError`] if an execution commitment differs or a required commitment is absent.
+///
+/// # Panics
+/// Panics if an internal receipt encoder violates its RLP list arity.
+pub fn validate_block_post_execution(
+    header: &Header,
+    active_spec: &ActiveSpec,
+    result: &BlockExecutionResult,
+) -> Result<(), BlockExecutionError> {
+    // Reject scalar mismatches before encoding receipts or hashing requests.
+    if result.gas_used != header.gas_used {
+        return Err(BlockExecutionError::GasUsedMismatch {
+            got: result.gas_used,
+            expected: header.gas_used,
+        });
+    }
+
+    if Some(result.blob_gas_used) != header.blob_gas_used {
+        return Err(BlockExecutionError::BlobGasUsedMismatch {
+            got: result.blob_gas_used,
+            expected: header.blob_gas_used,
+        });
+    }
+
+    validate_receipts(header, &result.receipts)?;
+
+    if active_spec.spec() >= Spec::Prague {
+        let got = Some(result.requests.requests_hash());
+        if got != header.requests_hash {
+            return Err(BlockExecutionError::RequestsHashMismatch {
+                got,
+                expected: header.requests_hash,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks the ordered EIP-2718 receipt root and the union of receipt blooms, as in reth.
+fn validate_receipts(header: &Header, receipts: &[Receipt]) -> Result<(), BlockExecutionError> {
+    let root = receipts_root(receipts);
+    if root != header.receipts_root {
+        return Err(BlockExecutionError::ReceiptsRootMismatch {
+            got: root,
+            expected: header.receipts_root,
+        });
+    }
+
+    let mut bloom = Bloom::zero();
+    for receipt in receipts {
+        bloom.accrue_bloom(&receipt.bloom);
+    }
+
+    if bloom != header.logs_bloom {
+        return Err(BlockExecutionError::LogsBloomMismatch {
+            got: Box::new(bloom),
+            expected: Box::new(header.logs_bloom.clone()),
+        });
+    }
+
+    Ok(())
 }
 
 /// Resolves the Cancun-or-later execution context and validates standalone header rules.

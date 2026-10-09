@@ -396,8 +396,8 @@ pub enum BlockExecutionError {
     BlobGasUsedMismatch {
         /// Computed value.
         got: u64,
-        /// Header value.
-        expected: u64,
+        /// Header value; absence is distinct from zero blob gas.
+        expected: Option<u64>,
     },
     /// Computed withdrawals root does not match the header.
     ///
@@ -537,7 +537,10 @@ impl fmt::Display for BlockExecutionError {
                 )
             }
             Self::BlobGasUsedMismatch { got, expected } => {
-                write!(f, "blob gas used mismatch: got {got}, expected {expected}")
+                write!(
+                    f,
+                    "blob gas used mismatch: got {got}, expected {expected:?}"
+                )
             }
             Self::WithdrawalsRootMismatch { got, expected } => {
                 write!(
