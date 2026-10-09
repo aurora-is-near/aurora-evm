@@ -77,6 +77,20 @@ The commitment validator itself neither repeats header/body consensus checks nor
 post-state root. Missing proof nodes and malformed witness nodes remain distinct errors; internal
 reconstruction failures cannot be mistaken for insufficient witness data.
 
+## Differential validation
+
+The opt-in EEST suite uses the CI-pinned `tests@v20.0.2` blockchain fixtures. It runs complete-state,
+witness, node-withholding and header-mutation passes. Witness successes are checked against a
+full-state trie oracle; withholding permits only the exact removed node to be missing. The mutation
+pass changes gas used, receipts root, bloom, state root and active requests hash independently and
+requires each specific post-execution error. Ordinary unit tests include minimal collapse proofs,
+malformed witness rejection and storage wipe/recreation scenarios.
+
+```sh
+EEST_PATH=/path/to/fixtures cargo test --release -p aurora-evm-block-execution \
+  eest_blockchain_tests -- --ignored --nocapture
+```
+
 ## Getting started
 
 This crate is not published on crates.io. Use a checkout of this repository

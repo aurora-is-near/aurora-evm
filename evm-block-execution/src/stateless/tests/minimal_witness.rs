@@ -1,7 +1,7 @@
 //! Hand-built minimal proofs for a block that reads and overwrites beacon-root storage.
 
 use super::{EIP4788_CODE, cancun_child, cancun_parent, chain_spec};
-use crate::block::Header;
+use crate::block::{Block, Header};
 use crate::crypto::keccak256;
 use crate::errors::BlockExecutionError;
 use crate::execution_types::witness::ExecutionWitness;
@@ -51,6 +51,7 @@ fn proof(key: H256, value: &[u8], sibling: H256, sibling_value: &[u8]) -> (H256,
             branch.append_empty_data();
         }
     }
+
     branch.append_empty_data();
     let branch = branch.out().to_vec();
     (keccak256(&branch), vec![branch, node])
@@ -182,4 +183,133 @@ fn assert_every_node_is_required(witness: &ExecutionWitness, parent: &Header, be
         };
         assert_eq!(error, expected);
     }
+}
+
+/// A system-call fixture with a two-slot storage trie. The sibling is untouched by execution
+/// but needed to collapse the branch after deletion unless a new slot is inserted first.
+fn storage_deletion_fixture(upsert: bool, malformed: bool) -> (Block, ExecutionWitness, Vec<u8>) {
+    let mut seen = std::collections::BTreeSet::new();
+    let slots: Vec<_> = (0..100)
+        .map(H256::from_low_u64_be)
+        .filter(|slot| seen.insert(keccak256(slot.as_bytes()).0[0] >> 4))
+        .take(3)
+        .collect();
+    let [removed, sibling, created] = slots.as_slice() else {
+        unreachable!()
+    };
+    // Test runtime: SSTORE(removed, 0), optionally SSTORE(created, 3), STOP.
+    let mut code = vec![0x5f, 0x7f];
+    code.extend_from_slice(removed.as_bytes());
+    code.push(0x55);
+    if upsert {
+        code.extend_from_slice(&[0x60, 3, 0x7f]);
+        code.extend_from_slice(created.as_bytes());
+        code.push(0x55);
+    }
+    code.push(0);
+    let removed_key = keccak256(removed.as_bytes());
+    let sibling_key = keccak256(sibling.as_bytes());
+    let removed_node = leaf(removed_key, &rlp::encode(&7u64));
+    let sibling_node = if malformed {
+        vec![0xc0]
+    } else {
+        leaf(sibling_key, &rlp::encode(&9u64))
+    };
+    let mut branch = RlpStream::new_list(17);
+    for nibble in 0..16 {
+        if nibble == removed_key.0[0] >> 4 {
+            branch.append(&keccak256(&removed_node));
+        } else if nibble == sibling_key.0[0] >> 4 {
+            branch.append(&keccak256(&sibling_node));
+        } else {
+            branch.append_empty_data();
+        }
+    }
+
+    branch.append_empty_data();
+    let branch = branch.out().to_vec();
+    let account = TrieAccount {
+        nonce: U256::one(),
+        balance: U256::zero(),
+        storage_root: keccak256(&branch),
+        code_hash: keccak256(&code),
+        code_version: U256::zero(),
+    };
+    let mut path = vec![0x20];
+    path.extend_from_slice(keccak256(BEACON_ROOTS_ADDRESS.as_bytes()).as_bytes());
+    let mut root = RlpStream::new_list(2);
+    root.append(&path).append(&rlp::encode(&account).as_ref());
+    let root = root.out().to_vec();
+    let parent = cancun_parent(keccak256(&root));
+    let mut block = cancun_child(&parent, H256::zero());
+    let mut post_storage = BTreeMap::from([(*sibling, H256::from_low_u64_be(9))]);
+    if upsert {
+        post_storage.insert(*created, H256::from_low_u64_be(3));
+    }
+    block.header.state_root = state_root(&BTreeMap::from([(
+        BEACON_ROOTS_ADDRESS,
+        MemoryAccount {
+            nonce: U256::one(),
+            code: code.clone(),
+            storage: post_storage,
+            ..MemoryAccount::default()
+        },
+    )]));
+    let witness = ExecutionWitness {
+        state: vec![root, branch, removed_node],
+        contract_codes: vec![code],
+        headers: vec![rlp::encode(&parent).to_vec()],
+        ..ExecutionWitness::default()
+    };
+    (block, witness, sibling_node)
+}
+
+#[test]
+fn storage_collapse_needs_exactly_the_untouched_sibling() {
+    let (block, mut witness, sibling) = storage_deletion_fixture(false, false);
+    let hash = keccak256(&sibling);
+    assert_eq!(
+        stateless_validation(block.clone(), &[], witness.clone(), chain_spec()),
+        Err(StatelessValidationError::Execution(
+            BlockExecutionError::MissingWitness(WitnessDbError::BlindedNode { hash })
+        ))
+    );
+    witness.state.push(sibling);
+    assert!(stateless_validation(block.clone(), &[], witness.clone(), chain_spec()).is_ok());
+    // Every supplied node is required, including the one read only during root reconstruction.
+    for index in 0..witness.state.len() {
+        let mut incomplete = witness.clone();
+        let hash = keccak256(&incomplete.state.remove(index));
+        let error = stateless_validation(block.clone(), &[], incomplete, chain_spec()).unwrap_err();
+        let expected = if index == 0 {
+            StatelessValidationError::Witness(WitnessStateError::PreStateRootNotRevealed {
+                pre_state_root: hash,
+            })
+        } else {
+            StatelessValidationError::Execution(BlockExecutionError::MissingWitness(
+                WitnessDbError::BlindedNode { hash },
+            ))
+        };
+        assert_eq!(error, expected);
+    }
+}
+
+#[test]
+fn storage_upsert_avoids_a_transient_collapse_with_a_minimal_witness() {
+    let (block, witness, _) = storage_deletion_fixture(true, false);
+    assert_eq!(witness.state.len(), 3);
+    assert!(stateless_validation(block, &[], witness, chain_spec()).is_ok());
+}
+
+#[test]
+fn malformed_storage_sibling_is_rejected_not_classified_as_missing() {
+    let (block, mut witness, malformed) = storage_deletion_fixture(false, true);
+    let hash = keccak256(&malformed);
+    witness.state.push(malformed);
+    assert_eq!(
+        stateless_validation(block, &[], witness, chain_spec()),
+        Err(StatelessValidationError::Execution(
+            BlockExecutionError::MissingWitness(WitnessDbError::MalformedNode { hash })
+        ))
+    );
 }

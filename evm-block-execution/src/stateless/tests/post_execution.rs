@@ -319,6 +319,36 @@ fn missing_collapse_sibling_fails_after_execution_in_the_public_path() {
         Err(expected)
     );
 
+    // Creating another account before removing the empty one avoids resolving the hidden sibling.
+    let created = (1..100)
+        .map(H160::from_low_u64_be)
+        .find(|address| {
+            let nibble = keccak256(address.as_bytes()).0[0] >> 4;
+            nibble != beacon_nibble
+                && nibble != recipient_nibble
+                && nibble != keccak256(sibling.as_bytes()).0[0] >> 4
+        })
+        .unwrap();
+    let mut with_creation = block.clone();
+    let withdrawals = with_creation.body.withdrawals.as_mut().unwrap();
+    withdrawals.push(Withdrawal {
+        index: 1,
+        validator_index: 1,
+        address: created,
+        amount: 1,
+    });
+    let encoded: Vec<_> = withdrawals.iter().map(rlp::encode).collect();
+    with_creation.header.withdrawals_root = Some(ordered_trie_root(encoded));
+    pre.insert(
+        created,
+        MemoryAccount {
+            balance: U256::from(1_000_000_000u64),
+            ..MemoryAccount::default()
+        },
+    );
+    with_creation.header.state_root = state_root(&pre);
+    assert!(stateless_validation(with_creation, &[], witness.clone(), chain_spec()).is_ok());
+
     // A receipt mismatch must win even when reconstruction would need the withheld sibling.
     block.header.receipts_root = H256::zero();
     assert_eq!(

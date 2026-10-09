@@ -242,18 +242,26 @@ fn storage_upserts_precede_removals_and_collapse_requires_a_sibling() {
 
 #[test]
 fn wipe_and_delete_recreate_discard_prior_slot_updates() {
-    let who = addresses()[0];
+    let [who, hidden, _] = addresses();
     let [a, b, c] = slots();
-    let pre = BTreeMap::from([(
+    let mut pre = BTreeMap::from([(
         who,
         MemoryAccount {
             storage: BTreeMap::from([(a, H256::repeat_byte(1))]),
             ..funded(1)
         },
     )]);
+    pre.insert(hidden, funded(9));
     let (root, mut witness) = witness_of(&pre);
-    // A wipe must not need any old storage nodes.
-    witness.state.retain(|node| keccak256(node) == root);
+    // Only the root branch and touched account leaf: no old storage or untouched sibling.
+    let value = rlp::encode(&trie_account(&pre[&who]));
+    witness.state.retain(|node| {
+        keccak256(node) == root
+            || rlp::Rlp::new(node)
+                .val_at::<Vec<u8>>(1)
+                .is_ok_and(|bytes| bytes == value.as_ref())
+    });
+    assert_eq!(witness.state.len(), 2);
     let mut backend = db(root, witness);
     apply(
         &mut backend,
@@ -266,13 +274,15 @@ fn wipe_and_delete_recreate_discard_prior_slot_updates() {
 
     let state = backend.clone().try_into_state().unwrap();
     assert_eq!(state.changes[&who], std::collections::BTreeSet::from([c]));
-    let expected = BTreeMap::from([(
+    let mut expected = BTreeMap::from([(
         who,
         MemoryAccount {
             storage: BTreeMap::from([(c, H256::repeat_byte(3))]),
             ..funded(1)
         },
     )]);
+    expected.insert(hidden, funded(9));
+    assert!(!state.accounts().contains_key(&hidden));
     assert_eq!(witness_state_root(&state), Ok(state_root(&expected)));
 
     apply(
@@ -282,13 +292,14 @@ fn wipe_and_delete_recreate_discard_prior_slot_updates() {
             modify(who, 4, vec![(b, H256::repeat_byte(4))], false),
         ],
     );
-    let expected = BTreeMap::from([(
+    let mut expected = BTreeMap::from([(
         who,
         MemoryAccount {
             storage: BTreeMap::from([(b, H256::repeat_byte(4))]),
             ..funded(4)
         },
     )]);
+    expected.insert(hidden, funded(9));
     assert_eq!(
         witness_state_root(&backend.try_into_state().unwrap()),
         Ok(state_root(&expected))
@@ -406,6 +417,7 @@ fn malformed_collapse_sibling_is_not_missing_witness_data() {
             branch.append_empty_data();
         }
     }
+
     branch.append_empty_data();
     let branch = branch.out().to_vec();
     let mut backend = db(
