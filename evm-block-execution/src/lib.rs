@@ -7,6 +7,8 @@
 #![forbid(unsafe_code)]
 
 pub use stateless::{StatelessValidationError, StatelessValidationOutput, stateless_validation};
+#[cfg(feature = "profiling")]
+pub mod profiling;
 
 pub mod block;
 pub mod bloom;

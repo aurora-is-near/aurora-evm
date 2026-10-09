@@ -446,6 +446,7 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "sha3 0.10.9",
+ "tiny-keccak",
  "triehash",
 ]
 
@@ -464,11 +465,14 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-trie",
+ "aurora-evm 3.1.0",
  "aurora-evm-block-execution",
  "aurora-evm-trie",
  "hash-db",
  "hex",
+ "libsecp256k1",
  "plain_hasher",
+ "primitive-types 0.13.1",
  "risc0-binfmt",
  "risc0-zkos-v1compat",
  "risc0-zkvm",

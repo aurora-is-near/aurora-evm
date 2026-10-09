@@ -66,10 +66,8 @@ jobs:
             git cat-file -e "$base^{commit}"
           fi
 
-          # EVM and block-execution source edits need only harness-check. The corpus and build
-          # configuration also affect the differential tests and the guest host executable.
-          paths=(evm-trie evm-trie-bench evm/Cargo.toml evm-block-execution/Cargo.toml
-                 evm-block-execution/testdata/ordered-roots.json Cargo.toml rust-toolchain.toml
+          # Integrated validation depends on both production crates, not just trie sources.
+          paths=(evm-trie evm-trie-bench evm evm-block-execution Cargo.toml rust-toolchain.toml
                  .github/workflows/trie-bench.yml)
           if git diff --quiet "$base" HEAD -- "${paths[@]}"; then
             changed=false
@@ -105,6 +103,13 @@ jobs:
       - name: Clippy with every feature
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Check optional production features and private documentation
+        run: |
+          # The library workspace does not track Cargo.lock; only the isolated harness/guest do.
+          cargo check --manifest-path ../evm-block-execution/Cargo.toml
+          cargo clippy --manifest-path ../evm-block-execution/Cargo.toml --all-targets --all-features
+          cargo doc --manifest-path ../evm-block-execution/Cargo.toml --all-features --document-private-items --no-deps
+
   harness-differential:
     needs: benchmark-changes
     if: ${{ needs.benchmark-changes.outputs.benchmark == 'true' }}
@@ -135,6 +140,13 @@ jobs:
         if: matrix.features == 'corpus,sparse,tiny'
         run: cargo test --release --manifest-path ../evm-trie/Cargo.toml --all-features
 
+      - name: Check integrated block fixtures and profiling equivalence
+        run: |
+          cargo test --locked --release --features '${{ matrix.features }},block-fixtures' --lib block_fixtures
+          # Mirror the matrix hash backend: `--all-features` would always add `tiny-keccak`.
+          cargo test --release --manifest-path ../evm-block-execution/Cargo.toml \
+            --features 'profiling${{ contains(matrix.features, 'tiny') && ',tiny-keccak' || '' }}' profiling_
+
       - name: Measure sparse construction and lookup separately
         run: cargo run --locked --release --features '${{ matrix.features }}' --bin sparse
 
@@ -161,6 +173,9 @@ jobs:
           echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
           "$HOME/.risc0/bin/rzup" install rust 1.91.1
           "$HOME/.risc0/bin/rzup" install r0vm 3.0.4
+          "$HOME/.risc0/bin/rzup" install cpp 2024.1.5
+          # The block guest's `.cargo/config.toml` names the C compiler/archiver by file name.
+          echo "$HOME/.risc0/cpp/bin" >> "$GITHUB_PATH"
 
       - name: Build the software and accelerated guests
         working-directory: evm-trie-bench/guest
@@ -175,6 +190,20 @@ jobs:
             guest/target/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
           cargo run --release --features guest-host,tiny --bin guest-host -- \
             guest/target/tiny/riscv32im-risc0-zkvm-elf/release/aurora-evm-trie-guest 0 1 16 128 200 2000
+
+      - name: Build the software and accelerated block guests
+        working-directory: evm-trie-bench/guest
+        run: |
+          cargo build --locked --release --features block --bin block
+          cargo build --locked --release --features block,tiny --bin block --target-dir target/tiny
+
+      - name: Measure full stateless validation on RV32
+        working-directory: evm-trie-bench
+        run: |
+          cargo run --locked --release --features block-host --bin block-guest-host -- \
+            guest/target/riscv32im-risc0-zkvm-elf/release/block
+          cargo run --locked --release --features block-host,tiny --bin block-guest-host -- \
+            guest/target/tiny/riscv32im-risc0-zkvm-elf/release/block
 
       - name: Check sparse witness lookups and report RV32 cycles
         working-directory: evm-trie-bench

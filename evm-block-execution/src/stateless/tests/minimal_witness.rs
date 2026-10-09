@@ -264,6 +264,38 @@ fn storage_deletion_fixture(upsert: bool, malformed: bool) -> (Block, ExecutionW
     (block, witness, sibling_node)
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_preserves_minimal_witness_and_reconstruction_failures() {
+    use crate::profiling::{ValidationStage, stateless_validation_with_stage_hook};
+    for (upsert, malformed, reveal) in [
+        (true, false, false),
+        (false, false, false),
+        (false, false, true),
+        (false, true, true),
+    ] {
+        let (block, mut witness, sibling) = storage_deletion_fixture(upsert, malformed);
+        if reveal {
+            witness.state.push(sibling);
+        }
+        let expected = stateless_validation(block.clone(), &[], witness.clone(), chain_spec());
+        let mut last = ValidationStage::Recovery;
+        let measured =
+            stateless_validation_with_stage_hook(block, &[], witness, chain_spec(), |stage| {
+                last = stage;
+            });
+        assert_eq!(measured, expected);
+        assert_eq!(
+            last,
+            if expected.is_ok() {
+                ValidationStage::Finished
+            } else {
+                ValidationStage::StateRoot
+            }
+        );
+    }
+}
+
 #[test]
 fn storage_collapse_needs_exactly_the_untouched_sibling() {
     let (block, mut witness, sibling) = storage_deletion_fixture(false, false);

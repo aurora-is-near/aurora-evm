@@ -1,4 +1,4 @@
-# Ordered trie verification and benchmarks
+# Trie verification and stateless-validation benchmarks
 
 An isolated, named benchmark crate depending on production `aurora-evm-trie`.
 The repository workspace explicitly excludes this crate and its RISC Zero guest:
@@ -14,6 +14,54 @@ patch. The production path dependency still inherits from its own workspace.
 
 See the production crate's [algorithm and sources](../evm-trie/ALGORITHM.md)
 for the dense-index traversal and scratch-bound derivation.
+
+## Integrated stateless validation
+
+`block-guest-host` measures the complete production entry point and, separately, its optional
+phase-instrumented counterpart. Production names and control flow are unchanged. The `profiling`
+module exists only with its feature enabled; the ordinary entry point never calls it.
+Use ordinary sessions for totals, stage hooks for cycle/heap attribution, and RISC Zero's sampling
+profiler for function-level analysis. [BLOCK_RESULTS.md](BLOCK_RESULTS.md) records actual RV32
+measurements, oracle provenance, memory costs and coverage limits.
+
+Install `rzup` and these pinned components first. Run the remaining commands from this directory:
+
+```sh
+rzup install rust 1.91.1
+rzup install r0vm 3.0.4
+rzup install cpp 2024.1.5
+cargo test --locked --release --features block-fixtures --lib block_fixtures
+
+# Software hashes. The guest config names the RISC Zero C compiler/archiver by file name.
+export PATH="$HOME/.risc0/cpp/bin:$PATH"
+(cd guest && cargo build --locked --release --features block --bin block)
+cargo run --locked --release --features block-host --bin block-guest-host -- \
+  guest/target/riscv32im-risc0-zkvm-elf/release/block
+
+# Accelerated block-execution and trie hashes; same production validators and fixtures.
+(cd guest && cargo build --locked --release --features block,tiny --bin block --target-dir target/tiny)
+cargo run --locked --release --features block-host,tiny --bin block-guest-host -- \
+  guest/target/tiny/riscv32im-risc0-zkvm-elf/release/block
+
+# Optional case-name filter and function-level sampling profiles.
+BLOCK_PROFILE_DIR=/tmp/block-profiles cargo run --locked --release \
+  --features block-host,tiny --bin block-guest-host -- \
+  guest/target/tiny/riscv32im-risc0-zkvm-elf/release/block EEST
+go tool pprof -http=127.0.0.1:8080 /tmp/block-profiles/EEST-Osaka-access-list-hook-false.pb
+```
+
+The guest's `.cargo/config.toml` `[env]` section reproduces the target-specific `CC`, `AR`,
+`CFLAGS` and `RISC0_FEATURE_bigint2` environment that `risc0-build` provides in zeth, so the
+block guest builds with plain Cargo once `$HOME/.risc0/cpp/bin` is on `PATH`. An exported
+`CC_riscv32im_risc0_zkvm_elf`/`AR_riscv32im_risc0_zkvm_elf` with an absolute path overrides the
+file names. Portability and acceleration patches belong only to the guest manifest/lockfile.
+
+The host invokes the external dev-mode executor and reads its `SessionStats`, including user,
+paging, reserved and total cycles. This executes the real guest but creates **no cryptographic
+proof**; the fake dev-mode receipt is not a production artifact. Each workload checks accepted
+header commitments, block hash, gas and receipt count. Bench and CI commands do not require make.
+Optional local targets `guest-block`, `block-run`, `guest-block-tiny` and `block-tiny-run` wrap the
+same commands; `CASE=EEST` selects a case. Do not use host timing as a guest performance gate.
 
 ## Comparisons
 
