@@ -307,6 +307,8 @@ impl BlockFailure {
             Self::Stateless(error) => match error.as_ref() {
                 StatelessValidationError::Execution(error) => execution_failure_stage(error),
                 StatelessValidationError::Witness(_) => FailureStage::Witness,
+                StatelessValidationError::PostExecution(_) => FailureStage::Commitment,
+                StatelessValidationError::StateRoot(_) => FailureStage::Internal,
                 _ => FailureStage::PreExecution,
             },
             Self::Execution(error) => execution_failure_stage(error),
@@ -325,6 +327,9 @@ impl BlockFailure {
                 | "BlockException.SYSTEM_CONTRACT_EMPTY" => stage == FailureStage::Execution,
                 "BlockException.INVALID_REQUESTS" => {
                     matches!(self, Self::Commitment(Commitment::RequestsHash))
+                        || matches!(self, Self::Stateless(error) if matches!(error.as_ref(),
+                            StatelessValidationError::PostExecution(BlockExecutionError::RequestsHashMismatch { .. })
+                        ))
                 }
                 "BlockException.RLP_STRUCTURES_ENCODING"
                 | "BlockException.BLOB_GAS_USED_ABOVE_LIMIT"
@@ -438,6 +443,59 @@ fn witness_rejections_are_classified_by_type_not_message() {
             BlockExecutionError::MissingWitness(error),
         )));
         assert!(!failure.is_unproven());
+    }
+}
+
+#[test]
+fn post_execution_and_root_failures_keep_their_distinct_stages() {
+    use crate::trie::StateRootError;
+    use aurora_evm_trie::sparse::{LookupError, PatchError};
+
+    let requests = BlockFailure::Stateless(Box::new(StatelessValidationError::PostExecution(
+        BlockExecutionError::RequestsHashMismatch {
+            got: Some(H256::zero()),
+            expected: None,
+        },
+    )));
+    assert_eq!(requests.stage(), FailureStage::Commitment);
+    assert!(requests.matches_exception("BlockException.INVALID_REQUESTS"));
+    assert!(!requests.matches_exception("TransactionException.NONCE_IS_MAX"));
+    assert!(!requests.is_unproven());
+
+    let root = BlockFailure::Stateless(Box::new(StatelessValidationError::PostExecution(
+        BlockExecutionError::StateRootMismatch {
+            got: H256::zero(),
+            expected: H256::repeat_byte(1),
+        },
+    )));
+    assert_eq!(root.stage(), FailureStage::Commitment);
+    assert!(!root.matches_exception("BlockException.INVALID_REQUESTS"));
+    assert!(!root.is_unproven());
+
+    for error in [
+        StateRootError::NoTrie,
+        StateRootError::MissingAccount(H160::zero()),
+        StateRootError::MissingStorageSlot {
+            address: H160::zero(),
+            slot: H256::zero(),
+        },
+        StateRootError::Patch(PatchError::EmptyValue),
+    ] {
+        let failure = BlockFailure::Stateless(Box::new(error.into()));
+        assert_eq!(failure.stage(), FailureStage::Internal);
+        assert!(!failure.is_unproven());
+        assert!(!failure.matches_exception("TransactionException.NONCE_IS_MAX"));
+    }
+
+    for (node, unproven) in [
+        (LookupError::BlindedNode([1; 32]), true),
+        (LookupError::MalformedNode([2; 32]), false),
+    ] {
+        let failure = BlockFailure::Stateless(Box::new(
+            StateRootError::Patch(PatchError::Node(node)).into(),
+        ));
+        assert_eq!(failure.stage(), FailureStage::Witness);
+        assert_eq!(failure.is_unproven(), unproven);
     }
 }
 

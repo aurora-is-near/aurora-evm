@@ -1,5 +1,6 @@
 mod eest;
 mod minimal_witness;
+mod post_execution;
 
 use super::{StatelessValidationError, stateless_validation};
 use crate::block::{
@@ -209,7 +210,18 @@ fn an_empty_block_is_validated_and_executed_against_its_witness() {
     let parent = cancun_parent(state_root);
     witness.headers = vec![rlp::encode(&parent).to_vec()];
     let beacon_root = H256::repeat_byte(0xbe);
-    let block = cancun_child(&parent, beacon_root);
+    let mut block = cancun_child(&parent, beacon_root);
+    let mut expected_state = state;
+    let storage = &mut expected_state
+        .get_mut(&BEACON_ROOTS_ADDRESS)
+        .unwrap()
+        .storage;
+    storage.insert(
+        H256::from_low_u64_be(20_000 % 8191),
+        H256::from_low_u64_be(20_000),
+    );
+    storage.insert(H256::from_low_u64_be(20_000 % 8191 + 8191), beacon_root);
+    block.header.state_root = crate::trie::state_root(&expected_state);
     let expected_hash = block.header.hash_slow();
 
     let output = stateless_validation(block, &[], witness, chain_spec()).unwrap();

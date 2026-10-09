@@ -3,18 +3,21 @@
 //! The entry point takes a signed [`Block`], one public key per transaction and an
 //! [`ExecutionWitness`]. Senders are recovered, the ancestor chain is verified, the block passes
 //! pre-execution consensus checks and is then executed against the state the witness proves.
+//! Execution commitments and the witness-backed post-state root must match the header.
 
 use crate::block::{
     AncestorChainError, Block, BlockEnv, BlockRecoveryError, BlockValidationError, ExecutionParts,
-    RecoveredBlock, SenderRecoveryError, UncompressedPublicKey, derive_ancestors,
-    recover_block_with_public_keys, validate_block_consensus,
+    Header, RecoveredBlock, SenderRecoveryError, UncompressedPublicKey, derive_ancestors,
+    recover_block_with_public_keys, validate_block_consensus, validate_block_post_execution,
 };
-use crate::chain_spec::ChainSpec;
+use crate::chain_spec::{ActiveSpec, ChainSpec};
 use crate::errors::BlockExecutionError;
 use crate::execution_types::execution::BlockExecutionOutput;
 use crate::execution_types::witness::ExecutionWitness;
 use crate::executor::BlockExecutor;
-use crate::witness_backend::{WitnessBackend, WitnessStateError};
+use crate::trie::{StateRootError, witness_state_root};
+use crate::witness_backend::{WitnessBackend, WitnessDbError, WitnessStateError};
+use aurora_evm_trie::sparse::{LookupError, PatchError};
 use core::fmt;
 use primitive_types::H256;
 
@@ -47,6 +50,10 @@ pub enum StatelessValidationError {
     Witness(WitnessStateError),
     /// The block is invalid, or its execution failed.
     Execution(BlockExecutionError),
+    /// Execution commitments or the computed post-state root differ from the header.
+    PostExecution(BlockExecutionError),
+    /// Root reconstruction encountered an internal state/encoder invariant failure.
+    StateRoot(StateRootError),
 }
 
 impl From<AncestorChainError> for StatelessValidationError {
@@ -85,6 +92,22 @@ impl From<BlockExecutionError> for StatelessValidationError {
     }
 }
 
+impl From<StateRootError> for StatelessValidationError {
+    fn from(error: StateRootError) -> Self {
+        let node = match error {
+            StateRootError::Patch(PatchError::Node(LookupError::BlindedNode(hash))) => {
+                WitnessDbError::BlindedNode { hash: H256(hash) }
+            }
+            StateRootError::Patch(PatchError::Node(LookupError::MalformedNode(hash))) => {
+                WitnessDbError::MalformedNode { hash: H256(hash) }
+            }
+            // Inconsistent changesets and encoder failures are not missing witness data.
+            error => return Self::StateRoot(error),
+        };
+        Self::Execution(BlockExecutionError::MissingWitness(node))
+    }
+}
+
 impl fmt::Display for StatelessValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -94,6 +117,8 @@ impl fmt::Display for StatelessValidationError {
             Self::Recovery(_) => f.write_str("block recovery is inconsistent"),
             Self::Witness(_) => f.write_str("witness cannot be used"),
             Self::Execution(_) => f.write_str("block execution failed"),
+            Self::PostExecution(_) => f.write_str("post-execution validation failed"),
+            Self::StateRoot(_) => f.write_str("state root reconstruction failed"),
         }
     }
 }
@@ -106,19 +131,23 @@ impl core::error::Error for StatelessValidationError {
             Self::SenderRecovery(error) => Some(error),
             Self::Recovery(error) => Some(error),
             Self::Witness(error) => Some(error),
-            Self::Execution(error) => Some(error),
+            Self::Execution(error) | Self::PostExecution(error) => Some(error),
+            Self::StateRoot(error) => Some(error),
         }
     }
 }
 
 /// Validates `block` statelessly: verifies every sender against `public_keys`, then executes the
-/// block against the state revealed by `witness`.
+/// block against `witness` and checks its execution commitments and post-state root.
 ///
 /// The public keys must be in transaction order, one per transaction.
 ///
 /// # Errors
 /// Returns [`StatelessValidationError`] for sender recovery, ancestor, pre-execution consensus,
-/// witness or execution failures, including any state read the witness did not prove.
+/// witness, execution or post-execution failures, including missing trie nodes needed for updates.
+///
+/// # Panics
+/// Panics if an internal RLP or trie encoder violates its invariants.
 pub fn stateless_validation(
     block: Block,
     public_keys: &[UncompressedPublicKey],
@@ -167,8 +196,31 @@ pub fn stateless_validation_recovered(
     )
     .execute()?;
 
+    validate_execution_output(header.header(), &active_spec, &execution_output)?;
+
     Ok(StatelessValidationOutput {
         block_hash,
         execution_output,
     })
+}
+
+/// Checks execution commitments before reconstructing the more expensive sparse state root.
+fn validate_execution_output(
+    header: &Header,
+    active_spec: &ActiveSpec,
+    output: &BlockExecutionOutput,
+) -> Result<(), StatelessValidationError> {
+    validate_block_post_execution(header, active_spec, &output.result)
+        .map_err(StatelessValidationError::PostExecution)?;
+    let state_root = witness_state_root(&output.state)?;
+    if state_root != header.state_root {
+        return Err(StatelessValidationError::PostExecution(
+            BlockExecutionError::StateRootMismatch {
+                got: state_root,
+                expected: header.state_root,
+            },
+        ));
+    }
+
+    Ok(())
 }

@@ -116,13 +116,13 @@ fn a_minimal_witness_proves_storage_presence_and_absence_without_sibling_nodes()
         ..ExecutionWitness::default()
     };
     assert_eq!(witness.state.len(), 4);
-    let output = stateless_validation(
-        cancun_child(&parent, beacon_root),
-        &[],
-        witness.clone(),
-        chain_spec(),
-    )
-    .unwrap();
+    let mut expected = pre;
+    let storage = &mut expected.get_mut(&BEACON_ROOTS_ADDRESS).unwrap().storage;
+    storage.insert(timestamp_slot, H256::from_low_u64_be(20_000));
+    storage.insert(root_slot, beacon_root);
+    let mut block = cancun_child(&parent, beacon_root);
+    block.header.state_root = state_root(&expected);
+    let output = stateless_validation(block, &[], witness.clone(), chain_spec()).unwrap();
     let RevealedAccount::Present(account) =
         &output.execution_output.state.accounts[&BEACON_ROOTS_ADDRESS]
     else {
@@ -153,10 +153,6 @@ fn a_minimal_witness_proves_storage_presence_and_absence_without_sibling_nodes()
 
     assert_every_node_is_required(&witness, &parent, beacon_root);
 
-    let mut expected = pre;
-    let storage = &mut expected.get_mut(&BEACON_ROOTS_ADDRESS).unwrap().storage;
-    storage.insert(timestamp_slot, H256::from_low_u64_be(20_000));
-    storage.insert(root_slot, beacon_root);
     assert_eq!(
         witness_state_root(&output.execution_output.state),
         Ok(state_root(&expected))
