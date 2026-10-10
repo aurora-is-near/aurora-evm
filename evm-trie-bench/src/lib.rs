@@ -127,5 +127,9 @@ pub fn cases() -> Vec<Case> {
 #[cfg(feature = "sparse")]
 pub mod sparse;
 
+#[cfg(feature = "block-fixtures")]
+pub mod block_fixtures;
+#[cfg(feature = "block")]
+pub mod block_guest;
 pub mod patch_guest;
 pub mod sparse_guest;

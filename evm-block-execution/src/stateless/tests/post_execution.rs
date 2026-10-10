@@ -61,6 +61,79 @@ fn empty_block(spec: Spec) -> (Block, ExecutionWitness, ChainSpec) {
     (block, witness, chain)
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn profiling_matches_production_outputs_errors_and_phase_boundaries() {
+    use crate::profiling::{ValidationStage as Stage, stateless_validation_with_stage_hook};
+    for spec in [Spec::Cancun, Spec::Prague, Spec::Osaka] {
+        let (block, witness, chain) = empty_block(spec);
+        for fault in 0..10 {
+            let mut block = block.clone();
+            let mut witness = witness.clone();
+            let mut keys = Vec::new();
+            let last = match fault {
+                0 => Stage::Finished,
+                1 => {
+                    witness.headers.clear();
+                    Stage::Consensus
+                }
+                2 => {
+                    block.header.gas_used = block.header.gas_limit + 1;
+                    Stage::Consensus
+                }
+                3 => {
+                    block.header.gas_used = 1;
+                    Stage::Commitments
+                }
+                4 => {
+                    block.header.receipts_root = H256::zero();
+                    Stage::Commitments
+                }
+                5 => {
+                    block.header.logs_bloom.0[0] = 1;
+                    Stage::Commitments
+                }
+                6 => {
+                    block.header.state_root = H256::zero();
+                    Stage::StateRoot
+                }
+                7 if spec >= Spec::Prague => {
+                    block.header.requests_hash = Some(H256::zero());
+                    Stage::Commitments
+                }
+                8 if spec >= Spec::Prague => {
+                    witness.state.clear();
+                    Stage::Witness
+                }
+                9 => {
+                    keys.push(crate::block::UncompressedPublicKey([0; 65]));
+                    Stage::Recovery
+                }
+                _ => continue,
+            };
+            let expected =
+                stateless_validation(block.clone(), &keys, witness.clone(), chain.clone());
+            let mut stages = Vec::new();
+            let measured =
+                stateless_validation_with_stage_hook(block, &keys, witness, chain.clone(), |s| {
+                    stages.push(s);
+                });
+            assert_eq!(measured, expected, "{spec:?}, fault {fault}");
+            let sequence = [
+                Stage::Recovery,
+                Stage::Consensus,
+                Stage::Witness,
+                Stage::Execution,
+                Stage::Commitments,
+                Stage::StateRoot,
+                Stage::Finished,
+            ];
+            let end = sequence.iter().position(|stage| *stage == last).unwrap();
+            assert_eq!(stages, sequence[..=end]);
+        }
+    }
+}
+
 #[test]
 fn public_entry_point_accepts_matching_commitments_on_all_supported_forks() {
     for spec in [Spec::Cancun, Spec::Prague, Spec::Osaka] {

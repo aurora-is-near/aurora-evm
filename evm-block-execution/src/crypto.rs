@@ -7,12 +7,26 @@ use primitive_types::{H160, H256};
 // `sha2` and `sha3` both re-export the same `digest::Digest` trait, so a single import
 // brings `digest()` into scope for both hashers.
 use sha2::{Digest as _, Sha256};
+#[cfg(not(feature = "tiny-keccak"))]
 use sha3::Keccak256;
 
 /// Computes the Keccak-256 hash of `bytes`.
 #[must_use]
+#[cfg(not(feature = "tiny-keccak"))]
 pub fn keccak256(bytes: &[u8]) -> H256 {
     H256::from_slice(Keccak256::digest(bytes).as_ref())
+}
+
+/// Computes Keccak-256 using the optional backend shared with `aurora-evm-trie`.
+#[must_use]
+#[cfg(feature = "tiny-keccak")]
+pub fn keccak256(bytes: &[u8]) -> H256 {
+    use tiny_keccak::{Hasher, Keccak};
+    let mut hash = Keccak::v256();
+    hash.update(bytes);
+    let mut output = [0; 32];
+    hash.finalize(&mut output);
+    H256(output)
 }
 
 /// Derives an Ethereum address from the coordinates in a 65-byte SEC1-shaped public key.
@@ -70,6 +84,20 @@ mod tests {
             hex::encode(keccak256(b"abc").as_bytes()),
             "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"
         );
+    }
+
+    #[test]
+    fn keccak_matches_sha3_across_rate_boundaries() {
+        use sha3::{Digest as _, Keccak256};
+        // Keccak-256 absorbs 136-byte blocks; exercise padding on either side of that boundary.
+        let bytes: Vec<u8> = (0..=250).cycle().take(1024).collect();
+        for len in [0, 1, 135, 136, 137, 271, 272, 273, 1024] {
+            assert_eq!(
+                keccak256(&bytes[..len]).as_bytes(),
+                &Keccak256::digest(&bytes[..len])[..],
+                "length {len}"
+            );
+        }
     }
 
     #[test]
