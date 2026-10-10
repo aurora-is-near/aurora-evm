@@ -1,4 +1,4 @@
-#![allow(clippy::module_inception, clippy::large_stack_arrays)]
+#![allow(clippy::module_inception)]
 
 use aurora_engine_precompiles::{
     Context, EthGas, EvmPrecompileResult, ExitError, Precompile, PrecompileOutput,
@@ -7,156 +7,25 @@ use primitive_types::H160;
 use std::borrow::Cow::Borrowed;
 
 mod kzg {
-    use c_kzg::{Bytes32, Bytes48, KzgProof, KzgSettings, BYTES_PER_G1_POINT, BYTES_PER_G2_POINT};
+    use c_kzg::{Bytes32, Bytes48, KzgSettings, ethereum_kzg_settings};
     use core::convert::TryInto;
-    use core::hash::{Hash, Hasher};
-    use derive_more::{AsMut, AsRef, Deref, DerefMut};
     use hex_literal::hex;
     use sha2::Digest;
     use std::convert::TryFrom;
-    use std::rc::Rc;
-    use std::str::Lines;
 
     pub const RETURN_VALUE: &[u8; 64] = &hex!(
         "0000000000000000000000000000000000000000000000000000000000001000"
         "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
     );
 
-    /// Number of G1 Points.
-    const NUM_G1_POINTS: usize = 4096;
-
-    /// Number of G2 Points.
-    const NUM_G2_POINTS: usize = 65;
-
-    /// A new type over the list of G1 point from kzg trusted setup.
-    #[derive(Debug, Clone, PartialEq, AsRef, AsMut, Deref, DerefMut)]
-    #[repr(transparent)]
-    struct G1Points(pub [[u8; BYTES_PER_G1_POINT]; NUM_G1_POINTS]);
-
-    impl Default for G1Points {
-        fn default() -> Self {
-            Self([[0; BYTES_PER_G1_POINT]; NUM_G1_POINTS])
-        }
-    }
-
-    /// A new type over the list of G2 point from kzg trusted setup.
-    #[derive(Debug, Clone, Eq, PartialEq, AsRef, AsMut, Deref, DerefMut)]
-    #[repr(transparent)]
-    struct G2Points(pub [[u8; BYTES_PER_G2_POINT]; NUM_G2_POINTS]);
-
-    impl Default for G2Points {
-        fn default() -> Self {
-            Self([[0; BYTES_PER_G2_POINT]; NUM_G2_POINTS])
-        }
-    }
-
-    /// Default G1 points.
-    const G1_POINTS: &G1Points = {
-        const BYTES: &[u8] = include_bytes!("assets/g1_points.bin");
-        assert!(BYTES.len() == size_of::<G1Points>());
-        unsafe { &*BYTES.as_ptr().cast::<G1Points>() }
-    };
-
-    /// Default G2 points.
-    const G2_POINTS: &G2Points = {
-        const BYTES: &[u8] = include_bytes!("assets/g2_points.bin");
-        assert!(BYTES.len() == size_of::<G2Points>());
-        unsafe { &*BYTES.as_ptr().cast::<G2Points>() }
-    };
-
-    /// Parse contents of a KZG trusted setup file into a list of G1 and G2 points.
+    /// Mainnet KZG trusted setup, bundled with `c-kzg` and loaded once (EIP-4844).
     ///
-    /// These can then be used to create a KZG settings object with
-    /// [`KzgSettings::load_trusted_setup`](c_kzg::KzgSettings::load_trusted_setup).
-    #[allow(dead_code)]
-    fn parse_kzg_trusted_setup(
-        trusted_setup: &str,
-    ) -> Result<(Box<G1Points>, Box<G2Points>), &'static str> {
-        let mut lines = trusted_setup.lines();
-
-        // load number of points
-        let n_g1 = lines
-            .next()
-            .ok_or("KzgFileFormatError")?
-            .parse::<usize>()
-            .map_err(|_| "KzgParseError")?;
-        let n_g2 = lines
-            .next()
-            .ok_or("KzgFileFormatError")?
-            .parse::<usize>()
-            .map_err(|_| "KzgParseError")?;
-
-        if n_g1 != NUM_G1_POINTS {
-            return Err("KzgMismatchedNumberOfPoints");
-        }
-
-        if n_g2 != NUM_G2_POINTS {
-            return Err("KzgMismatchedNumberOfPoints");
-        }
-
-        // load g1 points
-        let mut g1_points = Box::<G1Points>::default();
-        decode_points(&mut g1_points.0, &mut lines)?;
-
-        // load g2 points
-        let mut g2_points = Box::<G2Points>::default();
-        decode_points(&mut g2_points.0, &mut lines)?;
-
-        if lines.next().is_some() {
-            return Err("KzgFileFormatError");
-        }
-
-        Ok((g1_points, g2_points))
-    }
-
-    /// KZG Settings that allow us to specify a custom trusted setup.
-    /// or use hardcoded default settings.
-    #[allow(dead_code)]
-    #[derive(Debug, Clone, Default)]
-    pub enum EnvKzgSettings {
-        /// Default mainnet trusted setup
-        #[default]
-        Default,
-        /// Custom trusted setup.
-        Custom(Rc<KzgSettings>),
-    }
-
-    // Implement PartialEq and Hash manually because `c_kzg::KzgSettings` does not implement them
-    impl PartialEq for EnvKzgSettings {
-        fn eq(&self, other: &Self) -> bool {
-            match (self, other) {
-                (Self::Default, Self::Default) => true,
-                (Self::Custom(a), Self::Custom(b)) => Rc::ptr_eq(a, b),
-                _ => false,
-            }
-        }
-    }
-
-    impl Hash for EnvKzgSettings {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            core::mem::discriminant(self).hash(state);
-            match self {
-                Self::Default => {}
-                Self::Custom(settings) => settings.hash(state),
-            }
-        }
-    }
-
-    impl EnvKzgSettings {
-        /// Return set KZG settings.
-        ///
-        /// In will initialize the default settings if it is not already loaded.
-        pub fn get(&self) -> Rc<KzgSettings> {
-            match self {
-                Self::Default => {
-                    let res =
-                        KzgSettings::load_trusted_setup(G1_POINTS.as_ref(), G2_POINTS.as_ref())
-                            .expect("failed to load default trusted setup");
-                    Rc::new(res)
-                }
-                Self::Custom(settings) => settings.clone(),
-            }
-        }
+    /// c-kzg 2.x dropped the two-argument `KzgSettings::load_trusted_setup(g1, g2)` — the setup now
+    /// needs g1-monomial, g1-lagrange and g2-monomial points plus a `precompute` value — so instead
+    /// of hand-parsing a trusted-setup file we use the mainnet setup `c-kzg` ships, which is exactly
+    /// what these tests need. `precompute = 0` keeps loading cheap, suiting a one-shot test run.
+    pub fn default_settings() -> &'static KzgSettings {
+        ethereum_kzg_settings(0)
     }
 
     /// `VERSIONED_HASH_VERSION_KZG ++ sha256(commitment)[1..]`
@@ -179,14 +48,9 @@ mod kzg {
     impl KzgInput {
         #[inline]
         pub fn verify_kzg_proof(&self, kzg_settings: &KzgSettings) -> bool {
-            KzgProof::verify_kzg_proof(
-                &self.commitment,
-                &self.z,
-                &self.y,
-                &self.proof,
-                kzg_settings,
-            )
-            .unwrap_or(false)
+            kzg_settings
+                .verify_kzg_proof(&self.commitment, &self.z, &self.y, &self.proof)
+                .unwrap_or(false)
         }
     }
 
@@ -232,18 +96,6 @@ mod kzg {
         // SAFETY: `#[repr(C)] Bytes48([u8; 48])`
         unsafe { &*as_array::<48>(bytes).as_ptr().cast() }
     }
-
-    #[inline]
-    fn decode_points<const LEN: usize>(
-        points: &mut [[u8; LEN]],
-        lines: &mut Lines<'_>,
-    ) -> Result<(), &'static str> {
-        for bytes in points {
-            let line = lines.next().ok_or("KzgFileFormatError")?;
-            hex::decode_to_slice(line, bytes).map_err(|_| "KzgParseError")?;
-        }
-        Ok(())
-    }
 }
 
 const KZG_BASE_GAS_FEE: u64 = 50_000;
@@ -257,12 +109,11 @@ impl Kzg {
     ]);
 
     fn execute(input: &[u8]) -> Result<Vec<u8>, ExitError> {
-        // Get and verify KZG input.
+        // Get and verify KZG input against the bundled mainnet trusted setup.
         let kzg_input: kzg::KzgInput = input
             .try_into()
             .map_err(|e| ExitError::Other(Borrowed(e)))?;
-        let kzg_settings = kzg::EnvKzgSettings::Default;
-        if !kzg_input.verify_kzg_proof(&kzg_settings.get()) {
+        if !kzg_input.verify_kzg_proof(kzg::default_settings()) {
             return Err(ExitError::Other(Borrowed("BlobVerifyKzgProofFailed")));
         }
         Ok(kzg::RETURN_VALUE.to_vec())
@@ -282,10 +133,10 @@ impl Precompile for Kzg {
         _is_static: bool,
     ) -> EvmPrecompileResult {
         let cost = Self::required_gas(input)?;
-        if let Some(target_gas) = target_gas {
-            if cost > target_gas {
-                return Err(ExitError::OutOfGas);
-            }
+        if let Some(target_gas) = target_gas
+            && cost > target_gas
+        {
+            return Err(ExitError::OutOfGas);
         }
 
         let output = Self::execute(input)?;

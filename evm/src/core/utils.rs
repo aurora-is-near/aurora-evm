@@ -141,7 +141,7 @@ impl Rem for I256 {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{Sign, I256, U256_ONE};
+    use crate::utils::{I256, Sign, U256_ONE};
     use primitive_types::U256;
     use std::num::Wrapping;
 

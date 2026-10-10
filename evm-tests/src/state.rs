@@ -7,13 +7,13 @@ use crate::execution_results::{FailedTestDetails, RawInput, TestBench, TestExecu
 use crate::precompiles::Precompiles;
 use crate::state_dump::{StateTestsDump, StateTestsDumper};
 use crate::types::account_state::MemoryAccountsState;
-use crate::types::blob::{calc_data_fee, calc_max_data_fee, BlobExcessGasAndPrice};
+use crate::types::blob::{BlobExcessGasAndPrice, calc_data_fee, calc_max_data_fee};
 use crate::types::transaction::TxType;
 use crate::types::{PostState, Spec, StateTestCase};
+use aurora_evm::ExitReason;
 use aurora_evm::backend::{Apply, ApplyBackend, Log, MemoryBackend};
 use aurora_evm::executor::stack::{MemoryStackState, StackExecutor, StackSubstateMetadata};
 use aurora_evm::utils::U256_ZERO;
-use aurora_evm::ExitReason;
 use primitive_types::H160;
 use std::str::FromStr;
 
@@ -84,10 +84,10 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
     let mut tests_result = TestExecutionResult::new();
     for (spec, states) in &test.post_states {
         // Run tests for the specific EVM hard fork (Spec)
-        if let Some(s) = test_config.spec.as_ref() {
-            if s != spec {
-                continue;
-            }
+        if let Some(s) = test_config.spec.as_ref()
+            && s != spec
+        {
+            continue;
         }
 
         // Geet gasometer config for the current spec
@@ -366,7 +366,7 @@ fn test_run(test_config: &TestConfig, test: &StateTestCase) -> TestExecutionResu
 
             // Separate Apply and dump logic to avoid dumping transactions
             if test_config.verbose_output.dump_transactions.is_some() {
-                // As Apply iterator do not contains cloned values, we need to clone them to be able to dump them in the test results. And as Apply contains references, we need to convert them into owned values.
+                // As Apply iterator do not contain cloned values, we need to clone them to be able to dump them in the test results. And as Apply contains references, we need to convert them into owned values.
                 let apply_values: Vec<_> = values
                     .into_iter()
                     .map(|v| match v {
