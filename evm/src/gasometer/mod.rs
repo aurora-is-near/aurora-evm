@@ -342,6 +342,9 @@ impl<'config> Gasometer<'config> {
     /// Related EIPs:
     /// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
     /// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
+    ///
+    /// NOTE: plain arithmetic is intentional: every length is the size of an in-memory slice, so
+    /// the sum stays far below `u64::MAX` (below `2^63` even with `2^48` elements in every field).
     #[must_use]
     #[allow(clippy::as_conversions)] // NOTE: in that context usize->u64 `as_conversions` is safe
     pub const fn intrinsic_gas_and_gas_floor(cost: TransactionCost, config: &Config) -> (u64, u64) {
@@ -353,13 +356,10 @@ impl<'config> Gasometer<'config> {
             if config.has_floor_gas {
                 // According to EIP-2028: non-zero byte = 16, zero-byte = 4
                 // According to EIP-7623: tokens_in_calldata = zero_bytes_in_calldata + nonzero_bytes_in_calldata * 4
-                let tokens_in_calldata = non_zero_data_len
-                    .saturating_mul(4)
-                    .saturating_add(zero_data_len) as u64;
+                // NOTE: widen to u64 before multiplying so a 32-bit `usize` cannot truncate the token count.
+                let tokens_in_calldata = non_zero_data_len as u64 * 4 + zero_data_len as u64;
 
-                tokens_in_calldata
-                    .saturating_mul(config.total_cost_floor_per_token)
-                    .saturating_add(config.gas_transaction_call)
+                tokens_in_calldata * config.total_cost_floor_per_token + config.gas_transaction_call
             } else {
                 0
             }
@@ -373,34 +373,12 @@ impl<'config> Gasometer<'config> {
                 access_list_storage_len,
                 authorization_list_len,
             } => {
-                #[deny(clippy::let_and_return)]
-                let cost = config
-                    .gas_transaction_call
-                    .saturating_add(
-                        config
-                            .gas_transaction_zero_data
-                            .saturating_mul(zero_data_len as u64),
-                    )
-                    .saturating_add(
-                        config
-                            .gas_transaction_non_zero_data
-                            .saturating_mul(non_zero_data_len as u64),
-                    )
-                    .saturating_add(
-                        config
-                            .gas_access_list_address
-                            .saturating_mul(access_list_address_len as u64),
-                    )
-                    .saturating_add(
-                        config
-                            .gas_access_list_storage_key
-                            .saturating_mul(access_list_storage_len as u64),
-                    )
-                    .saturating_add(
-                        config
-                            .gas_per_empty_account_cost
-                            .saturating_mul(authorization_list_len as u64),
-                    );
+                let cost = config.gas_transaction_call
+                    + config.gas_transaction_zero_data * zero_data_len as u64
+                    + config.gas_transaction_non_zero_data * non_zero_data_len as u64
+                    + config.gas_access_list_address * access_list_address_len as u64
+                    + config.gas_access_list_storage_key * access_list_storage_len as u64
+                    + config.gas_per_empty_account_cost * authorization_list_len as u64;
                 let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
 
                 (cost, floor_gas)
@@ -412,31 +390,14 @@ impl<'config> Gasometer<'config> {
                 access_list_storage_len,
                 initcode_cost,
             } => {
-                let mut cost = config
-                    .gas_transaction_create
-                    .saturating_add(
-                        config
-                            .gas_transaction_zero_data
-                            .saturating_mul(zero_data_len as u64),
-                    )
-                    .saturating_add(
-                        config
-                            .gas_transaction_non_zero_data
-                            .saturating_mul(non_zero_data_len as u64),
-                    )
-                    .saturating_add(
-                        config
-                            .gas_access_list_address
-                            .saturating_mul(access_list_address_len as u64),
-                    )
-                    .saturating_add(
-                        config
-                            .gas_access_list_storage_key
-                            .saturating_mul(access_list_storage_len as u64),
-                    );
+                let mut cost = config.gas_transaction_create
+                    + config.gas_transaction_zero_data * zero_data_len as u64
+                    + config.gas_transaction_non_zero_data * non_zero_data_len as u64
+                    + config.gas_access_list_address * access_list_address_len as u64
+                    + config.gas_access_list_storage_key * access_list_storage_len as u64;
 
                 if config.max_initcode_size.is_some() {
-                    cost = cost.saturating_add(initcode_cost);
+                    cost += initcode_cost;
                 }
 
                 let floor_gas = floor_gas_calc(config, zero_data_len, non_zero_data_len);
@@ -1453,5 +1414,63 @@ impl MemoryCost {
         } else {
             other
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intrinsic_gas_for_call_follows_eip_2028_2930_7702_and_7623() {
+        let config = Config::prague();
+        // 3 zero bytes, 5 non-zero bytes.
+        let data = [0u8, 0, 0, 1, 2, 3, 4, 5];
+        let access_list = vec![
+            (
+                H160::repeat_byte(1),
+                vec![H256::repeat_byte(1), H256::repeat_byte(2)],
+            ),
+            (H160::repeat_byte(2), vec![H256::repeat_byte(3)]),
+        ];
+        let cost = call_transaction_cost(&data, &access_list, 1);
+
+        let (gas, floor) = Gasometer::intrinsic_gas_and_gas_floor(cost, &config);
+
+        assert_eq!(gas, 21000 + 4 * 3 + 16 * 5 + 2400 * 2 + 1900 * 3 + 25000);
+        assert_eq!(floor, (5 * 4 + 3) * 10 + 21000);
+    }
+
+    #[test]
+    fn intrinsic_gas_for_create_adds_initcode_cost_only_with_eip_3860() {
+        // 33 bytes of initcode: 2 words, so EIP-3860 adds 2 * 2 = 4 gas.
+        let data = [1u8; 33];
+        let cost = create_transaction_cost(&data, &[]);
+
+        let (shanghai_gas, shanghai_floor) =
+            Gasometer::intrinsic_gas_and_gas_floor(cost, &Config::shanghai());
+        let (istanbul_gas, istanbul_floor) =
+            Gasometer::intrinsic_gas_and_gas_floor(cost, &Config::istanbul());
+
+        assert_eq!(shanghai_gas, 53000 + 16 * 33 + 4);
+        assert_eq!(shanghai_floor, 0);
+        assert_eq!(istanbul_gas, 53000 + 16 * 33);
+        assert_eq!(istanbul_floor, 0);
+    }
+
+    #[test]
+    fn gas_floor_tokens_are_counted_in_u64() {
+        // 2^30 non-zero bytes give 2^32 tokens, which does not fit a 32-bit `usize`.
+        let cost = TransactionCost::Call {
+            zero_data_len: 0,
+            non_zero_data_len: 1 << 30,
+            access_list_address_len: 0,
+            access_list_storage_len: 0,
+            authorization_list_len: 0,
+        };
+
+        let (_, floor) = Gasometer::intrinsic_gas_and_gas_floor(cost, &Config::prague());
+
+        assert_eq!(floor, (1u64 << 32) * 10 + 21000);
     }
 }
