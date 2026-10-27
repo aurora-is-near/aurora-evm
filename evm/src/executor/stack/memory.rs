@@ -607,6 +607,12 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
         self.substate.exit_discard()
     }
 
+    /// EIP-161 emptiness. The code is tested for presence only, through `Backend::has_code`,
+    /// which is therefore a contract on the backend:
+    /// - a backend that always holds the code may keep the default, derived from `code`;
+    /// - a witness backend, where an account may carry its `code_hash` without the code
+    ///   bytes, must override `has_code` to return `code_hash != KECCAK_EMPTY` instead of
+    ///   fetching the code, which the witness is not required to contain for this check.
     fn is_empty(&self, address: H160) -> bool {
         if let Some(account) = self.substate.known_account(address) {
             if !account.basic.balance.is_zero() || !account.basic.nonce.is_zero() {
