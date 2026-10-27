@@ -1,4 +1,4 @@
-use crate::backend::{Apply, Backend, Basic, Log};
+use crate::backend::{code_hash_of, Apply, Backend, Basic, Log};
 use crate::core::utils::{U256_ONE, U256_ZERO, U64_MAX};
 use crate::executor::stack::executor::{
     Accessed, Authorization, StackState, StackSubstateMetadata,
@@ -543,6 +543,20 @@ impl<B: Backend> Backend for MemoryStackState<'_, '_, B> {
             .unwrap_or_else(|| self.backend.code(address))
     }
 
+    fn code_hash(&self, address: H160) -> H256 {
+        self.substate
+            .known_account(address)
+            .and_then(|account| account.code.as_deref())
+            .map_or_else(|| self.backend.code_hash(address), code_hash_of)
+    }
+
+    fn has_code(&self, address: H160) -> bool {
+        self.substate
+            .known_account(address)
+            .and_then(|account| account.code.as_deref())
+            .map_or_else(|| self.backend.has_code(address), |code| !code.is_empty())
+    }
+
     fn storage(&self, address: H160, key: H256) -> H256 {
         self.substate
             .known_storage(address, key)
@@ -602,11 +616,11 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
             if let Some(code) = &account.code {
                 return code.is_empty();
             }
-            return self.backend.code(address).is_empty();
+            return !self.backend.has_code(address);
         }
 
         let basic = self.backend.basic(address);
-        basic.balance.is_zero() && basic.nonce.is_zero() && self.backend.code(address).is_empty()
+        basic.balance.is_zero() && basic.nonce.is_zero() && !self.backend.has_code(address)
     }
 
     fn deleted(&self, address: H160) -> bool {
@@ -738,7 +752,9 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
 
 #[cfg(test)]
 mod tests {
-    use crate::backend::{Backend, MemoryAccount, MemoryBackend, MemoryVicinity};
+    use crate::backend::{
+        code_hash_of, Backend, MemoryAccount, MemoryBackend, MemoryVicinity, KECCAK_EMPTY,
+    };
     use crate::executor::stack::executor::StackSubstateMetadata;
     use crate::executor::stack::memory::MemoryStackState;
     use crate::executor::stack::StackState;
@@ -890,5 +906,136 @@ mod tests {
         assert!(!stack_state.is_empty(addr2));
         // Get code from backend, but in backend code is not empty
         assert_eq!(stack_state.code(addr2), vec![0x42]);
+    }
+
+    fn account(balance: u64, nonce: u64, code: Vec<u8>) -> MemoryAccount {
+        MemoryAccount {
+            balance: U256::from(balance),
+            nonce: U256::from(nonce),
+            storage: BTreeMap::new(),
+            code,
+        }
+    }
+
+    /// `has_code` is `code_hash != KECCAK_EMPTY`, and `code_hash` is the hash of `code`.
+    fn assert_code_invariants<B: Backend>(
+        stack_state: &MemoryStackState<'_, '_, B>,
+        address: H160,
+    ) {
+        let code_hash = stack_state.code_hash(address);
+        assert_eq!(code_hash, code_hash_of(&stack_state.code(address)));
+        assert_eq!(stack_state.has_code(address), code_hash != KECCAK_EMPTY);
+    }
+
+    #[test]
+    fn test_code_hash_and_has_code_from_backend() {
+        let eoa = H160::from_low_u64_be(1);
+        let contract = H160::from_low_u64_be(2);
+        let absent = H160::from_low_u64_be(3);
+        let code = vec![0x42];
+        let state = BTreeMap::from([
+            (eoa, account(1, 0, Vec::new())),
+            (contract, account(0, 1, code.clone())),
+        ]);
+
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, state);
+        let config = Config::osaka();
+        let metadata = StackSubstateMetadata::new(0, &config);
+
+        let mut stack_state = MemoryStackState::new(metadata, &backend);
+        assert_eq!(stack_state.code_hash(eoa), KECCAK_EMPTY);
+        assert!(!stack_state.has_code(eoa));
+        assert_eq!(stack_state.code_hash(absent), KECCAK_EMPTY);
+        assert!(!stack_state.has_code(absent));
+        assert_eq!(stack_state.code_hash(contract), code_hash_of(&code));
+        assert!(stack_state.has_code(contract));
+
+        // A cached account without code changes still answers from the backend.
+        stack_state.deposit(contract, U256::one());
+        stack_state.deposit(absent, U256::one());
+        assert!(stack_state
+            .substate
+            .accounts
+            .values()
+            .all(|account| account.code.is_none()));
+        assert_eq!(stack_state.code_hash(contract), code_hash_of(&code));
+        assert!(stack_state.has_code(contract));
+        assert_eq!(stack_state.code_hash(absent), KECCAK_EMPTY);
+        assert!(!stack_state.has_code(absent));
+        for address in [eoa, contract, absent] {
+            assert_code_invariants(&stack_state, address);
+        }
+    }
+
+    #[test]
+    fn test_code_hash_and_has_code_from_substate() {
+        let eoa = H160::from_low_u64_be(1);
+        let contract = H160::from_low_u64_be(2);
+        let new_code = vec![0x60, 0x01, 0x00];
+        let state = BTreeMap::from([
+            (eoa, account(0, 0, Vec::new())),
+            (contract, account(0, 0, vec![0x42])),
+        ]);
+
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, state);
+        let config = Config::osaka();
+        let metadata = StackSubstateMetadata::new(0, &config);
+
+        let mut stack_state = MemoryStackState::new(metadata, &backend);
+        assert!(stack_state.is_empty(eoa));
+        assert!(!stack_state.is_empty(contract));
+
+        // Code set in the substate shadows the backend.
+        stack_state.set_code(eoa, new_code.clone());
+        assert_eq!(stack_state.code_hash(eoa), code_hash_of(&new_code));
+        assert!(stack_state.has_code(eoa));
+        assert!(!stack_state.is_empty(eoa));
+        assert_code_invariants(&stack_state, eoa);
+
+        // Cleared code makes the account empty although the backend still holds code.
+        stack_state.set_code(contract, Vec::new());
+        assert_eq!(stack_state.code_hash(contract), KECCAK_EMPTY);
+        assert!(!stack_state.has_code(contract));
+        assert!(stack_state.is_empty(contract));
+        assert!(backend.has_code(contract));
+        assert_code_invariants(&stack_state, contract);
+    }
+
+    #[test]
+    fn test_code_hash_and_has_code_across_substates() {
+        let address = H160::from_low_u64_be(1);
+        let code = vec![0x42];
+        let new_code = vec![0x60, 0x01, 0x00];
+        let state = BTreeMap::from([(address, account(0, 0, code.clone()))]);
+
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, state);
+        let config = Config::osaka();
+        let metadata = StackSubstateMetadata::new(0, &config);
+
+        let mut stack_state = MemoryStackState::new(metadata, &backend);
+
+        // A reverted substate drops its code change.
+        stack_state.enter(0, false);
+        stack_state.set_code(address, new_code.clone());
+        assert_eq!(stack_state.code_hash(address), code_hash_of(&new_code));
+        stack_state.exit_revert().unwrap();
+        assert_eq!(stack_state.code_hash(address), code_hash_of(&code));
+        assert!(stack_state.has_code(address));
+
+        // A committed substate keeps it, visible from the parent.
+        stack_state.enter(0, false);
+        stack_state.set_code(address, Vec::new());
+        stack_state.enter(0, false);
+        assert_eq!(stack_state.code_hash(address), KECCAK_EMPTY);
+        assert!(!stack_state.has_code(address));
+        stack_state.exit_commit().unwrap();
+        stack_state.exit_commit().unwrap();
+        assert_eq!(stack_state.code_hash(address), KECCAK_EMPTY);
+        assert!(!stack_state.has_code(address));
+        assert!(stack_state.is_empty(address));
+        assert_code_invariants(&stack_state, address);
     }
 }
