@@ -919,7 +919,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
     /// Check if the existing account is "create collision".
     /// [EIP-7610](https://eips.ethereum.org/EIPS/eip-7610)
     pub fn is_create_collision(&self, address: H160) -> bool {
-        !self.code(address).is_empty()
+        self.state.has_code(address)
             || self.nonce(address) > U256_ZERO
             || !self.state.is_empty_storage(address)
     }
@@ -1532,15 +1532,15 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
         U256::from(target_code.len())
     }
 
-    /// Returns the account's stored code hash.
+    /// Returns the account's stored code hash without fetching the code; zero for a
+    /// non-existent or empty account (EIP-1052).
     ///
     /// EIP-7702 `EXTCODEHASH` hashes the delegation indicator itself, not its target code.
     fn code_hash(&mut self, address: H160) -> H256 {
         if !self.exists(address) {
             return H256::default();
         }
-        let code = self.code(address);
-        H256::from_slice(<[u8; 32]>::from(Keccak256::digest(code)).as_slice())
+        self.state.code_hash(address)
     }
 
     /// Get account code

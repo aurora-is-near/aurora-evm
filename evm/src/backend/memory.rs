@@ -1,4 +1,4 @@
-use super::{Apply, ApplyBackend, Backend, Basic, Log};
+use super::{Apply, ApplyBackend, Backend, Basic, KECCAK_EMPTY, Log, code_hash_of};
 use crate::core::utils::{U256_ONE, U256_ZERO};
 use crate::prelude::*;
 use primitive_types::{H160, H256, U256};
@@ -163,6 +163,16 @@ impl Backend for MemoryBackend<'_> {
             .unwrap_or_default()
     }
 
+    fn code_hash(&self, address: H160) -> H256 {
+        self.state
+            .get(&address)
+            .map_or(KECCAK_EMPTY, |v| code_hash_of(&v.code))
+    }
+
+    fn has_code(&self, address: H160) -> bool {
+        self.state.get(&address).is_some_and(|v| !v.code.is_empty())
+    }
+
     fn storage(&self, address: H160, index: H256) -> H256 {
         self.state
             .get(&address)
@@ -252,5 +262,115 @@ impl ApplyBackend for MemoryBackend<'_> {
         for log in logs {
             self.logs.push(log);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vicinity() -> MemoryVicinity {
+        MemoryVicinity {
+            gas_price: U256::zero(),
+            effective_gas_price: U256::zero(),
+            origin: H160::zero(),
+            chain_id: U256::one(),
+            block_hashes: Vec::new(),
+            block_number: U256::zero(),
+            block_coinbase: H160::zero(),
+            block_timestamp: U256::zero(),
+            block_difficulty: U256::zero(),
+            block_randomness: None,
+            block_gas_limit: U256::zero(),
+            block_base_fee_per_gas: U256::zero(),
+            blob_gas_price: None,
+            blob_hashes: Vec::new(),
+        }
+    }
+
+    fn account(balance: u64, nonce: u64, code: Vec<u8>) -> MemoryAccount {
+        MemoryAccount {
+            balance: U256::from(balance),
+            nonce: U256::from(nonce),
+            storage: BTreeMap::new(),
+            code,
+        }
+    }
+
+    /// `has_code` is `code_hash != KECCAK_EMPTY`, and `code_hash` is the hash of `code`.
+    fn assert_code_invariants(backend: &MemoryBackend<'_>, address: H160) {
+        let code_hash = backend.code_hash(address);
+        assert_eq!(code_hash, code_hash_of(&backend.code(address)));
+        assert_eq!(backend.has_code(address), code_hash != KECCAK_EMPTY);
+    }
+
+    #[test]
+    fn code_hash_and_has_code_follow_the_stored_code() {
+        let eoa = H160::from_low_u64_be(1);
+        let contract = H160::from_low_u64_be(2);
+        let absent = H160::from_low_u64_be(3);
+        let code = vec![0x60, 0x01, 0x00];
+        let vicinity = vicinity();
+        let backend = MemoryBackend::new(
+            &vicinity,
+            BTreeMap::from([
+                (eoa, account(1, 0, Vec::new())),
+                (contract, account(0, 1, code.clone())),
+            ]),
+        );
+
+        assert_eq!(backend.code_hash(eoa), KECCAK_EMPTY);
+        assert!(!backend.has_code(eoa));
+        assert_eq!(backend.code_hash(absent), KECCAK_EMPTY);
+        assert!(!backend.has_code(absent));
+        assert_eq!(backend.code_hash(contract), code_hash_of(&code));
+        assert!(backend.has_code(contract));
+        for address in [eoa, contract, absent] {
+            assert_code_invariants(&backend, address);
+        }
+    }
+
+    #[test]
+    fn applied_code_changes_the_code_hash() {
+        let address = H160::from_low_u64_be(1);
+        let code = vec![0x60, 0x01, 0x00];
+        let vicinity = vicinity();
+        let mut backend = MemoryBackend::new(&vicinity, BTreeMap::new());
+        let modify = |code: Option<Vec<u8>>| {
+            vec![Apply::Modify {
+                address,
+                basic: Basic {
+                    balance: U256::zero(),
+                    nonce: U256::one(),
+                },
+                code,
+                storage: Vec::<(H256, H256)>::new(),
+                reset_storage: false,
+            }]
+        };
+
+        backend.apply(modify(Some(code.clone())), Vec::<Log>::new(), true);
+        assert_eq!(backend.code_hash(address), code_hash_of(&code));
+        assert!(backend.has_code(address));
+        assert_code_invariants(&backend, address);
+
+        // `None` leaves the code unchanged.
+        backend.apply(modify(None), Vec::<Log>::new(), true);
+        assert_eq!(backend.code_hash(address), code_hash_of(&code));
+        assert!(backend.has_code(address));
+
+        backend.apply(modify(Some(Vec::new())), Vec::<Log>::new(), true);
+        assert_eq!(backend.code_hash(address), KECCAK_EMPTY);
+        assert!(!backend.has_code(address));
+        assert_code_invariants(&backend, address);
+
+        backend.apply(
+            vec![Apply::<Vec<(H256, H256)>>::Delete { address }],
+            Vec::<Log>::new(),
+            true,
+        );
+        assert!(!backend.exists(address));
+        assert_eq!(backend.code_hash(address), KECCAK_EMPTY);
+        assert!(!backend.has_code(address));
     }
 }
