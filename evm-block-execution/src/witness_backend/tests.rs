@@ -138,6 +138,97 @@ fn an_account_proven_to_have_no_code_needs_no_bytes() {
     assert_eq!(db.missing(), None, "KECCAK_EMPTY is a proof, not a miss");
 }
 
+/// The reads the executor makes by hash alone — `EXTCODEHASH`, EIP-161 emptiness, the EIP-7610
+/// collision check — are answered from the leaf. A witness built from what the reference client
+/// loaded carries no bytes for an account touched only that way, so they must not poison.
+#[test]
+fn code_hash_and_has_code_need_the_leaf_but_not_the_bytes() {
+    let who = addr(0xc0);
+    let db = backend(
+        vec![(who, RevealedAccount::Present(account_with_code()))],
+        vec![],
+    );
+    assert_eq!(db.code_hash(who), keccak256(CODE));
+    assert!(db.has_code(who));
+    assert_eq!(
+        db.missing(),
+        None,
+        "the leaf is the proof; no bytes are owed"
+    );
+
+    // The bytes themselves are still owed to a read that needs them.
+    assert_eq!(db.code(who), b"");
+    assert_eq!(
+        db.missing(),
+        Some(WitnessDbError::Code {
+            address: who,
+            code_hash: keccak256(CODE),
+        })
+    );
+}
+
+/// Every combination of leaf and bytes, each on a fresh backend because only the first miss is
+/// kept. `has_code` is `code_hash != KECCAK_EMPTY` throughout, which is what the executor's
+/// EIP-161 check relies on, phrased with the `aurora_evm` constant.
+#[test]
+fn code_reads_for_every_combination_of_leaf_and_bytes() {
+    assert_eq!(KECCAK_EMPTY, aurora_evm::backend::KECCAK_EMPTY);
+    let who = addr(0xc0);
+    let code_hash = keccak256(CODE);
+    let code_gap = WitnessDbError::Code {
+        address: who,
+        code_hash,
+    };
+    let account_gap = WitnessDbError::Account { address: who };
+    // (revealed account, supplied codes, expected hash, expected bytes, miss after `code`)
+    let cases = [
+        (
+            Some(RevealedAccount::Present(account_with_code())),
+            vec![CODE.to_vec()],
+            code_hash,
+            CODE,
+            None,
+        ),
+        (
+            Some(RevealedAccount::Present(account_with_code())),
+            vec![],
+            code_hash,
+            &b""[..],
+            Some(code_gap),
+        ),
+        (
+            Some(RevealedAccount::Present(WitnessAccount::empty())),
+            vec![],
+            KECCAK_EMPTY,
+            &b""[..],
+            None,
+        ),
+        (
+            Some(RevealedAccount::Absent),
+            vec![],
+            KECCAK_EMPTY,
+            &b""[..],
+            None,
+        ),
+        (None, vec![], KECCAK_EMPTY, &b""[..], Some(account_gap)),
+    ];
+    for (revealed, codes, expected_hash, expected_code, miss_after_code) in cases {
+        let db = backend(
+            revealed.into_iter().map(|account| (who, account)).collect(),
+            codes,
+        );
+        assert_eq!(db.code_hash(who), expected_hash);
+        assert_eq!(db.has_code(who), expected_hash != KECCAK_EMPTY);
+        // The hash reads miss only the account itself, never its bytes.
+        assert_eq!(
+            db.missing(),
+            miss_after_code.filter(|miss| *miss == account_gap)
+        );
+        assert_eq!(db.code(who), expected_code);
+        assert_eq!(db.missing(), miss_after_code);
+    }
+}
+
 /// Proven-absent reads as empty and is silent; unrevealed reads as empty and poisons. The two
 /// answers are identical — only `missing()` separates them, which is the whole point.
 #[test]
@@ -311,6 +402,9 @@ fn apply_registers_created_code_under_its_hash() {
     // The created contract is readable by the next transaction, with no witness entry for it.
     assert_eq!(db.code(who), CODE);
     assert_eq!(db.codes()[&keccak256(CODE)], CODE);
+    // The leaf now points at it, so the hash-only reads see the new code too.
+    assert_eq!(db.code_hash(who), keccak256(CODE));
+    assert!(db.has_code(who));
     assert_eq!(db.missing(), None);
 }
 
@@ -774,6 +868,34 @@ fn from_witness_reports_omitted_code_of_a_proven_account() {
     );
 }
 
+/// The same hash-only reads resolved lazily by proof: the leaves are revealed, the code map is
+/// empty, and the post-state comes out without a single code entry.
+#[test]
+fn from_witness_answers_code_hash_and_has_code_from_the_proven_leaf() {
+    let contract = addr(0xc0);
+    let holder = addr(0xb0);
+    let (root, mut witness) = witness_of(&[
+        (contract, memory_account(7, 1, CODE, &[])),
+        (holder, memory_account(1_000, 3, &[], &[])),
+    ]);
+    witness.contract_codes.clear();
+    let db = WitnessBackend::from_witness(vicinity(), witness, root, BTreeMap::new()).unwrap();
+
+    assert_eq!(db.code_hash(contract), keccak256(CODE));
+    assert!(db.has_code(contract));
+    assert_eq!(db.code_hash(holder), KECCAK_EMPTY);
+    assert!(!db.has_code(holder));
+    // Proven absent by the trie.
+    assert_eq!(db.code_hash(addr(0xee)), KECCAK_EMPTY);
+    assert!(!db.has_code(addr(0xee)));
+
+    let state = db
+        .try_into_state()
+        .expect("every read was proven by a leaf");
+    assert_eq!(state.accounts.len(), 3);
+    assert!(state.codes.is_empty());
+}
+
 // --- complete-state coverage ---
 
 #[test]
@@ -797,6 +919,8 @@ fn a_complete_state_treats_absence_as_proof() {
     // Unknown address: absent, silently.
     assert!(!db.exists(addr(0xee)));
     assert!(db.is_empty_storage(addr(0xee)));
+    assert_eq!(db.code_hash(addr(0xee)), KECCAK_EMPTY);
+    assert!(!db.has_code(addr(0xee)));
     assert_eq!(db.missing(), None);
 
     // Writes and credits to unknown addresses create them without a gap.

@@ -354,8 +354,8 @@ impl BlockExecutor {
         address: H160,
         failure: fn(ExitReason) -> BlockExecutionError,
     ) -> Result<Vec<u8>, BlockExecutionError> {
-        if self.backend.code(address).is_empty() {
-            // An unrevealed contract also reads as empty; the witness gap is the real cause.
+        if !self.backend.has_code(address) {
+            // An unrevealed contract also reads as code-less; the witness gap is the real cause.
             self.check_witness()?;
             return Err(BlockExecutionError::SystemContractEmpty { address });
         }

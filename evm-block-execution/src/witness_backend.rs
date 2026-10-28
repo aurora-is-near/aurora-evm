@@ -632,6 +632,21 @@ impl Backend for WitnessBackend {
         )
     }
 
+    fn code_hash(&self, address: H160) -> H256 {
+        // Answered from the leaf, as is `has_code`: `EXTCODEHASH`, EIP-161 emptiness and the
+        // EIP-7610 collision check need the hash alone, and a witness built from what the
+        // reference client loaded carries no bytes for an account touched only that way.
+        self.with_account(address, |account| {
+            account.map_or(KECCAK_EMPTY, |account| account.code_hash)
+        })
+    }
+
+    fn has_code(&self, address: H160) -> bool {
+        self.with_account(address, |account| {
+            account.is_some_and(WitnessAccount::has_code)
+        })
+    }
+
     fn storage(&self, address: H160, index: H256) -> H256 {
         let pending = self.with_account(address, |account| {
             let Some(account) = account else {
