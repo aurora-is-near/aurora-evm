@@ -5,17 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-10-28
+
+This release lets backends provide account code hashes and code presence without loading
+bytecode. It also corrects the EIP-7623 gas floor calculation on 32-bit targets.
+
+### Added
+
+- `Backend::code_hash`, `Backend::has_code`, and `backend::KECCAK_EMPTY` [[#137]].
+  `code_hash` returns the hash of the account's own code, or `KECCAK_EMPTY` for empty code,
+  including absent accounts. `has_code` reports whether the account has non-empty code.
+  Both methods have defaults based on `code`, so existing backend implementations do not
+  need to add them. Call sites may need disambiguation if another trait provides methods
+  with the same names.
+- Unit tests for the new backend methods, code changes across substates, intrinsic gas,
+  and the EIP-7623 token count [[#136]], [[#137]].
+
+### Changed
+
+- `EXTCODEHASH` now uses `Backend::code_hash`; EIP-161 account emptiness and creation
+  collision checks use `Backend::has_code` [[#137]]. To serve these paths without bytecode,
+  a witness backend must override both methods using account metadata. The defaults still
+  load code; this release provides the API, not a witness backend implementation.
+- `MemoryBackend` implements both methods without cloning code. `MemoryStackState` uses
+  code set in the current transaction before consulting its backend [[#137]]. Hashes of
+  locally stored code are still computed from the bytes. `EXTCODEHASH` continues to return
+  zero for absent or empty accounts and the designator's own hash for delegated accounts.
+  Bytecode access for execution, `EXTCODESIZE`, `EXTCODECOPY`, and EIP-7702 is unchanged.
+- Intrinsic gas calculation now uses ordinary `u64` arithmetic instead of saturating
+  arithmetic [[#136]]. Results are unchanged when the calculation fits in `u64`, apart
+  from the 32-bit gas floor correction below. Callers supplying synthetic `TransactionCost`
+  values or custom gas schedules must keep intermediate values and totals within `u64`:
+  overflow now panics when overflow checks are enabled and wraps when they are disabled,
+  rather than saturating.
+
+### Fixed
+
+- EIP-7623 calldata tokens are widened to `u64` before multiplication and addition [[#136]].
+  Previously, the token count saturated at `usize::MAX` on 32-bit targets, underestimating
+  the gas floor when `4 * non_zero_data_len + zero_data_len` exceeded `2^32 - 1` (for
+  example, at `2^30` non-zero bytes).
+
 ## [3.1.0] - 2026-10-05
-> **EEST `tests@v20.0.2` Release**
->
-> The test suite moves to the EEST `tests@v20.0.2` fixtures, a single build for every fork up to
-> Osaka, and now runs the **Osaka** state tests in CI: neither the `execution-spec-tests` v5.4.0
-> stable bundle nor `ethereum/tests` v17.0 contains state tests for Osaka. It also checks logs
-> and receipts, and validates the transaction signature, chain ID and nonce.
->
-> The new fixtures uncovered an **EIP-2929** bug in the `CREATE` / `CREATE2` address warming;
-> its fix is the only change to the EVM core. The public API of `aurora-evm` is unchanged, but
-> transactions that hit the bug now use more gas (see **Fixed**).
+
+**EEST `tests@v20.0.2` Release**
+
+The test suite moves to the EEST `tests@v20.0.2` fixtures, a single build for every fork up to
+Osaka, and now runs the **Osaka** state tests in CI: neither the `execution-spec-tests` v5.4.0
+stable bundle nor `ethereum/tests` v17.0 contains state tests for Osaka. It also checks logs
+and receipts, and validates the transaction signature, chain ID and nonce.
+
+The new fixtures uncovered an **EIP-2929** bug in the `CREATE` / `CREATE2` address warming;
+its fix is the only change to the EVM core. The public API of `aurora-evm` is unchanged, but
+transactions that hit the bug now use more gas (see **Fixed**).
 
 ### Added
 - **EEST `tests@v20.0.2` fixture support** in the test suite [[#128]]:
@@ -53,16 +95,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`BLOCKHASH` in state tests**: the test vicinity now provides hashes for the 256 most recent blocks (fewer near genesis), computed as `keccak256` of the decimal block number per the state test convention. Previously it provided none, so `BLOCKHASH` always returned zero [[#128]].
 
 ## [3.0.0] - 2026-09-03
-> **Osaka Hard Fork Release**
->
-> The primary purpose of this release is support for the **Osaka** hard fork: **EIP-7939**
-> (`CLZ`) in the EVM core, and the **EIP-7823** / **EIP-7883** `MODEXP` rules through the
-> Osaka precompile set — precompiles are supplied by the host, not by this crate.
->
-> **History**: the Osaka work [[#99]] branched off `v2.2.0` and landed on the mainline
-> *before* the `v2.2.1` gasometer line, which was merged afterwards via [[#104]].
-> Consequently **`v3.0.0` contains every change of `v2.2.1`**, even though Osaka carries a
-> lower pull request number.
+
+**Osaka Hard Fork Release**
+
+The primary purpose of this release is support for the **Osaka** hard fork: **EIP-7939**
+(`CLZ`) in the EVM core, and the **EIP-7823** / **EIP-7883** `MODEXP` rules through the
+Osaka precompile set — precompiles are supplied by the host, not by this crate.
+
+**History**: the Osaka work [[#99]] branched off `v2.2.0` and landed on the mainline
+*before* the `v2.2.1` gasometer line, which was merged afterwards via [[#104]].
+Consequently **`v3.0.0` contains every change of `v2.2.1`**, even though Osaka carries a
+lower pull request number.
 
 ### Added
 - **Osaka Hard Fork Support** [[#99]]:
@@ -191,7 +234,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated internal dependencies and module visibility for the major release [[#74]].
 
 ## [1.0.0] - 2025-03-21
-> **First Major Release** by @mrLSD
+
+**First Major Release** by @mrLSD
 
 This release marks the final transformation of the project from a SputnikVM fork into the standalone **Aurora EVM** product.
 
@@ -210,6 +254,7 @@ This release marks the final transformation of the project from a SputnikVM fork
 
 [//]: # (Link Definitions)
 
+[3.2.0]: https://github.com/aurora-is-near/aurora-evm/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/aurora-is-near/aurora-evm/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/aurora-is-near/aurora-evm/compare/v2.2.1...v3.0.0
 [2.2.1]: https://github.com/aurora-is-near/aurora-evm/compare/v2.2.0...v2.2.1
@@ -221,6 +266,8 @@ This release marks the final transformation of the project from a SputnikVM fork
 [2.0.0]: https://github.com/aurora-is-near/aurora-evm/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/aurora-is-near/aurora-evm/releases/tag/v1.0.0
 
+[#137]: https://github.com/aurora-is-near/aurora-evm/pull/137
+[#136]: https://github.com/aurora-is-near/aurora-evm/pull/136
 [#128]: https://github.com/aurora-is-near/aurora-evm/pull/128
 [#127]: https://github.com/aurora-is-near/aurora-evm/pull/127
 [#115]: https://github.com/aurora-is-near/aurora-evm/pull/115
