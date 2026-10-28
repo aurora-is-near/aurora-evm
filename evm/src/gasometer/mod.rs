@@ -343,8 +343,9 @@ impl<'config> Gasometer<'config> {
     /// - [EIP-2028](https://eips.ethereum.org/EIPS/eip-2028)
     /// - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
     ///
-    /// NOTE: plain arithmetic is intentional: every length is the size of an in-memory slice, so
-    /// the sum stays far below `u64::MAX` (below `2^63` even with `2^48` elements in every field).
+    /// Uses ordinary `u64` arithmetic. Callers must ensure that intermediate values and totals
+    /// fit in `u64`, including when supplying synthetic counts or custom gas prices.
+    /// Overflow wraps when overflow checks are disabled; it does not saturate.
     #[must_use]
     #[allow(clippy::as_conversions)] // NOTE: in that context usize->u64 `as_conversions` is safe
     pub const fn intrinsic_gas_and_gas_floor(cost: TransactionCost, config: &Config) -> (u64, u64) {
