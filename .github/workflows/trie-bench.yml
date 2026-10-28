@@ -161,6 +161,10 @@ jobs:
           persist-credentials: false
 
       - name: Install the RISC Zero toolchain
+        env:
+          # rzup resolves release tags through the GitHub API; the unauthenticated limit is
+          # shared by every tenant of the runner's IP, so authenticate with the job token.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Verify the published rzup source archive before unpacking or building it.
           archive="$RUNNER_TEMP/rzup-0.5.2.crate"
