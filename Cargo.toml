@@ -4,6 +4,7 @@ members = [
     "evm",
     "evm-tests"
 ]
+exclude = ["zk-evm"]
 
 [workspace.package]
 authors = ["Aurora Labs <hello@aurora.dev>"]
