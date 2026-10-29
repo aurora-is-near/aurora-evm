@@ -1,4 +1,4 @@
-use super::{code_hash_of, Apply, ApplyBackend, Backend, Basic, Log, KECCAK_EMPTY};
+use super::{Apply, ApplyBackend, Backend, Basic, KECCAK_EMPTY, Log, code_hash_of};
 use crate::core::utils::{U256_ONE, U256_ZERO};
 use crate::prelude::*;
 use primitive_types::{H160, H256, U256};

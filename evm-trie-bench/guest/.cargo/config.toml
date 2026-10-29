@@ -1,0 +1,19 @@
+[build]
+target = "riscv32im-risc0-zkvm-elf"
+
+[target.riscv32im-risc0-zkvm-elf]
+rustflags = [
+    "-C", "passes=lower-atomic",
+    "-C", "link-arg=-Ttext=0x00200800",
+    "-C", "link-arg=--fatal-warnings",
+    "--cfg", "getrandom_backend=\"custom\"",
+]
+
+# The environment `risc0-build` provides for guests with C sources (blst, c-kzg) and the
+# bigint2-accelerated crates. The RISC Zero C toolchain must be on PATH (`rzup install cpp`,
+# then `$HOME/.risc0/cpp/bin`); an exported variable with an absolute path takes precedence.
+[env]
+CC_riscv32im_risc0_zkvm_elf = "riscv32-unknown-elf-gcc"
+AR_riscv32im_risc0_zkvm_elf = "riscv32-unknown-elf-ar"
+CFLAGS_riscv32im_risc0_zkvm_elf = "-march=rv32im -nostdlib"
+RISC0_FEATURE_bigint2 = "1"

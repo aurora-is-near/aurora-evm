@@ -5,6 +5,9 @@ on:
     branches: [ master ]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   ETHTESTS_VERSION: v17.0
@@ -20,6 +23,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Use Rust cache
         uses: Swatinem/rust-cache@v2
@@ -37,7 +42,99 @@ jobs:
       - name: Run tests
         run: cargo test --all --verbose
 
+  # Runs that only add build and feature coverage, so a 64-bit host is enough: `unit-tests`
+  # already runs every crate's tests, including the pointer-width-dependent ones, on both
+  # architectures.
+  unit-tests-64-bit-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Use Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      # Builds the crate with its own dependency features, without the workspace-wide unification.
+      - name: Test aurora-evm-block-execution
+        run: cargo test -p aurora-evm-block-execution
+
+      # `--all` builds aurora-evm-trie with default features only; the optional backend needs its own run.
+      # The trie benchmark workflow runs that backend on RV32 guests.
+      - name: Test aurora-evm-trie with the tiny-keccak backend
+        run: cargo test -p aurora-evm-trie --all-features --verbose
+
+  # Gate Ethereum integration tests and the block body differential independently.
+  # For PRs targeting any branch, compare the tested merge tree with its base tip.
+  # For master pushes, compare with the previous tip.
+  # A comparison failure fails this job instead of starting integration tests without a match.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      integration_tests: ${{ steps.diff.outputs.integration_tests }}
+      block_body: ${{ steps.diff.outputs.block_body }}
+    steps:
+      # Full history keeps the previous tip available for multi-commit pushes.
+      - name: Checkout sources
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Compare the change under test with its base
+        id: diff
+        shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ -n "$PR_HEAD_SHA" ]; then
+            # The merge commit's first parent is the base tip, its second is the PR head.
+            base=$(git rev-parse --verify HEAD^1)
+            if [ "$(git rev-parse --verify HEAD^2)" != "$PR_HEAD_SHA" ]; then
+              echo "::error::The checked-out merge commit does not match the pull request head."
+              exit 1
+            fi
+          elif [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            # A newly created branch is compared with an empty tree.
+            base=$(git hash-object -t tree --stdin </dev/null)
+          else
+            base=${BEFORE_SHA:?Missing previous commit for push comparison}
+            git cat-file -e "$base^{commit}"
+          fi
+
+          # Emit a match only for the paths assigned to each job; comparison errors fail changes.
+          compare_paths() {
+            local output=$1 changed status
+            shift
+            if git diff --quiet "$base" HEAD -- "$@"; then
+              changed=false
+            else
+              status=$?
+              if [ "$status" -ne 1 ]; then
+                echo "::error::Cannot compare $output paths (git diff exited $status)."
+                return "$status"
+              fi
+              changed=true
+            fi
+            echo "::group::$output: changes against ${base:0:7}"
+            git diff --stat "$base" HEAD -- "$@"
+            echo "::endgroup::"
+            echo "$output=$changed" | tee -a "$GITHUB_OUTPUT"
+          }
+          compare_paths integration_tests evm evm-tests Cargo.toml rust-toolchain.toml .github/workflows/rust.yml
+          compare_paths block_body evm evm-block-execution evm-trie Cargo.toml rust-toolchain.toml .github/workflows/rust.yml
+
   ethereum-tests:
+    needs: changes
+    # Run only after a successful comparison found a matching change.
+    if: ${{ needs.changes.outputs.integration_tests == 'true' }}
+    # Eligible jobs share a concurrency group per PR and architecture, so the matrix entries never
+    # cancel each other; distinct master commits have separate groups.
+    concurrency:
+      group: rust-ethereum-tests-${{ matrix.arch }}-${{ github.event.pull_request.number || github.sha }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -45,6 +142,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Use Rust cache
         uses: Swatinem/rust-cache@v2
@@ -96,3 +195,89 @@ jobs:
             ethtests/LegacyTests/Constantinople/VMTests/vmSha3Test \
             ethtests/LegacyTests/Constantinople/VMTests/vmSystemOperations \
             ethtests/LegacyTests/Constantinople/VMTests/vmTests
+
+  # The EEST differentials stay on a 64-bit host: the largest blockchain fixtures are over 100 MB of
+  # JSON (EIP-7934 `@bigmem` cases), parsed whole into memory.
+  block-body-differential:
+    needs: changes
+    if: ${{ needs.changes.outputs.block_body == 'true' }}
+    concurrency:
+      group: rust-block-body-differential-${{ github.event.pull_request.number || github.sha }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Both runs read only `blockchain_tests`; the whole archive unpacks to about 8.5 GB.
+      - name: Download Ethereum spec tests fixtures
+        run: |
+          curl --fail --location "$ETHEREUM_SPEC_TESTS_URL" -o ethereum-spec-tests.tar.gz
+          mkdir ethereum-spec-tests
+          tar -xzf ethereum-spec-tests.tar.gz -C ethereum-spec-tests fixtures/blockchain_tests
+
+      - name: Run EEST block body differential
+        run: |
+          EEST_PATH="$PWD/ethereum-spec-tests/fixtures" \
+            cargo test -r -p aurora-evm-block-execution \
+              eest_body_lengths_and_roots_match_every_positive_block -- --ignored --nocapture
+
+      # The filter includes complete state, witness, node withholding and header mutations.
+      - name: Run EEST blockchain execution and adversarial validation
+        run: |
+          EEST_PATH="$PWD/ethereum-spec-tests/fixtures" \
+            cargo test -r -p aurora-evm-block-execution \
+              eest_blockchain_tests -- --ignored --nocapture
+
+  # Require this aggregate check in branch protection. It accepts only intentional skips.
+  ci-result:
+    needs:
+      - changes
+      - unit-tests
+      - unit-tests-64-bit-only
+      - ethereum-tests
+      - block-body-differential
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: { }
+    steps:
+      - name: Verify required job results
+        shell: bash
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          UNIT_64_ONLY_RESULT: ${{ needs.unit-tests-64-bit-only.result }}
+          ETHEREUM_RESULT: ${{ needs.ethereum-tests.result }}
+          BLOCK_BODY_RESULT: ${{ needs.block-body-differential.result }}
+          INTEGRATION_REQUIRED: ${{ needs.changes.outputs.integration_tests }}
+          BLOCK_BODY_REQUIRED: ${{ needs.changes.outputs.block_body }}
+        run: |
+          failed=0
+          require_result() {
+            local job=$1 actual=$2 expected=$3
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$job: expected $expected, got ${actual:-missing}."
+              failed=1
+            fi
+          }
+          require_conditional_result() {
+            local job=$1 actual=$2 required=$3
+            case "$required" in
+              true) require_result "$job" "$actual" success ;;
+              false) require_result "$job" "$actual" skipped ;;
+              *)
+                echo "::error::$job: missing or invalid change detection output."
+                failed=1
+                ;;
+            esac
+          }
+
+          require_result changes "$CHANGES_RESULT" success
+          require_result unit-tests "$UNIT_RESULT" success
+          require_result unit-tests-64-bit-only "$UNIT_64_ONLY_RESULT" success
+          require_conditional_result ethereum-tests "$ETHEREUM_RESULT" "$INTEGRATION_REQUIRED"
+          require_conditional_result block-body-differential "$BLOCK_BODY_RESULT" "$BLOCK_BODY_REQUIRED"
+          exit "$failed"

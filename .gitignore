@@ -11,3 +11,4 @@ target
 tests.bin
 Cargo.lock
 ethtests/
+Makefile

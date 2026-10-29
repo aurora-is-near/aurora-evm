@@ -1,5 +1,5 @@
 use super::Control;
-use crate::core::utils::{U256_ZERO, U64_MAX, USIZE_MAX};
+use crate::core::utils::{U64_MAX, U256_ZERO, USIZE_MAX};
 use crate::prelude::*;
 use crate::{
     CallScheme, Capture, Context, CreateScheme, ExitError, ExitSucceed, Handler, Runtime, Transfer,
@@ -126,7 +126,7 @@ pub fn blob_hash<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     Control::Continue
 }
 
-/// NOTE: For EIP-7702 should return 2 (size of `0xEF01`)
+/// EIP-7702 returns 23 for a delegated account: the size of `0xef0100 || address`.
 pub fn extcodesize<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
     pop_h256!(runtime, address);
     push_u256!(runtime, handler.code_size(address.into()));
@@ -134,7 +134,7 @@ pub fn extcodesize<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
     Control::Continue
 }
 
-/// NOTE: For EIP-7702 should return  `keccak(0xEF01)`
+/// EIP-7702 hashes the complete 23-byte delegation indicator.
 pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
     pop_h256!(runtime, address);
     push_h256!(runtime, handler.code_hash(address.into()));
@@ -142,7 +142,7 @@ pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contro
     Control::Continue
 }
 
-/// NOTE: For EIP-7702 should not copy from designated address
+/// EIP-7702 copies the delegation indicator itself, not the target code.
 pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     pop_h256!(runtime, address);
     pop_u256!(runtime, memory_offset, code_offset, len);
@@ -155,10 +155,12 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H>
     // Cast to `usize` after length checking to avoid overflow
     let memory_offset = as_usize_or_fail!(memory_offset);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(memory_offset, len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(memory_offset, len)
+    );
     match runtime.machine.memory_mut().copy_data(
         memory_offset,
         code_offset,
@@ -198,10 +200,12 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     };
     let len = as_usize_or_fail!(len);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(memory_offset, len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(memory_offset, len)
+    );
     if data_offset
         .checked_add(len.into())
         .is_none_or(|l| l > U256::from(runtime.return_data_buffer.len()))
@@ -334,10 +338,12 @@ pub fn mcopy<H: Handler>(runtime: &mut Runtime, _handler: &mut H) -> Control<H> 
     let dst = as_usize_or_fail!(dst, ExitError::OutOfGas);
     let src = as_usize_or_fail!(src, ExitError::OutOfGas);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(max(src, dst), len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(max(src, dst), len)
+    );
 
     // copy memory
     match runtime.machine.memory_mut().copy(src, dst, len) {
@@ -501,14 +507,18 @@ pub fn call<H: Handler>(runtime: &mut Runtime, scheme: CallScheme, handler: &mut
     };
     let out_len = as_usize_or_fail!(out_len);
 
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(in_offset, in_len));
-    try_or_fail!(runtime
-        .machine
-        .memory_mut()
-        .resize_offset(out_offset, out_len));
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(in_offset, in_len)
+    );
+    try_or_fail!(
+        runtime
+            .machine
+            .memory_mut()
+            .resize_offset(out_offset, out_len)
+    );
 
     let input = if in_len == 0 {
         Vec::new()
