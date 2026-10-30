@@ -1462,6 +1462,7 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
                 .record_cost(u64::from(cost))?;
         } else {
             let is_static = self.state.metadata().is_static;
+            let mut prepared_memory_gas = None;
             let (gas_cost, memory_cost) = gasometer::dynamic_opcode_cost(
                 *address,
                 opcode,
@@ -1469,12 +1470,22 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
                 is_static,
                 self.config,
                 self,
+                |executor, gas, memory| {
+                    prepared_memory_gas = Some(
+                        executor
+                            .state
+                            .metadata_mut()
+                            .gasometer
+                            .check_gas(gas, memory)?,
+                    );
+                    Ok(())
+                },
             )?;
 
             self.state
                 .metadata_mut()
                 .gasometer
-                .record_dynamic_cost(gas_cost, memory_cost)?;
+                .record_dynamic_cost_prepared(gas_cost, memory_cost, prepared_memory_gas)?;
         }
         Ok(())
     }
