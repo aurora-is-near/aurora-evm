@@ -192,8 +192,8 @@ impl<'config> Gasometer<'config> {
             snapshot: self.snapshot(),
         });
 
-        let all_gas_cost = self.total_used_gas() + cost;
-        if self.gas_limit < all_gas_cost {
+        // Compare against the remainder so an excessive cost cannot overflow.
+        if self.gas() < cost {
             self.inner = Err(ExitError::OutOfGas);
             return Err(ExitError::OutOfGas);
         }
@@ -1626,5 +1626,29 @@ mod tests {
             Err(ExitError::OutOfGas)
         );
         assert_eq!(unlimited.gas(), 0);
+    }
+
+    #[test]
+    fn record_cost_checks_remaining_gas_without_overflow() {
+        let config = Config::prague();
+        let mut exact = Gasometer::new(u64::MAX, &config);
+        exact.record_cost(1).unwrap();
+        exact.record_cost(u64::MAX - 1).unwrap();
+        assert_eq!(exact.gas(), 0);
+        assert_eq!(exact.record_cost(0), Ok(()));
+
+        let mut excessive = Gasometer::new(u64::MAX, &config);
+        excessive.record_cost(1).unwrap();
+        assert_eq!(excessive.record_cost(u64::MAX), Err(ExitError::OutOfGas));
+        assert_eq!(excessive.gas(), 0);
+        assert_eq!(excessive.record_cost(0), Err(ExitError::OutOfGas));
+        assert_eq!(excessive.record_cost(1), Err(ExitError::OutOfGas));
+
+        let mut memory = Gasometer::new(u64::MAX, &config);
+        memory
+            .record_dynamic_cost(GasCost::Zero, Some(MemoryCost { offset: 0, len: 32 }))
+            .unwrap();
+        assert_eq!(memory.record_cost(u64::MAX - 2), Err(ExitError::OutOfGas));
+        assert_eq!(memory.gas(), 0);
     }
 }

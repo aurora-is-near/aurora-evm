@@ -31,6 +31,8 @@ const PUSH_GAS: u64 = 3;
 /// The seven pushes of the `CALL` opcode's operands.
 const CALL_PUSH_GAS: u64 = 7 * PUSH_GAS;
 const CALL_STIPEND: u64 = 2300;
+/// The gas the target records for its own execution when it acts as a precompile.
+const TARGET_PRECOMPILE_GAS: u64 = 7;
 
 /// A `MemoryBackend` counting the reads of every account.
 struct ReadProbe<'a> {
@@ -149,10 +151,33 @@ const fn subcall(value: u64, input_len: usize) -> Subcall {
 }
 
 /// A precompile set with one precompile, at `SUBCALLER`, making a subcall.
-struct Subcaller(Subcall);
+struct Subcaller {
+    call: Subcall,
+    fail_after_call: bool,
+    target_is_precompile: bool,
+}
+
+impl Subcaller {
+    const fn new(call: Subcall) -> Self {
+        Self {
+            call,
+            fail_after_call: false,
+            target_is_precompile: false,
+        }
+    }
+}
 
 impl PrecompileSet for Subcaller {
     fn execute(&self, handle: &mut impl PrecompileHandle) -> Option<PrecompileResult> {
+        if self.target_is_precompile && handle.code_address() == TARGET {
+            if let Err(exit_status) = handle.record_cost(TARGET_PRECOMPILE_GAS) {
+                return Some(Err(PrecompileFailure::Error { exit_status }));
+            }
+            return Some(Ok(PrecompileOutput {
+                exit_status: ExitSucceed::Stopped,
+                output: Vec::new(),
+            }));
+        }
         if handle.code_address() != SUBCALLER {
             return None;
         }
@@ -162,7 +187,7 @@ impl PrecompileSet for Subcaller {
             gas,
             is_static,
             twice,
-        } = self.0;
+        } = self.call;
         let value = U256::from(value);
         let context = Context {
             address: TARGET,
@@ -186,6 +211,11 @@ impl PrecompileSet for Subcaller {
                 &context,
             );
         }
+        if self.fail_after_call {
+            return Some(Err(PrecompileFailure::Error {
+                exit_status: ExitError::OutOfGas,
+            }));
+        }
         Some(match handle.record_cost(0) {
             Ok(()) => Ok(PrecompileOutput {
                 exit_status: ExitSucceed::Stopped,
@@ -196,7 +226,7 @@ impl PrecompileSet for Subcaller {
     }
 
     fn is_precompile(&self, address: H160) -> bool {
-        address == SUBCALLER
+        address == SUBCALLER || (self.target_is_precompile && address == TARGET)
     }
 }
 
@@ -391,6 +421,22 @@ fn run_opcode(case: &Case, gas_left: u64) -> Outcome {
 /// Runs `case` as a transaction to `to`, with `prober_code` deployed at `PROBER` and `frame_gas`
 /// left after the intrinsic gas.
 fn execute(case: &Case, to: H160, prober_code: Vec<u8>, frame_gas: u64) -> Outcome {
+    execute_with_precompiles(
+        case,
+        to,
+        prober_code,
+        frame_gas,
+        &Subcaller::new(case.subcall),
+    )
+}
+
+fn execute_with_precompiles(
+    case: &Case,
+    to: H160,
+    prober_code: Vec<u8>,
+    frame_gas: u64,
+    precompiles: &Subcaller,
+) -> Outcome {
     let vicinity = MemoryVicinity {
         gas_price: U256::one(),
         effective_gas_price: U256::one(),
@@ -430,8 +476,7 @@ fn execute(case: &Case, to: H160, prober_code: Vec<u8>, frame_gas: u64) -> Outco
         * u64::try_from(case.access_list.len()).expect("a short access list");
     let limit = INTRINSIC_GAS + access_list_gas + frame_gas;
     let state = MemoryStackState::new(StackSubstateMetadata::new(limit, &case.config), &backend);
-    let precompiles = Subcaller(case.subcall);
-    let mut executor = StackExecutor::new_with_precompiles(state, &case.config, &precompiles);
+    let mut executor = StackExecutor::new_with_precompiles(state, &case.config, precompiles);
     let (reason, _) = executor.transact_call(
         CALLER,
         to,
@@ -662,4 +707,70 @@ fn static_frame_transfers_no_value() {
         outcome.used,
         INTRINSIC_GAS + 6 * PUSH_GAS + 100 + (offered - offered / 64)
     );
+}
+
+#[test]
+fn failed_precompile_discards_subcall_transfer_and_warmth() {
+    let case = Case::new("failed precompile", subcall(1, 0), 11_600);
+    let outcome = execute_with_precompiles(
+        &case,
+        SUBCALLER,
+        Vec::new(),
+        60_000,
+        &Subcaller {
+            fail_after_call: true,
+            ..Subcaller::new(case.subcall)
+        },
+    );
+    assert_eq!(outcome.reason, ExitReason::Error(ExitError::OutOfGas));
+    assert_eq!(outcome.used, outcome.limit);
+    assert!(outcome.target_reads > 0);
+    assert!(outcome.target_is_cold);
+    assert_eq!(outcome.target_balance, U256::zero());
+}
+
+#[test]
+fn subcall_to_another_precompile_pays_warm_access() {
+    let case = Case::new("another precompile", subcall(0, 0), 100);
+    let outcome = execute_with_precompiles(
+        &case,
+        SUBCALLER,
+        Vec::new(),
+        60_000,
+        &Subcaller {
+            target_is_precompile: true,
+            ..Subcaller::new(case.subcall)
+        },
+    );
+    assert!(outcome.reason.is_succeed(), "{:?}", outcome.reason);
+    assert_eq!(outcome.used, INTRINSIC_GAS + 100 + TARGET_PRECOMPILE_GAS);
+}
+
+#[test]
+fn frontier_subcall_forwards_available_gas_and_checks_explicit_limits() {
+    let mut case = Case::new("Frontier", subcall(0, 0), 40).target_code(Some(vec![
+        Opcode::PUSH1.as_u8(),
+        0,
+        Opcode::STOP.as_u8(),
+    ]));
+    case.config = Config::frontier();
+    // With no explicit limit, the callee receives the three gas left after the CALL cost.
+    let available = run(&case, 43);
+    assert!(available.reason.is_succeed(), "{:?}", available.reason);
+    assert_eq!(available.used, INTRINSIC_GAS + 43);
+
+    case.subcall.gas = Some(100);
+    let exact = run(&case, 140);
+    let opcode = run_opcode(&case, 140);
+    assert!(exact.reason.is_succeed());
+    assert_eq!(exact.used, INTRINSIC_GAS + 43);
+    assert_eq!(exact.used, opcode.used - CALL_PUSH_GAS);
+
+    case.subcall.gas = Some(101);
+    let excessive = run(&case, 140);
+    let opcode = run_opcode(&case, 140);
+    assert_eq!(excessive.reason, ExitReason::Error(ExitError::OutOfGas));
+    assert_eq!(excessive.used, excessive.limit);
+    assert_eq!(excessive.reason, opcode.reason);
+    assert_eq!(excessive.used, opcode.used - CALL_PUSH_GAS);
 }

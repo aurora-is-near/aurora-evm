@@ -1905,7 +1905,9 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
             gasometer::get_and_set_warm(self.executor, code_address, target_is_cold);
         let gas_cost = gasometer::GasCost::Call {
             value,
-            gas: U256::from(gas_limit.unwrap_or(u64::MAX)),
+            // `None` forwards the available gas in `call_inner`; it is not an explicit
+            // request for `u64::MAX`, which would fail the pre-EIP-150 affordability check.
+            gas: gas_limit.map_or(U256_ZERO, U256::from),
             target_is_cold,
             delegated_designator_is_cold,
             target_exists: self.executor.exists(code_address),

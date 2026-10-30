@@ -31,13 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Precompile subcalls with no explicit gas limit now forward the available gas on Frontier
+  and other pre-EIP-150 configurations instead of failing as if `u64::MAX` were requested.
+  Explicit limits still undergo the fork's existing affordability check.
+- `Gasometer::record_cost` compares the charge with the remaining gas rather than adding it
+  to gas already used. Excessive charges return `OutOfGas` and fail the gasometer instead of
+  overflowing in debug builds or wrapping in release builds, including after a prior failure.
 - A precompile's subcall (`PrecompileHandle::call`) is priced as the `CALL` opcode it stands
-  in for: the gas known before the state access is checked before the target is read, and the
-  target and its EIP-7702 delegate are warm afterwards, so a later access to them in the same
-  transaction, by an opcode or by another subcall, costs the warm price. Before, the target
-  was read before the cost was recorded and stayed cold, so every later access paid the cold
-  price again and a target delegating to itself paid two cold accesses. A subcall with value
-  from a static frame now fails as a `CALL` with value does, instead of transferring.
+  in for, input-memory expansion included: the gas known before the state access is checked
+  before the target is read, and the target and its EIP-7702 delegate become warm in the
+  calling frame. Later accesses pay the warm price unless that frame or an enclosing frame
+  reverts; a callee revert alone preserves this warmth. Before, the target was read before the
+  cost was recorded and stayed cold, so every later access paid the cold price again and a
+  target delegating to itself paid two cold accesses. A subcall with value from a static frame
+  now fails as a `CALL` with value does, instead of transferring.
 - Reject unaffordable CALL-family, SELFDESTRUCT and EIP-2200 SSTORE operations before
   state access, allowing execution witnesses to omit data those operations never need.
   The check covers the cost known before the access (Yellow Paper `C_EXTRA` without
