@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A precompile's subcall (`PrecompileHandle::call`) is priced as the `CALL` opcode it stands
+  in for: the gas known before the state access is checked before the target is read, and the
+  target and its EIP-7702 delegate are warm afterwards, so a later access to them in the same
+  transaction, by an opcode or by another subcall, costs the warm price. Before, the target
+  was read before the cost was recorded and stayed cold, so every later access paid the cold
+  price again and a target delegating to itself paid two cold accesses. A subcall with value
+  from a static frame now fails as a `CALL` with value does, instead of transferring.
 - Reject unaffordable CALL-family, SELFDESTRUCT and EIP-2200 SSTORE operations before
   state access, allowing execution witnesses to omit data those operations never need.
   The check covers the cost known before the access (Yellow Paper `C_EXTRA` without

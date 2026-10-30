@@ -769,7 +769,7 @@ pub fn static_opcode_cost(opcode: Opcode) -> Option<u32> {
 
 /// Warm the target, cold until now when `target_is_cold`, and its EIP-7702 delegate; returns
 /// whether the delegate was cold, for a delegating target.
-fn get_and_set_warm<H: Handler>(
+pub(crate) fn get_and_set_warm<H: Handler>(
     handler: &mut H,
     target: H160,
     target_is_cold: bool,
@@ -801,7 +801,7 @@ fn get_and_set_non_delegated_warm<H: Handler>(handler: &mut H, target: H160) -> 
 
 /// The gas a `CALL`-family opcode owes before its first state access: the target's access cost
 /// and the value transfer (Yellow Paper `C_EXTRA` without `C_NEW`).
-fn call_access_gas(target_is_cold: bool, transfers_value: bool, config: &Config) -> u64 {
+pub(crate) fn call_access_gas(target_is_cold: bool, transfers_value: bool, config: &Config) -> u64 {
     let mut gas = costs::address_access_cost(target_is_cold, None, config.gas_call, config);
     if transfers_value {
         gas += u64::from(consts::G_CALLVALUE);

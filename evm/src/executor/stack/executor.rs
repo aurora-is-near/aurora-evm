@@ -1859,8 +1859,14 @@ struct StackExecutorHandle<'inner, 'config, 'precompiles, S, P> {
 impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
     for StackExecutorHandle<'_, 'config, '_, S, P>
 {
-    // Perform subcall in provided context.
-    /// Precompile specifies in which context the subcall is executed.
+    /// Performs the subcall in the context the precompile provides.
+    ///
+    /// The subcall is priced as the `CALL` opcode it stands in for (Yellow Paper Appendix H.2,
+    /// `C_CALL`), which no opcode records for it. As in `dynamic_opcode_cost`, the gas known
+    /// before the state access is checked first, then the target and its EIP-7702 delegate are
+    /// warmed and the full cost is recorded: a target the frame cannot afford is never read, and
+    /// a later access to the target is priced warm. A static frame transfers no value, as with
+    /// the opcode.
     fn call(
         &mut self,
         code_address: H160,
@@ -1870,36 +1876,46 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
         is_static: bool,
         context: &Context,
     ) -> (ExitReason, Vec<u8>) {
-        // For normal calls the cost is recorded at opcode level.
-        // Since we don't go through opcodes we need manually record the call
-        // cost. Not doing so will make the code panic as recording the call stipend
-        // will do an underflow.
+        let value = transfer
+            .as_ref()
+            .map_or(U256_ZERO, |transfer| transfer.value);
+        if self.is_static && !value.is_zero() {
+            // The subcall fails as the `CALL` opcode does in a static context (execution specs:
+            // `WriteInStaticContext`), and the frame's gas is consumed.
+            self.executor.state.metadata_mut().gasometer.fail();
+            return (
+                ExitReason::Error(ExitError::InvalidCode(Opcode::CALL)),
+                Vec::new(),
+            );
+        }
+        // The input is priced as the memory a `CALL` reads it from, at offset zero.
+        let memory_cost = Some(gasometer::MemoryCost {
+            offset: 0,
+            len: input.len(),
+        });
         let target_is_cold = self.executor.is_cold(code_address, None);
-        let delegated_designator_is_cold = self
-            .executor
-            .get_authority_target(code_address)
-            .map(|target| self.executor.is_cold(target, None));
-
+        let prepared_memory_gas = match self.executor.state.metadata_mut().gasometer.check_gas(
+            gasometer::call_access_gas(target_is_cold, !value.is_zero(), self.executor.config),
+            memory_cost,
+        ) {
+            Ok(memory_gas) => memory_gas,
+            Err(error) => return (ExitReason::Error(error), Vec::new()),
+        };
+        let delegated_designator_is_cold =
+            gasometer::get_and_set_warm(self.executor, code_address, target_is_cold);
         let gas_cost = gasometer::GasCost::Call {
-            value: transfer.clone().map_or(U256_ZERO, |x| x.value),
+            value,
             gas: U256::from(gas_limit.unwrap_or(u64::MAX)),
             target_is_cold,
             delegated_designator_is_cold,
             target_exists: self.executor.exists(code_address),
         };
-
-        // We record the length of the input.
-        let memory_cost = Some(gasometer::MemoryCost {
-            offset: 0,
-            len: input.len(),
-        });
-
         if let Err(error) = self
             .executor
             .state
             .metadata_mut()
             .gasometer
-            .record_dynamic_cost(gas_cost, memory_cost)
+            .record_dynamic_cost_prepared(gas_cost, memory_cost, Some(prepared_memory_gas))
         {
             return (ExitReason::Error(error), Vec::new());
         }
