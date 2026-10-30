@@ -155,6 +155,16 @@ impl Probe {
             .extend_from_slice(&[opcode.as_u8(), Opcode::STOP.as_u8()]);
         self
     }
+
+    /// The same pushes followed by `STOP` alone: the transaction without the probed opcode.
+    fn without_opcode(&self) -> Self {
+        let mut code = self.code[..self.code.len() - 2].to_vec();
+        code.push(Opcode::STOP.as_u8());
+        Self {
+            code,
+            push_gas: self.push_gas,
+        }
+    }
 }
 
 /// A CALL-family opcode on `TARGET` forwarding no gas, with a `value` for `CALL` and
@@ -320,9 +330,16 @@ struct Outcome {
     /// Backend reads of the target account and of storage.
     reads: usize,
     delegate_reads: usize,
+    /// Backend reads of every account and of storage.
+    total_reads: usize,
 }
 
 fn run(case: &Case, gas_left: u64) -> Outcome {
+    run_code(case, &case.probe, gas_left)
+}
+
+/// Runs `case` with `probe` as the prober's code.
+fn run_code(case: &Case, probe: &Probe, gas_left: u64) -> Outcome {
     let vicinity = MemoryVicinity {
         gas_price: U256::one(),
         effective_gas_price: U256::one(),
@@ -350,7 +367,7 @@ fn run(case: &Case, gas_left: u64) -> Outcome {
             &vicinity,
             BTreeMap::from([
                 (CALLER, account(1_000_000, Vec::new())),
-                (PROBER, account(1, case.probe.code.clone())),
+                (PROBER, account(1, probe.code.clone())),
                 (TARGET, account(0, case.target_code.clone())),
                 (DELEGATE, account(0, vec![Opcode::STOP.as_u8()])),
             ]),
@@ -372,12 +389,14 @@ fn run(case: &Case, gas_left: u64) -> Outcome {
         case.access_list.clone(),
         Vec::new(),
     );
+    let total_reads = backend.account_reads.borrow().values().sum();
     Outcome {
         reason,
         limit,
         used: executor.used_gas(),
         reads: backend.reads_of(TARGET) + backend.storage_reads.get(),
         delegate_reads: backend.reads_of(DELEGATE),
+        total_reads,
     }
 }
 
@@ -396,6 +415,20 @@ fn unaffordable_state_access_halts_before_any_backend_read() {
             (short.reads, short.delegate_reads),
             (0, 0),
             "{}: state read before the check",
+            case.name
+        );
+        // The transaction without the opcode reads what its setup reads: the opcode added
+        // no read of any account, its own included.
+        let setup = run_code(&case, &case.probe.without_opcode(), case.gate - 1);
+        assert!(
+            setup.reason.is_succeed(),
+            "{}: {:?}",
+            case.name,
+            setup.reason
+        );
+        assert_eq!(
+            short.total_reads, setup.total_reads,
+            "{}: an account read before the check",
             case.name
         );
 
