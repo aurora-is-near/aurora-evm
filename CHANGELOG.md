@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- In estimate mode (`Config::estimate`), a `CALL`-family or `CREATE`-family operation offers
+  the callee 63/64 of the remaining gas after charging the caller's retained sixty-fourth, as
+  in execution mode. Before, the cap was the remaining gas before that charge, so with 64 gas
+  or more remaining, a `CALL` requesting more than 63/64 of it, and every `CREATE` or precompile
+  subcall with no explicit gas limit, which forward all of it, failed with `OutOfGas`.
+
 ## [3.2.0] - 2026-10-28
 
 This release lets backends provide account code hashes and code presence without loading
