@@ -220,6 +220,27 @@ fn estimate_mode_caps_a_call_request_as_execution_mode_does() {
 }
 
 #[test]
+fn estimate_mode_rounds_the_retained_gas_at_sixty_four() {
+    let base_cost = INTRINSIC_GAS + CALL_PUSH_GAS + COLD_CALL_GAS;
+    for (remaining, retained) in [(63, 0), (64, 1), (65, 1)] {
+        for estimate in [false, true] {
+            let (reason, used) = execute(
+                estimate,
+                call_code(0xFFFF),
+                vec![Opcode::STOP.as_u8()],
+                base_cost + remaining,
+            );
+            assert!(
+                reason.is_succeed(),
+                "remaining={remaining}, estimate={estimate}: {reason:?}"
+            );
+            let expected = base_cost + if estimate { retained } else { 0 };
+            assert_eq!(used, expected, "remaining={remaining}, estimate={estimate}");
+        }
+    }
+}
+
+#[test]
 fn estimate_mode_lets_create_forward_the_available_gas() {
     let gas_limit = INTRINSIC_GAS + CREATE_PUSH_GAS + CREATE_GAS + REMAINING_GAS;
     let (reason, execution_used) = execute(false, create_code(), Vec::new(), gas_limit);
