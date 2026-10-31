@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- CALL-family opcodes read their memory operands before the target is warmed or inspected,
+  so operand errors precede those `Handler` calls. For a cold target delegating to itself
+  (EIP-7702), the `GasCost` of a CALL-family opcode reports the target cold and the delegate
+  warm; the total charge is unchanged.
+- An opcode rejected before its state access (see below) records no gas and consumes all
+  remaining gas. With the `tracing` feature, the gasometer emits one `RecordDynamicCost`
+  event for it, carrying the gas it checked (the cost known before the access) and the
+  memory gas, where the full cost was reported before; the snapshot still carries the gas
+  the step had.
+- A `CALL` with value in a static context, and a `DELEGATECALL` on a configuration without
+  it, fail with `InvalidCode` even when their memory operands are missing or do not fit
+  memory, where `StackUnderflow` or `OutOfGas` was reported before; all gas is consumed
+  either way.
+
+### Removed
+
+- The public `gasometer::dynamic_opcode_cost`. Pricing a dynamic opcode now includes the
+  check before its state access, which needs the executor's gasometer, so the function is
+  crate-private and called from `StackExecutor::before_bytecode`.
+
+### Fixed
+
+- Precompile subcalls with no explicit gas limit now forward the available gas on Frontier
+  and other pre-EIP-150 configurations instead of failing as if `u64::MAX` were requested.
+  Explicit limits still undergo the fork's existing affordability check.
+- `Gasometer::record_cost` compares the charge with the remaining gas rather than adding it
+  to gas already used. Excessive charges return `OutOfGas` and fail the gasometer instead of
+  overflowing in debug builds or wrapping in release builds, including after a prior failure.
+- A precompile's subcall (`PrecompileHandle::call`) is priced as the `CALL` opcode it stands
+  in for, input-memory expansion included: the gas known before the state access is checked
+  before the target is read, and the target and its EIP-7702 delegate become warm in the
+  calling frame. Later accesses pay the warm price unless that frame or an enclosing frame
+  reverts; a callee revert alone preserves this warmth. Before, the target was read before the
+  cost was recorded and stayed cold, so every later access paid the cold price again and a
+  target delegating to itself paid two cold accesses. A subcall with value from a static frame
+  now fails as a `CALL` with value does, instead of transferring.
+- Reject unaffordable CALL-family, SELFDESTRUCT and EIP-2200 SSTORE operations before
+  state access, allowing execution witnesses to omit data those operations never need.
+  The check covers the cost known before the access (Yellow Paper `C_EXTRA` without
+  `C_NEW`, the cold beneficiary access, the EIP-2200 stipend rule); execution outcomes and
+  gas are unchanged, and the public `Handler` trait is unchanged.
+
 ## [3.2.0] - 2026-10-28
 
 This release lets backends provide account code hashes and code presence without loading

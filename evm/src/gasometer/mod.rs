@@ -192,8 +192,8 @@ impl<'config> Gasometer<'config> {
             snapshot: self.snapshot(),
         });
 
-        let all_gas_cost = self.total_used_gas() + cost;
-        if self.gas_limit < all_gas_cost {
+        // Compare against the remainder so an excessive cost cannot overflow.
+        if self.gas() < cost {
             self.inner = Err(ExitError::OutOfGas);
             return Err(ExitError::OutOfGas);
         }
@@ -245,6 +245,65 @@ impl<'config> Gasometer<'config> {
         self.record_cost(cost)
     }
 
+    /// Fails with `OutOfGas` unless the remaining gas covers `gas` plus the expansion to
+    /// `memory_cost`. No gas is charged here: the caller records the full cost afterwards.
+    /// A newly detected failure leaves the gasometer failed.
+    ///
+    /// With `tracing`, insufficient remaining gas emits one `RecordDynamicCost` event only
+    /// after the memory cost and required gas have been calculated successfully. The event
+    /// reports the checked non-memory gas and cumulative memory gas, not necessarily the full
+    /// opcode cost. Memory-calculation errors, required-gas overflow, and an already failed
+    /// gasometer return without emitting this event. This does not guarantee the same event
+    /// stream or step cost as pricing the full opcode before checking affordability.
+    ///
+    /// An opcode checks the part of its cost that needs no state before its first state access,
+    /// so an opcode that cannot pay it never touches the state it targets: the order the
+    /// execution specs (Amsterdam hardfork `check_gas`) and EIP-7928 fix for every access a block access
+    /// list, or an execution witness, has to carry. Normal gas accounting still applies the
+    /// full opcode cost and the EIP-2200 stipend rule afterwards.
+    /// See also Yellow Paper Appendix H.2, CALL and SELFDESTRUCT gas costs.
+    ///
+    /// Returns the calculated total memory gas for the subsequent full charge.
+    /// See <https://ethereum.github.io/execution-specs/src/ethereum/forks/amsterdam/vm/gas.py.html>.
+    ///
+    /// # Errors
+    /// Return the error of an already failed gasometer, or `ExitError::OutOfGas` when the gas is
+    /// not affordable; the gasometer is then failed.
+    pub(crate) fn check_gas(
+        &mut self,
+        gas: u64,
+        memory_cost: Option<MemoryCost>,
+    ) -> Result<u64, ExitError> {
+        let inner = match &self.inner {
+            Ok(inner) => inner,
+            Err(err) => return Err(err.clone()),
+        };
+        let memory_gas = match memory_cost {
+            Some(memory_cost) => try_or_fail!(self.inner, inner.memory_gas(memory_cost)),
+            None => inner.memory_gas,
+        };
+        // Memory gas never shrinks, so this is exactly the expansion the opcode would pay.
+        let required = try_or_fail!(
+            self.inner,
+            (memory_gas - inner.memory_gas)
+                .checked_add(gas)
+                .ok_or(ExitError::OutOfGas)
+        );
+        if self.gas() < required {
+            // The step's only gas event: the cost known before the state access, reported
+            // the way `record_cost` and `record_dynamic_cost` report the cost they fail on.
+            event!(RecordDynamicCost {
+                gas_cost: gas,
+                memory_gas,
+                gas_refund: 0,
+                snapshot: self.snapshot(),
+            });
+            self.inner = Err(ExitError::OutOfGas);
+            return Err(ExitError::OutOfGas);
+        }
+        Ok(memory_gas)
+    }
+
     /// Record opcode gas cost.
     ///
     /// # Errors
@@ -254,6 +313,16 @@ impl<'config> Gasometer<'config> {
         cost: GasCost,
         memory: Option<MemoryCost>,
     ) -> Result<(), ExitError> {
+        self.record_dynamic_cost_prepared(cost, memory, None)
+    }
+
+    /// Records the full cost, reusing memory gas calculated by the state-access check.
+    pub(crate) fn record_dynamic_cost_prepared(
+        &mut self,
+        cost: GasCost,
+        memory: Option<MemoryCost>,
+        prepared_memory_gas: Option<u64>,
+    ) -> Result<(), ExitError> {
         let gas = self.gas();
         // Extract a mutable reference to `Inner` to avoid checking `Result`
         // repeatedly. Tuning performance as this function is on the hot path.
@@ -262,9 +331,20 @@ impl<'config> Gasometer<'config> {
             Err(err) => return Err(err.clone()),
         };
 
-        let memory_gas = match memory {
-            Some(memory) => try_or_fail!(self.inner, inner_mut.memory_gas(memory)),
-            None => inner_mut.memory_gas,
+        let memory_gas = match prepared_memory_gas {
+            Some(prepared_gas) => {
+                debug_assert_eq!(
+                    memory.map_or(Ok(inner_mut.memory_gas), |memory| inner_mut
+                        .memory_gas(memory)),
+                    Ok(prepared_gas),
+                    "the prepared memory gas must be the gas of the recorded memory"
+                );
+                prepared_gas
+            }
+            None => match memory {
+                Some(memory) => try_or_fail!(self.inner, inner_mut.memory_gas(memory)),
+                None => inner_mut.memory_gas,
+            },
         };
         let gas_cost = try_or_fail!(self.inner, inner_mut.gas_cost(cost, gas));
         let gas_refund = inner_mut.gas_refund(cost);
@@ -692,24 +772,26 @@ pub fn static_opcode_cost(opcode: Opcode) -> Option<u32> {
     TABLE[opcode.as_usize()]
 }
 
-/// Get and set warm address if it's not warmed.
-fn get_and_set_warm<H: Handler>(handler: &mut H, target: H160) -> (bool, Option<bool>) {
-    let delegated_designator_is_cold =
-        handler
-            .get_authority_target(target)
-            .map(|authority_target| {
-                if handler.is_cold(authority_target, None) {
-                    handler.warm_target((authority_target, None));
-                    true
-                } else {
-                    false
-                }
-            });
-    let target_is_cold = handler.is_cold(target, None);
+/// Warm the target, cold until now when `target_is_cold`, and its EIP-7702 delegate; returns
+/// whether the delegate was cold, for a delegating target.
+pub(crate) fn get_and_set_warm<H: Handler>(
+    handler: &mut H,
+    target: H160,
+    target_is_cold: bool,
+) -> Option<bool> {
     if target_is_cold {
         handler.warm_target((target, None));
     }
-    (target_is_cold, delegated_designator_is_cold)
+    handler
+        .get_authority_target(target)
+        .map(|authority_target| {
+            if handler.is_cold(authority_target, None) {
+                handler.warm_target((authority_target, None));
+                true
+            } else {
+                false
+            }
+        })
 }
 
 /// Get and set warm address if it's not warmed for non-delegated opcodes like `EXT*`.
@@ -722,24 +804,42 @@ fn get_and_set_non_delegated_warm<H: Handler>(handler: &mut H, target: H160) -> 
     target_is_cold
 }
 
-/// Calculate the opcode cost.
-///
-/// # Errors
-/// Return `ExitError`
+/// The gas a `CALL`-family opcode owes before its first state access: the target's access cost
+/// and the value transfer (Yellow Paper `C_EXTRA` without `C_NEW`).
+pub(crate) fn call_access_gas(target_is_cold: bool, transfers_value: bool, config: &Config) -> u64 {
+    let mut gas = costs::address_access_cost(target_is_cold, None, config.gas_call, config);
+    if transfers_value {
+        gas += u64::from(consts::G_CALLVALUE);
+    }
+    gas
+}
+
+/// The gas `SELFDESTRUCT` owes before its first state access: its base cost and the
+/// beneficiary's cold access.
+const fn selfdestruct_access_gas(target_is_cold: bool, config: &Config) -> u64 {
+    if config.increase_state_access_gas && target_is_cold {
+        config.gas_suicide + config.gas_account_access_cold
+    } else {
+        config.gas_suicide
+    }
+}
+
+/// Prices an opcode with an internal check before state access (EELS Amsterdam).
 #[allow(
-    clippy::nonminimal_bool,
-    clippy::cognitive_complexity,
     clippy::too_many_lines,
+    clippy::nonminimal_bool,
     clippy::match_same_arms
 )]
-pub fn dynamic_opcode_cost<H: Handler>(
+pub(crate) fn dynamic_opcode_cost<H: Handler>(
     address: H160,
     opcode: Opcode,
     stack: &Stack,
     is_static: bool,
     config: &Config,
     handler: &mut H,
+    mut check_gas: impl FnMut(&mut H, u64, Option<MemoryCost>) -> Result<(), ExitError>,
 ) -> Result<(GasCost, Option<MemoryCost>), ExitError> {
+    let mut call_memory = None;
     let gas_cost = match opcode {
         Opcode::RETURN => GasCost::Zero,
 
@@ -804,9 +904,17 @@ pub fn dynamic_opcode_cost<H: Handler>(
 
         Opcode::CALLCODE => {
             let target = stack.peek_h256(1)?.into();
-            let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
+            let value = stack.peek(2)?;
+            call_memory = Some(peek_memory_cost(stack, 3, 4)?.join(peek_memory_cost(stack, 5, 6)?));
+            let target_is_cold = handler.is_cold(target, None);
+            check_gas(
+                handler,
+                call_access_gas(target_is_cold, !value.is_zero(), config),
+                call_memory,
+            )?;
+            let delegated_designator_is_cold = get_and_set_warm(handler, target, target_is_cold);
             GasCost::CallCode {
-                value: stack.peek(2)?,
+                value,
                 gas: stack.peek(0)?,
                 target_is_cold,
                 delegated_designator_is_cold,
@@ -818,7 +926,14 @@ pub fn dynamic_opcode_cost<H: Handler>(
         }
         Opcode::STATICCALL => {
             let target = stack.peek_h256(1)?.into();
-            let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
+            call_memory = Some(peek_memory_cost(stack, 2, 3)?.join(peek_memory_cost(stack, 4, 5)?));
+            let target_is_cold = handler.is_cold(target, None);
+            check_gas(
+                handler,
+                call_access_gas(target_is_cold, false, config),
+                call_memory,
+            )?;
+            let delegated_designator_is_cold = get_and_set_warm(handler, target, target_is_cold);
             GasCost::StaticCall {
                 gas: stack.peek(0)?,
                 target_is_cold,
@@ -857,7 +972,14 @@ pub fn dynamic_opcode_cost<H: Handler>(
 
         Opcode::DELEGATECALL if config.has_delegate_call => {
             let target = stack.peek_h256(1)?.into();
-            let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
+            call_memory = Some(peek_memory_cost(stack, 2, 3)?.join(peek_memory_cost(stack, 4, 5)?));
+            let target_is_cold = handler.is_cold(target, None);
+            check_gas(
+                handler,
+                call_access_gas(target_is_cold, false, config),
+                call_memory,
+            )?;
+            let delegated_designator_is_cold = get_and_set_warm(handler, target, target_is_cold);
             GasCost::DelegateCall {
                 gas: stack.peek(0)?,
                 target_is_cold,
@@ -879,6 +1001,12 @@ pub fn dynamic_opcode_cost<H: Handler>(
         Opcode::SSTORE if !is_static => {
             let index = stack.peek_h256(0)?;
             let value = stack.peek_h256(1)?;
+            // EIP-2200: the store needs strictly more than the call stipend, checked before its
+            // slot is read.
+            if !config.estimate && config.sstore_gas_metering && config.sstore_revert_under_stipend
+            {
+                check_gas(handler, config.call_stipend + 1, None)?;
+            }
             let target_is_cold = handler.is_cold(address, Some(index));
             if target_is_cold {
                 handler.warm_target((address, Some(index)));
@@ -917,6 +1045,11 @@ pub fn dynamic_opcode_cost<H: Handler>(
         Opcode::SELFDESTRUCT if !is_static => {
             let target = stack.peek_h256(0)?.into();
             let target_is_cold = handler.is_cold(target, None);
+            check_gas(
+                handler,
+                selfdestruct_access_gas(target_is_cold, config),
+                None,
+            )?;
             if target_is_cold {
                 handler.warm_target((target, None));
             }
@@ -932,9 +1065,17 @@ pub fn dynamic_opcode_cost<H: Handler>(
         }
         Opcode::CALL if !is_static || (is_static && stack.peek(2)? == U256_ZERO) => {
             let target = stack.peek_h256(1)?.into();
-            let (target_is_cold, delegated_designator_is_cold) = get_and_set_warm(handler, target);
+            let value = stack.peek(2)?;
+            call_memory = Some(peek_memory_cost(stack, 3, 4)?.join(peek_memory_cost(stack, 5, 6)?));
+            let target_is_cold = handler.is_cold(target, None);
+            check_gas(
+                handler,
+                call_access_gas(target_is_cold, !value.is_zero(), config),
+                call_memory,
+            )?;
+            let delegated_designator_is_cold = get_and_set_warm(handler, target, target_is_cold);
             GasCost::Call {
-                value: stack.peek(2)?,
+                value,
                 gas: stack.peek(0)?,
                 target_is_cold,
                 delegated_designator_is_cold,
@@ -951,6 +1092,9 @@ pub fn dynamic_opcode_cost<H: Handler>(
     };
 
     let memory_cost = match opcode {
+        // The CALL family reads its memory operands in its pricing arm, before the check.
+        Opcode::CALL | Opcode::CALLCODE | Opcode::DELEGATECALL | Opcode::STATICCALL => call_memory,
+
         Opcode::SHA3
         | Opcode::RETURN
         | Opcode::REVERT
@@ -993,14 +1137,6 @@ pub fn dynamic_opcode_cost<H: Handler>(
         }),
 
         Opcode::CREATE | Opcode::CREATE2 => Some(peek_memory_cost(stack, 1, 2)?),
-
-        Opcode::CALL | Opcode::CALLCODE => {
-            Some(peek_memory_cost(stack, 3, 4)?.join(peek_memory_cost(stack, 5, 6)?))
-        }
-
-        Opcode::DELEGATECALL | Opcode::STATICCALL => {
-            Some(peek_memory_cost(stack, 2, 3)?.join(peek_memory_cost(stack, 4, 5)?))
-        }
 
         _ => None,
     };
@@ -1473,5 +1609,51 @@ mod tests {
         let (_, floor) = Gasometer::intrinsic_gas_and_gas_floor(cost, &Config::prague());
 
         assert_eq!(floor, (1u64 << 32) * 10 + 21000);
+    }
+
+    #[test]
+    fn check_gas_returns_memory_gas_and_fails_on_overflow() {
+        let config = Config::prague();
+        let mut gasometer = Gasometer::new(100, &config);
+        let memory = Some(MemoryCost { offset: 0, len: 64 });
+        let prepared = gasometer.check_gas(94, memory).unwrap();
+        assert_eq!(prepared, 6);
+        assert_eq!(gasometer.gas(), 100);
+        gasometer
+            .record_dynamic_cost_prepared(GasCost::Zero, memory, Some(prepared))
+            .unwrap();
+        assert_eq!(gasometer.gas(), 94);
+        assert_eq!(gasometer.check_gas(94, memory), Ok(6));
+
+        let mut unlimited = Gasometer::new(u64::MAX, &config);
+        assert_eq!(
+            unlimited.check_gas(u64::MAX, memory),
+            Err(ExitError::OutOfGas)
+        );
+        assert_eq!(unlimited.gas(), 0);
+    }
+
+    #[test]
+    fn record_cost_checks_remaining_gas_without_overflow() {
+        let config = Config::prague();
+        let mut exact = Gasometer::new(u64::MAX, &config);
+        exact.record_cost(1).unwrap();
+        exact.record_cost(u64::MAX - 1).unwrap();
+        assert_eq!(exact.gas(), 0);
+        assert_eq!(exact.record_cost(0), Ok(()));
+
+        let mut excessive = Gasometer::new(u64::MAX, &config);
+        excessive.record_cost(1).unwrap();
+        assert_eq!(excessive.record_cost(u64::MAX), Err(ExitError::OutOfGas));
+        assert_eq!(excessive.gas(), 0);
+        assert_eq!(excessive.record_cost(0), Err(ExitError::OutOfGas));
+        assert_eq!(excessive.record_cost(1), Err(ExitError::OutOfGas));
+
+        let mut memory = Gasometer::new(u64::MAX, &config);
+        memory
+            .record_dynamic_cost(GasCost::Zero, Some(MemoryCost { offset: 0, len: 32 }))
+            .unwrap();
+        assert_eq!(memory.record_cost(u64::MAX - 2), Err(ExitError::OutOfGas));
+        assert_eq!(memory.gas(), 0);
     }
 }
