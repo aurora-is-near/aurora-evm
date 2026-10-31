@@ -246,10 +246,15 @@ impl<'config> Gasometer<'config> {
     }
 
     /// Fails with `OutOfGas` unless the remaining gas covers `gas` plus the expansion to
-    /// `memory_cost`. Nothing is recorded: the caller records the full cost afterwards, and a
-    /// failure leaves the gasometer failed. With the `tracing` feature, a failure emits one
-    /// `RecordDynamicCost` event with `gas` and the memory gas, as a failed `record_cost`
-    /// reports its cost, so a trace shows the rejected step.
+    /// `memory_cost`. No gas is charged here: the caller records the full cost afterwards.
+    /// A newly detected failure leaves the gasometer failed.
+    ///
+    /// With `tracing`, insufficient remaining gas emits one `RecordDynamicCost` event only
+    /// after the memory cost and required gas have been calculated successfully. The event
+    /// reports the checked non-memory gas and cumulative memory gas, not necessarily the full
+    /// opcode cost. Memory-calculation errors, required-gas overflow, and an already failed
+    /// gasometer return without emitting this event. This does not guarantee the same event
+    /// stream or step cost as pricing the full opcode before checking affordability.
     ///
     /// An opcode checks the part of its cost that needs no state before its first state access,
     /// so an opcode that cannot pay it never touches the state it targets: the order the
