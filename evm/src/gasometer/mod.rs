@@ -221,15 +221,21 @@ impl<'config> Gasometer<'config> {
 
     /// Record refund for `authority` - EIP-7702
     /// `refunded_accounts` represent count of valid `authority`  accounts.
+    /// Estimate mode records zero, as it does for opcode refunds, so authorization refunds
+    /// do not reduce the gas estimate. Execution mode retains the EIP-7702 refund.
     ///
     /// ## Errors
     /// Return `ExitError` if `record_refund` operation fails.
     pub fn record_authority_refund(&mut self, refunded_accounts: u64) -> Result<(), ExitError> {
-        let refund = i64::try_from(
-            refunded_accounts
-                * (self.config.gas_per_empty_account_cost - self.config.gas_per_auth_base_cost),
-        )
-        .unwrap_or(i64::MAX);
+        let refund = if self.config.estimate {
+            0
+        } else {
+            i64::try_from(
+                refunded_accounts
+                    * (self.config.gas_per_empty_account_cost - self.config.gas_per_auth_base_cost),
+            )
+            .unwrap_or(i64::MAX)
+        };
         self.record_refund(refund)
     }
 
@@ -1421,6 +1427,24 @@ impl MemoryCost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authority_refund_is_suppressed_only_in_estimate_mode() {
+        for estimate in [false, true] {
+            let mut config = Config::prague();
+            config.estimate = estimate;
+            for accounts in [0, 1, 2] {
+                let mut gasometer = Gasometer::new(100_000, &config);
+                gasometer.record_authority_refund(accounts).unwrap();
+                let expected = if estimate { 0 } else { 12_500 * accounts };
+                assert_eq!(gasometer.refunded_gas(), i64::try_from(expected).unwrap());
+                assert_eq!(gasometer.gas(), 100_000);
+            }
+            let mut failed = Gasometer::new(100_000, &config);
+            failed.fail();
+            assert_eq!(failed.record_authority_refund(1), Err(ExitError::OutOfGas));
+        }
+    }
 
     #[test]
     fn intrinsic_gas_for_call_follows_eip_2028_2930_7702_and_7623() {

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- In estimate mode (`Config::estimate`), EIP-7702 authorization refunds no longer reduce
+  the reported gas usage. Previously, authorizing an existing account could produce an
+  estimate below the transaction's intrinsic gas requirement. Execution-mode refunds and
+  authorization processing are unchanged.
+
 ## [3.2.0] - 2026-10-28
 
 This release lets backends provide account code hashes and code presence without loading
