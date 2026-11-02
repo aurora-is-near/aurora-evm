@@ -7,8 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CALL-family opcodes read their memory operands before the target is warmed or inspected,
+  so operand errors precede those `Handler` calls. For a cold target delegating to itself
+  (EIP-7702), the `GasCost` of a CALL-family opcode reports the target cold and the delegate
+  warm; the total charge is unchanged.
+- An opcode rejected before its state access (see below) records no gas and consumes all
+  remaining gas. With the `tracing` feature, the gasometer emits one `RecordDynamicCost`
+  event for it, carrying the gas it checked (the cost known before the access) and the
+  memory gas, where the full cost was reported before; the snapshot still carries the gas
+  the step had.
+- A `CALL` with value in a static context, and a `DELEGATECALL` on a configuration without
+  it, fail with `InvalidCode` even when their memory operands are missing or do not fit
+  memory, where `StackUnderflow` or `OutOfGas` was reported before; all gas is consumed
+  either way.
+
+### Removed
+
+- The public `gasometer::dynamic_opcode_cost`. Pricing a dynamic opcode now includes the
+  check before its state access, which needs the executor's gasometer, so the function is
+  crate-private and called from `StackExecutor::before_bytecode`.
+
 ### Fixed
 
+- Reject unaffordable CALL-family, SELFDESTRUCT and EIP-2200 SSTORE operations before
+  state access, allowing execution witnesses to omit data those operations never need.
+  The check covers the cost known before the access (Yellow Paper `C_EXTRA` without
+  `C_NEW`, the cold beneficiary access, the EIP-2200 stipend rule); execution outcomes and
+  gas are unchanged, and the public `Handler` trait is unchanged.
 - In estimate mode (`Config::estimate`), EIP-7702 authorization refunds no longer reduce
   the reported gas usage. Previously, authorizing an existing account could produce an
   estimate below the transaction's intrinsic gas requirement. Execution-mode refunds and
