@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in execution mode. Before, the cap was the remaining gas before that charge, so with 64 gas
   or more remaining, a `CALL` requesting more than 63/64 of it, and every `CREATE` or precompile
   subcall with no explicit gas limit, which forward all of it, failed with `OutOfGas`.
+- In estimate mode (`Config::estimate`), EIP-7702 authorization refunds no longer reduce
+  the reported gas usage. Previously, authorizing an existing account could produce an
+  estimate below the transaction's intrinsic gas requirement. Execution-mode refunds and
+  authorization processing are unchanged.
 
 ## [3.2.0] - 2026-10-28
 
