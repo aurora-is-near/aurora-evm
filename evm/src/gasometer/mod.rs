@@ -192,8 +192,8 @@ impl<'config> Gasometer<'config> {
             snapshot: self.snapshot(),
         });
 
-        let all_gas_cost = self.total_used_gas() + cost;
-        if self.gas_limit < all_gas_cost {
+        // Compare against the remainder so an excessive cost cannot overflow.
+        if self.gas() < cost {
             self.inner = Err(ExitError::OutOfGas);
             return Err(ExitError::OutOfGas);
         }
@@ -252,10 +252,15 @@ impl<'config> Gasometer<'config> {
     }
 
     /// Fails with `OutOfGas` unless the remaining gas covers `gas` plus the expansion to
-    /// `memory_cost`. Nothing is recorded: the caller records the full cost afterwards, and a
-    /// failure leaves the gasometer failed. With the `tracing` feature, a failure emits one
-    /// `RecordDynamicCost` event with `gas` and the memory gas, as a failed `record_cost`
-    /// reports its cost, so a trace shows the rejected step.
+    /// `memory_cost`. No gas is charged here: the caller records the full cost afterwards.
+    /// A newly detected failure leaves the gasometer failed.
+    ///
+    /// With `tracing`, insufficient remaining gas emits one `RecordDynamicCost` event only
+    /// after the memory cost and required gas have been calculated successfully. The event
+    /// reports the checked non-memory gas and cumulative memory gas, not necessarily the full
+    /// opcode cost. Memory-calculation errors, required-gas overflow, and an already failed
+    /// gasometer return without emitting this event. This does not guarantee the same event
+    /// stream or step cost as pricing the full opcode before checking affordability.
     ///
     /// An opcode checks the part of its cost that needs no state before its first state access,
     /// so an opcode that cannot pay it never touches the state it targets: the order the
@@ -775,7 +780,7 @@ pub fn static_opcode_cost(opcode: Opcode) -> Option<u32> {
 
 /// Warm the target, cold until now when `target_is_cold`, and its EIP-7702 delegate; returns
 /// whether the delegate was cold, for a delegating target.
-fn get_and_set_warm<H: Handler>(
+pub(crate) fn get_and_set_warm<H: Handler>(
     handler: &mut H,
     target: H160,
     target_is_cold: bool,
@@ -807,7 +812,7 @@ fn get_and_set_non_delegated_warm<H: Handler>(handler: &mut H, target: H160) -> 
 
 /// The gas a `CALL`-family opcode owes before its first state access: the target's access cost
 /// and the value transfer (Yellow Paper `C_EXTRA` without `C_NEW`).
-fn call_access_gas(target_is_cold: bool, transfers_value: bool, config: &Config) -> u64 {
+pub(crate) fn call_access_gas(target_is_cold: bool, transfers_value: bool, config: &Config) -> u64 {
     let mut gas = costs::address_access_cost(target_is_cold, None, config.gas_call, config);
     if transfers_value {
         gas += u64::from(consts::G_CALLVALUE);
@@ -1650,5 +1655,29 @@ mod tests {
             Err(ExitError::OutOfGas)
         );
         assert_eq!(unlimited.gas(), 0);
+    }
+
+    #[test]
+    fn record_cost_checks_remaining_gas_without_overflow() {
+        let config = Config::prague();
+        let mut exact = Gasometer::new(u64::MAX, &config);
+        exact.record_cost(1).unwrap();
+        exact.record_cost(u64::MAX - 1).unwrap();
+        assert_eq!(exact.gas(), 0);
+        assert_eq!(exact.record_cost(0), Ok(()));
+
+        let mut excessive = Gasometer::new(u64::MAX, &config);
+        excessive.record_cost(1).unwrap();
+        assert_eq!(excessive.record_cost(u64::MAX), Err(ExitError::OutOfGas));
+        assert_eq!(excessive.gas(), 0);
+        assert_eq!(excessive.record_cost(0), Err(ExitError::OutOfGas));
+        assert_eq!(excessive.record_cost(1), Err(ExitError::OutOfGas));
+
+        let mut memory = Gasometer::new(u64::MAX, &config);
+        memory
+            .record_dynamic_cost(GasCost::Zero, Some(MemoryCost { offset: 0, len: 32 }))
+            .unwrap();
+        assert_eq!(memory.record_cost(u64::MAX - 2), Err(ExitError::OutOfGas));
+        assert_eq!(memory.gas(), 0);
     }
 }

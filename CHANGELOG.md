@@ -31,11 +31,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Precompile subcalls with no explicit gas limit now forward the available gas on Frontier
+  and other pre-EIP-150 configurations instead of failing as if `u64::MAX` were requested.
+  Explicit limits still undergo the fork's existing affordability check.
+- `Gasometer::record_cost` compares the charge with the remaining gas rather than adding it
+  to gas already used. Excessive charges return `OutOfGas` and fail the gasometer instead of
+  overflowing in debug builds or wrapping in release builds, including after a prior failure.
+- A precompile's subcall (`PrecompileHandle::call`) is priced as the `CALL` opcode it stands
+  in for, input-memory expansion included: the gas known before the state access is checked
+  before the target is read, and the target and its EIP-7702 delegate become warm in the
+  calling frame. Later accesses pay the warm price unless that frame or an enclosing frame
+  reverts; a callee revert alone preserves this warmth. Before, the target was read before the
+  cost was recorded and stayed cold, so every later access paid the cold price again and a
+  target delegating to itself paid two cold accesses. A subcall with value from a static frame
+  now fails as a `CALL` with value does, instead of transferring.
 - Reject unaffordable CALL-family, SELFDESTRUCT and EIP-2200 SSTORE operations before
   state access, allowing execution witnesses to omit data those operations never need.
   The check covers the cost known before the access (Yellow Paper `C_EXTRA` without
   `C_NEW`, the cold beneficiary access, the EIP-2200 stipend rule); execution outcomes and
   gas are unchanged, and the public `Handler` trait is unchanged.
+- In estimate mode (`Config::estimate`), a `CALL`-family or `CREATE`-family operation offers
+  the callee 63/64 of the remaining gas after charging the caller's retained sixty-fourth, as
+  in execution mode. Before, the cap was the remaining gas before that charge, so with 64 gas
+  or more remaining, a `CALL` requesting more than 63/64 of it, and every `CREATE` or precompile
+  subcall with no explicit gas limit, which forward all of it, failed with `OutOfGas`.
 - In estimate mode (`Config::estimate`), EIP-7702 authorization refunds no longer reduce
   the reported gas usage. Previously, authorizing an existing account could produce an
   estimate below the transaction's intrinsic gas requirement. Execution-mode refunds and
