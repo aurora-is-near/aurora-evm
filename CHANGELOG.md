@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The check covers the cost known before the access (Yellow Paper `C_EXTRA` without
   `C_NEW`, the cold beneficiary access, the EIP-2200 stipend rule); execution outcomes and
   gas are unchanged, and the public `Handler` trait is unchanged.
+- In estimate mode (`Config::estimate`), a `CALL`-family or `CREATE`-family operation offers
+  the callee 63/64 of the remaining gas after charging the caller's retained sixty-fourth, as
+  in execution mode. Before, the cap was the remaining gas before that charge, so with 64 gas
+  or more remaining, a `CALL` requesting more than 63/64 of it, and every `CREATE` or precompile
+  subcall with no explicit gas limit, which forward all of it, failed with `OutOfGas`.
 
 ## [3.2.0] - 2026-10-28
 

@@ -1083,7 +1083,12 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             .record_authority_refund(refunded_accounts)
     }
 
-    /// Calculate gas limit and record it in the gasometer.
+    /// Calculates the gas limit of a call or a creation and records it in the gasometer.
+    ///
+    /// The callee is offered the requested gas, capped at what the caller may forward: all of
+    /// its remaining gas, or 63/64 of it from EIP-150 on (Yellow Paper `L(n) = n - floor(n / 64)`).
+    /// In estimate mode the sixty-fourth the caller keeps is charged to it first, so the gas
+    /// used is a sufficient gas limit for execution.
     fn calc_gas_limit_and_record(
         &mut self,
         target_gas: Option<u64>,
@@ -1091,13 +1096,12 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
     ) -> Result<u64, ExitError> {
         let initial_after_gas = self.state.metadata().gasometer.gas();
         let after_gas = if take_l64 && self.config.call_l64_after_gas {
+            let capped = l64(initial_after_gas);
             if self.config.estimate {
-                let diff = initial_after_gas - l64(initial_after_gas);
+                let diff = initial_after_gas - capped;
                 self.state.metadata_mut().gasometer.record_cost(diff)?;
-                initial_after_gas
-            } else {
-                l64(initial_after_gas)
             }
+            capped
         } else {
             initial_after_gas
         };
