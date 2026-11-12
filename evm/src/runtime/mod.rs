@@ -241,6 +241,11 @@ pub struct Config {
     /// Has PUSH0 opcode. See [EIP-3855](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-3855.md)
     pub has_push0: bool,
     /// Whether the gasometer is running in estimate mode.
+    ///
+    /// In estimate mode the gas accounting is pessimistic, so that the gas used by a run is a
+    /// sufficient gas limit for the same execution: refunds are not counted, `SSTORE` is charged
+    /// its highest cost, and at every call or creation the caller is charged the sixty-fourth
+    /// of its remaining gas that it keeps.
     pub estimate: bool,
     /// Has BLOBBASEFEE. See [EIP-7516](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7516.md)
     pub has_blob_base_fee: bool,
