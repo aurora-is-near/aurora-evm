@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `StackState::call_code` and `CallCode`: the code a call to an address runs, resolved from
+  its EIP-7702 delegation designation with one code read. The default implementation keeps
+  the behavior of `get_authority_target` and `code`; `MemoryStackState` reads the code once.
+
 ### Changed
 
 - CALL-family opcodes read their memory operands before the target is warmed or inspected,
@@ -59,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the reported gas usage. Previously, authorizing an existing account could produce an
   estimate below the transaction's intrinsic gas requirement. Execution-mode refunds and
   authorization processing are unchanged.
+- A CALL-family opcode, a precompile subcall and a transaction's top-level call read the code
+  of their target once, and the code of its EIP-7702 delegate once, at most as often as the
+  execution specs do: the pricing of the opcode keeps the code it read to resolve the
+  delegation designation for the call. Before, a target without a designation was read four
+  times per call and three times per top-level call, which cost witness-backed and zkVM
+  executions redundant code loads; gas and outcomes are unchanged.
 
 ## [3.2.0] - 2026-10-28
 

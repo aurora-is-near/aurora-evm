@@ -1,7 +1,7 @@
 use crate::backend::{code_hash_of, Apply, Backend, Basic, Log};
 use crate::core::utils::{U256_ONE, U256_ZERO, U64_MAX};
 use crate::executor::stack::executor::{
-    Accessed, Authorization, StackState, StackSubstateMetadata,
+    Accessed, Authorization, CallCode, StackState, StackSubstateMetadata,
 };
 use crate::prelude::*;
 use crate::{ExitError, Transfer};
@@ -701,24 +701,25 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
     }
 
     /// Get authority target (EIP-7702) - delegated address.
-    /// First we're trying to get authority target from the cache recursively with parent state,
-    /// if it's not found we get code for the authority address and check if it's delegation
-    /// designator. If it's true, we add result to cache and return delegated target address.
     fn get_authority_target(&mut self, authority: H160) -> Option<H160> {
-        // Read from cache
-        if let Some(target_address) = self.substate.get_authority_target_recursive(authority) {
-            Some(target_address)
-        } else {
-            // If not found in the cache
-            // Get code for delegated address
-            let authority_code = self.code(authority);
-            if let Some(target) = Authorization::get_delegated_address(&authority_code) {
-                // Add to cache
-                self.metadata_mut().add_authority(authority, target);
-                return Some(target);
-            }
-            None
+        match self.call_code(authority) {
+            CallCode::Delegated(target) => Some(target),
+            CallCode::Own(_) => None,
         }
+    }
+
+    /// Resolves the delegation of `authority` from the cache, recursively through the parent
+    /// substates, or else from its code, read once: a delegation designation is cached and its
+    /// delegate returned, any other code is the code the call runs.
+    fn call_code(&mut self, authority: H160) -> CallCode {
+        if let Some(target) = self.substate.get_authority_target_recursive(authority) {
+            return CallCode::Delegated(target);
+        }
+        let code = self.code(authority);
+        Authorization::get_delegated_address(&code).map_or(CallCode::Own(code), |target| {
+            self.metadata_mut().add_authority(authority, target);
+            CallCode::Delegated(target)
+        })
     }
 }
 

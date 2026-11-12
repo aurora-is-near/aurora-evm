@@ -115,6 +115,18 @@ impl Authorization {
     }
 }
 
+/// The code a call to an address runs, resolved from the EIP-7702 delegation designation of
+/// the address with one code read.
+///
+/// See [EIP-7702: Delegation designation](https://eips.ethereum.org/EIPS/eip-7702#delegation-designation).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CallCode {
+    /// The address holds a delegation designation to this address, whose code the call runs.
+    Delegated(H160),
+    /// The address holds no delegation designation; the call runs this code of its own.
+    Own(Vec<u8>),
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct Accessed {
     pub accessed_addresses: BTreeSet<H160>,
@@ -407,6 +419,14 @@ pub trait StackState<'config>: Backend {
 
     /// EIP-7702 - get authority target address.
     fn get_authority_target(&mut self, address: H160) -> Option<H160>;
+
+    /// Resolves the code a call to `address` runs: the delegate of its EIP-7702 delegation
+    /// designation, or its own code. The default reads the code of an address without a
+    /// designation twice; `MemoryStackState` reads it once.
+    fn call_code(&mut self, address: H160) -> CallCode {
+        self.get_authority_target(address)
+            .map_or_else(|| CallCode::Own(self.code(address)), CallCode::Delegated)
+    }
 }
 
 /// Stack-based executor.
@@ -414,6 +434,11 @@ pub struct StackExecutor<'config, 'precompiles, S, P> {
     config: &'config Config,
     state: S,
     precompile_set: &'precompiles P,
+    /// The code of a call target without an EIP-7702 delegation designation, read while
+    /// pricing the CALL-family opcode or the precompile subcall, for the call of the same
+    /// step, so that the target is read once. Every resolution of a target while pricing
+    /// replaces or drops it, and a call transaction or a system call starts without it.
+    pending_code: Option<(H160, Vec<u8>)>,
 }
 
 impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
@@ -439,6 +464,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             config,
             state,
             precompile_set,
+            pending_code: None,
         }
     }
 
@@ -781,6 +807,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             data: &data,
             gas_limit,
         });
+        self.pending_code = None;
 
         if self.nonce(caller) >= U64_MAX {
             return (ExitError::MaxNonce.into(), Vec::new());
@@ -858,6 +885,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         address: H160,
         data: Vec<u8>,
     ) -> (ExitReason, Vec<u8>) {
+        self.pending_code = None;
         let context = Context {
             caller,
             address,
@@ -1111,6 +1139,30 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         Ok(gas_limit)
     }
 
+    /// Returns the code a call to `code_address` runs, read once (execution specs
+    /// `access_delegation`): the code of a target without an EIP-7702 delegation designation
+    /// that the pricing of this step read, or else the code of the target or of its delegate.
+    ///
+    /// The delegate is warmed here for a transaction's top-level call (EIP-7702); an opcode
+    /// or a precompile subcall warmed it when priced.
+    fn code_to_run(&mut self, code_address: H160) -> Vec<u8> {
+        if !self.config.has_authorization_list {
+            return self.code(code_address);
+        }
+        if let Some((address, code)) = self.pending_code.take() {
+            if address == code_address {
+                return code;
+            }
+        }
+        match self.state.call_code(code_address) {
+            CallCode::Delegated(target) => {
+                self.warm_target((target, None));
+                self.code(target)
+            }
+            CallCode::Own(code) => code,
+        }
+    }
+
     fn create_inner(
         &mut self,
         caller: H160,
@@ -1239,13 +1291,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             }
         }
 
-        // EIP-7702 - get delegated designation address code
-        // Detect loop for Delegated designation
-        let code = self.authority_code(code_address);
-        // Warm Delegated address after access
-        if let Some(target_address) = self.get_authority_target(code_address) {
-            self.warm_target((target_address, None));
-        }
+        let code = self.code_to_run(code_address);
 
         self.enter_substate(gas_limit, is_static);
         self.state.touch(context.address);
@@ -1812,32 +1858,39 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
     }
 
     /// Return the target address of the authority delegation designation (EIP-7702).
+    ///
+    /// Resolving it reads the code of `address` unless the designation is cached. The code of
+    /// an address without a designation is kept for the call of the same step, so pricing a
+    /// CALL-family opcode or a precompile subcall and running the call read the target once;
+    /// a designation drops any code kept before.
     fn get_authority_target(&mut self, address: H160) -> Option<H160> {
-        if self.config.has_authorization_list {
-            self.state.get_authority_target(address)
-        } else {
-            None
+        if !self.config.has_authorization_list {
+            return None;
+        }
+        match self.state.call_code(address) {
+            CallCode::Delegated(target) => {
+                self.pending_code = None;
+                Some(target)
+            }
+            CallCode::Own(code) => {
+                self.pending_code = Some((address, code));
+                None
+            }
         }
     }
 
-    /// Get delegation designator code for the authority code.
-    /// If the code of address is delegation designator, then retrieve code
-    /// from the designation address for the `authority`.
-    /// Detect delegated designation loop and return basic byte code for loop.
+    /// Get the code a call to `authority` runs: the code of its EIP-7702 delegate for a
+    /// delegation designation, which is followed one level only, or its own code.
     ///
-    /// It's related to [EIP-7702 Delegation Designation](https://eips.ethereum.org/EIPS/eip-7702#delegation-designation)
-    /// When authority code is found, it should set delegated address to `authority_access` array for
-    /// calculating additional gas cost. Gas must be charged for the authority address and
-    /// for delegated address, for detection is address warm or cold.
+    /// See [EIP-7702 Delegation Designation](https://eips.ethereum.org/EIPS/eip-7702#delegation-designation).
     fn authority_code(&mut self, authority: H160) -> Vec<u8> {
         if !self.config.has_authorization_list {
             return self.code(authority);
         }
-        // Check if it is a loop for Delegated designation
-        self.get_authority_target(authority).map_or_else(
-            || self.code(authority),
-            |target_address| self.code(target_address),
-        )
+        match self.state.call_code(authority) {
+            CallCode::Delegated(target) => self.code(target),
+            CallCode::Own(code) => code,
+        }
     }
 
     // Warm target according to EIP-2929
