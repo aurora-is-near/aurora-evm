@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Gasometer::record_cost` compares the charge with the remaining gas rather than adding it
   to gas already used. Excessive charges return `OutOfGas` and fail the gasometer instead of
   overflowing in debug builds or wrapping in release builds, including after a prior failure.
+- With the `tracing` feature, a `CREATE` or `CREATE2` whose creator nonce is `2^64 - 1` emits
+  its `Create` event before the `Exit` event of the `MaxNonce` failure, as creations failing the
+  depth or balance check do. Before, that `Exit` had no matching `Create`, so a tracer pairing
+  the events closed the calling frame instead. A `CREATE2` or fixed-address creation
+  transaction from such a sender now also emits `Create` before its `Exit`. Execution outcomes
+  and gas are unchanged.
 - A precompile's subcall (`PrecompileHandle::call`) is priced as the `CALL` opcode it stands
   in for, input-memory expansion included: the gas known before the state access is checked
   before the target is read, and the target and its EIP-7702 delegate become warm in the
