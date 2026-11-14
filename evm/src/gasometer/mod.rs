@@ -128,6 +128,11 @@ impl<'config> Gasometer<'config> {
         self.inner.as_mut().map_err(|e| e.clone())
     }
 
+    /// Checks for a recorded failure without charging gas; zero remaining gas is valid.
+    pub(crate) fn check(&self) -> Result<(), ExitError> {
+        self.inner.as_ref().map(|_| ()).map_err(Clone::clone)
+    }
+
     /// Reference of the config.
     #[inline]
     #[must_use]
@@ -642,7 +647,7 @@ pub const fn init_code_cost(data: &[u8]) -> u64 {
     // As per EIP-3860:
     // > We define initcode_cost(initcode) to equal INITCODE_WORD_COST * ceil(len(initcode) / 32).
     // where INITCODE_WORD_COST is 2.
-    2 * (data.len() as u64).div_ceil(32)
+    consts::G_INITCODE_WORD * (data.len() as u64).div_ceil(32)
 }
 
 /// Counts the number of addresses and storage keys in the access list
@@ -846,6 +851,7 @@ pub(crate) fn dynamic_opcode_cost<H: Handler>(
     mut check_gas: impl FnMut(&mut H, u64, Option<MemoryCost>) -> Result<(), ExitError>,
 ) -> Result<(GasCost, Option<MemoryCost>), ExitError> {
     let mut call_memory = None;
+    let mut create_memory = None;
     let gas_cost = match opcode {
         Opcode::RETURN => GasCost::Zero,
 
@@ -1044,10 +1050,20 @@ pub(crate) fn dynamic_opcode_cost<H: Handler>(
             n: 4,
             len: stack.peek(1)?,
         },
-        Opcode::CREATE if !is_static => GasCost::Create,
-        Opcode::CREATE2 if !is_static && config.has_create2 => GasCost::Create2 {
-            len: stack.peek(2)?,
-        },
+        Opcode::CREATE if !is_static => {
+            let memory = peek_memory_cost(stack, 1, 2)?;
+            create_memory = Some(memory);
+            GasCost::Create {
+                len: memory.len.into(),
+            }
+        }
+        Opcode::CREATE2 if !is_static && config.has_create2 => {
+            let memory = peek_memory_cost(stack, 1, 2)?;
+            create_memory = Some(memory);
+            GasCost::Create2 {
+                len: memory.len.into(),
+            }
+        }
         Opcode::SELFDESTRUCT if !is_static => {
             let target = stack.peek_h256(0)?.into();
             let target_is_cold = handler.is_cold(target, None);
@@ -1142,7 +1158,11 @@ pub(crate) fn dynamic_opcode_cost<H: Handler>(
             len: 1,
         }),
 
-        Opcode::CREATE | Opcode::CREATE2 => Some(peek_memory_cost(stack, 1, 2)?),
+        Opcode::CREATE | Opcode::CREATE2 => Some(match create_memory {
+            Some(memory) => memory,
+            // Preserve operand validation for a disabled or static-context creation opcode.
+            None => peek_memory_cost(stack, 1, 2)?,
+        }),
 
         _ => None,
     };
@@ -1287,8 +1307,8 @@ impl Inner<'_> {
             GasCost::Log { n, len } => costs::log_cost(n, len)?,
             GasCost::VeryLowCopy { len } => costs::verylowcopy_cost(len)?,
             GasCost::Exp { power } => costs::exp_cost(power, self.config)?,
-            GasCost::Create => u64::from(consts::G_CREATE),
-            GasCost::Create2 { len } => costs::create2_cost(len)?,
+            GasCost::Create { len } => costs::create_cost(len, self.config)?,
+            GasCost::Create2 { len } => costs::create2_cost(len, self.config)?,
             GasCost::SLoad { target_is_cold } => costs::sload_cost(target_is_cold, self.config),
 
             GasCost::Zero => u64::from(consts::G_ZERO),
@@ -1471,11 +1491,14 @@ pub enum GasCost {
         /// Power of `EXP`.
         power: U256,
     },
-    /// Gas cost for `CREATE`.
-    Create,
-    /// Gas cost for `CREATE2`.
+    /// Gas cost for `CREATE`, including EIP-3860 when enabled.
+    Create {
+        /// Initcode length in bytes.
+        len: U256,
+    },
+    /// Gas cost for `CREATE2`, including hashing and EIP-3860 when enabled.
     Create2 {
-        /// Length.
+        /// Initcode length in bytes.
         len: U256,
     },
     /// Gas cost for `SLOAD`.

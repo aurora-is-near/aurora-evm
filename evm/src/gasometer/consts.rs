@@ -6,7 +6,7 @@ pub const G_MID: u32 = 8;
 pub const G_HIGH: u32 = 10;
 pub const G_JUMPDEST: u32 = 1;
 pub const R_SUICIDE: i32 = 24000;
-pub const G_CREATE: u32 = 32000;
+pub const G_CREATE: u64 = 32000;
 pub const G_CALLVALUE: u32 = 9000;
 pub const G_NEWACCOUNT: u32 = 25000;
 pub const G_EXP: u32 = 10;
@@ -16,6 +16,8 @@ pub const G_LOGDATA: u32 = 8;
 pub const G_LOGTOPIC: u32 = 375;
 pub const G_SHA3: u32 = 30;
 pub const G_SHA3WORD: u32 = 6;
+/// EIP-3860 initcode word cost.
+pub const G_INITCODE_WORD: u64 = 2;
 pub const G_COPY: u32 = 3;
 pub const G_BLOCKHASH: u32 = 20;
 pub const G_CODEDEPOSIT: u32 = 200;

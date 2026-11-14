@@ -60,7 +60,24 @@ pub fn sstore_refund(original: H256, current: H256, new: H256, config: &Config) 
     }
 }
 
-pub fn create2_cost(len: U256) -> Result<u64, ExitError> {
+/// EIP-3860: the initcode size limit and word cost charged with a creation opcode.
+fn initcode_cost(len: U256, config: &Config) -> Result<u64, ExitError> {
+    let Some(limit) = config.max_initcode_size else {
+        return Ok(0);
+    };
+    if len > U256::from(limit) {
+        return Err(ExitError::OutOfGas);
+    }
+    // It's safe to get `u64` from `len`, as `len` is `usize`
+    Ok(consts::G_INITCODE_WORD * len.low_u64().div_ceil(32))
+}
+
+pub fn create_cost(len: U256, config: &Config) -> Result<u64, ExitError> {
+    Ok(consts::G_CREATE + initcode_cost(len, config)?)
+}
+
+pub fn create2_cost(len: U256, config: &Config) -> Result<u64, ExitError> {
+    let initcode = initcode_cost(len, config)?;
     let base = U256::from(consts::G_CREATE);
     // ceil(len / 32.0)
     let sha_addup_base = len / U256_VALUE_32
@@ -78,7 +95,9 @@ pub fn create2_cost(len: U256) -> Result<u64, ExitError> {
         return Err(ExitError::OutOfGas);
     }
 
-    Ok(gas.as_u64())
+    gas.as_u64()
+        .checked_add(initcode)
+        .ok_or(ExitError::OutOfGas)
 }
 
 pub fn exp_cost(power: U256, config: &Config) -> Result<u64, ExitError> {
