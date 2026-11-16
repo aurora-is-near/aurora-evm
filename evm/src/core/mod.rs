@@ -87,6 +87,7 @@ impl Machine {
         &mut self.memory
     }
     /// Return a reference of the program counter.
+    #[must_use]
     pub const fn position(&self) -> &Result<usize, ExitReason> {
         &self.position
     }
