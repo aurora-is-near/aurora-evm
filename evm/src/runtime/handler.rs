@@ -96,6 +96,8 @@ pub trait Handler {
     /// Return `ExitError`
     fn mark_delete(&mut self, address: H160, target: H160) -> Result<(), ExitError>;
     /// Invoke a create operation.
+    /// The opcode's gas and initcode size checks must have passed before this callback.
+    /// `StackExecutor` includes EIP-3860 in opcode pricing, not in this callback.
     fn create(
         &mut self,
         caller: H160,
