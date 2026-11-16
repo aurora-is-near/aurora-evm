@@ -1120,10 +1120,6 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         target_gas: Option<u64>,
         take_l64: bool,
     ) -> Capture<(ExitReason, Vec<u8>), StackExecutorCreateInterrupt<'static>> {
-        if self.nonce(caller) >= U64_MAX {
-            return Capture::Exit((ExitError::MaxNonce.into(), Vec::new()));
-        }
-
         let address = self.create_address(scheme);
 
         event!(Create {
@@ -1134,6 +1130,13 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             init_code: &init_code,
             target_gas
         });
+
+        // A creator nonce that cannot be incremented fails the creation as the depth and balance
+        // checks below do (EELS `generic_create`); checked after the `Create` event, so that the
+        // `Exit` event of the failure closes this creation rather than the calling frame.
+        if self.nonce(caller) >= U64_MAX {
+            return Capture::Exit((ExitError::MaxNonce.into(), Vec::new()));
+        }
 
         if let Some(depth) = self.state.metadata().depth {
             // As Depth incremented in `enter_substate` we must check depth counter
