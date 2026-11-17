@@ -532,6 +532,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                     }
                 }
             };
+            // A runtime reaching the end of code must not hide an earlier gasometer failure.
+            let reason = match (reason, self.state.metadata().gasometer.check()) {
+                (ExitReason::Succeed(_) | ExitReason::Revert(_), Err(error)) => error.into(),
+                (reason, _) => reason,
+            };
             let runtime_kind = runtime.kind;
             let (reason, maybe_address, return_data) = match runtime_kind {
                 RuntimeKind::Create(created_address) => {
@@ -588,22 +593,6 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         let transaction_cost = gasometer::create_transaction_cost(init_code, access_list);
         let gasometer = &mut self.state.metadata_mut().gasometer;
         gasometer.record_transaction(transaction_cost)
-    }
-
-    fn maybe_record_init_code_cost(&mut self, init_code: &[u8]) -> Result<(), ExitError> {
-        if let Some(limit) = self.config.max_initcode_size {
-            // EIP-3860
-            if init_code.len() > limit {
-                self.state.metadata_mut().gasometer.fail();
-                return Err(ExitError::CreateContractLimit);
-            }
-            return self
-                .state
-                .metadata_mut()
-                .gasometer
-                .record_cost(gasometer::init_code_cost(init_code));
-        }
-        Ok(())
     }
 
     /// Execute a `CREATE` transaction.
@@ -1128,10 +1117,6 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         target_gas: Option<u64>,
         take_l64: bool,
     ) -> Capture<(ExitReason, Vec<u8>), StackExecutorCreateInterrupt<'static>> {
-        if self.nonce(caller) >= U64_MAX {
-            return Capture::Exit((ExitError::MaxNonce.into(), Vec::new()));
-        }
-
         let address = self.create_address(scheme);
 
         event!(Create {
@@ -1142,6 +1127,13 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             init_code: &init_code,
             target_gas
         });
+
+        // A creator nonce that cannot be incremented fails the creation as the depth and balance
+        // checks below do (EELS `generic_create`); checked after the `Create` event, so that the
+        // `Exit` event of the failure closes this creation rather than the calling frame.
+        if self.nonce(caller) >= U64_MAX {
+            return Capture::Exit((ExitError::MaxNonce.into(), Vec::new()));
+        }
 
         if let Some(depth) = self.state.metadata().depth {
             // As Depth incremented in `enter_substate` we must check depth counter
@@ -1290,6 +1282,13 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             context: &context,
             is_static: precompile_is_static,
         }) {
+            // A precompile cannot turn a failed gas charge into success or a revert.
+            let result = match (result, self.state.metadata().gasometer.check()) {
+                (Ok(_) | Err(PrecompileFailure::Revert { .. }), Err(exit_status)) => {
+                    Err(PrecompileFailure::Error { exit_status })
+                }
+                (result, _) => result,
+            };
             return match result {
                 Ok(PrecompileOutput {
                     exit_status,
@@ -1692,11 +1691,6 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Vec<u8>), Self::CreateInterrupt> {
-        if let Err(e) = self.maybe_record_init_code_cost(&init_code) {
-            let reason: ExitReason = e.into();
-            emit_exit!(reason.clone());
-            return Capture::Exit((reason, Vec::new()));
-        }
         self.create_inner(caller, scheme, value, init_code, target_gas, true)
     }
 
@@ -1709,12 +1703,6 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Vec<u8>), Self::CreateInterrupt> {
-        if let Err(e) = self.maybe_record_init_code_cost(&init_code) {
-            let reason: ExitReason = e.into();
-            emit_exit!(reason.clone());
-            return Capture::Exit((reason, Vec::new()));
-        }
-
         let capture = self.create_inner(caller, scheme, value, init_code, target_gas, true);
 
         if let Capture::Exit((ref reason, ref return_value)) = capture {

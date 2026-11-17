@@ -71,8 +71,8 @@ impl<'config> MemoryStackSubstate<'config> {
         mut self,
         backend: &B,
     ) -> (
-        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)> + use<B>>> + use<B>,
-        impl IntoIterator<Item = Log> + use<B>,
+        impl IntoIterator<Item=Apply<impl IntoIterator<Item=(H256, H256)> + use < B >>> + use < B >,
+        impl IntoIterator<Item=Log> + use < B >,
     ) {
         assert!(self.parent.is_none());
 
@@ -303,9 +303,9 @@ impl<'config> MemoryStackSubstate<'config> {
     pub fn deleted(&self, address: H160) -> bool {
         self.deletes.contains(&address)
             || self
-                .parent
-                .as_ref()
-                .is_some_and(|parent| parent.deleted(address))
+            .parent
+            .as_ref()
+            .is_some_and(|parent| parent.deleted(address))
     }
 
     #[allow(clippy::map_entry)]
@@ -383,9 +383,9 @@ impl<'config> MemoryStackSubstate<'config> {
     pub fn is_created(&self, address: H160) -> bool {
         self.creates.contains(&address)
             || self
-                .parent
-                .as_ref()
-                .is_some_and(|parent| parent.is_created(address))
+            .parent
+            .as_ref()
+            .is_some_and(|parent| parent.is_created(address))
     }
 
     pub fn set_code<B: Backend>(&mut self, address: H160, code: Vec<u8>, backend: &B) {
@@ -738,8 +738,8 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
     pub fn deconstruct(
         self,
     ) -> (
-        impl IntoIterator<Item = Apply<impl IntoIterator<Item = (H256, H256)> + use<B>>> + use<B>,
-        impl IntoIterator<Item = Log> + use<B>,
+        impl IntoIterator<Item=Apply<impl IntoIterator<Item=(H256, H256)> + use < B >>> + use < B >,
+        impl IntoIterator<Item=Log> + use < B >,
     ) {
         self.substate.deconstruct(self.backend)
     }
@@ -900,7 +900,7 @@ mod tests {
         stack_state.reset_balance(addr1);
         // Get from cache and code from backend.
         assert!(stack_state.is_empty(addr1));
-        assert_eq!(stack_state.code(addr1), b"");
+        assert_eq!(stack_state.code(addr1), Vec::<u8>::new());
 
         stack_state.reset_balance(addr2);
         let acc2 = stack_state.substate.accounts.get(&addr2).unwrap();

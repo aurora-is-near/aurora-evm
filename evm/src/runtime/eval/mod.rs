@@ -76,7 +76,7 @@ pub fn finish_create(
     return_data: Vec<u8>,
 ) -> Result<(), ExitReason> {
     runtime.return_data_buffer = return_data;
-    let create_address: H256 = address.map(Into::into).unwrap_or_default();
+    let create_address: H256 = address.map_or_default(Into::into);
 
     match reason {
         ExitReason::Succeed(_) => {

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- CREATE and CREATE2 validate the EIP-3860 initcode size and charge its word cost during
+  opcode pricing, before copying or hashing initcode and invoking the creation handler.
+  The initcode fee is included in `RecordDynamicCost`, replacing the later `RecordCost`
+  event; oversized initcode fails pricing with `OutOfGas` without a gasometer cost event
+  for the rejected opcode.
+- **Breaking:** `GasCost::Create` is now `GasCost::Create { len: U256 }`, carrying the
+  initcode length like `Create2`. Both variants include the EIP-3860 word cost and size
+  check when enabled, including through the public `Gasometer::gas_cost` and
+  `Gasometer::record_dynamic_cost` methods. Direct callers of `StackExecutor`'s
+  `Handler::create` must include EIP-3860 in their opcode validation/pricing;
+  the callback no longer performs that charge.
 - CALL-family opcodes read their memory operands before the target is warmed or inspected,
   so operand errors precede those `Handler` calls. For a cold target delegating to itself
   (EIP-7702), the `GasCost` of a CALL-family opcode reports the target cold and the delegate
@@ -31,12 +42,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A final CREATE or CREATE2 exceeding the EIP-3860 initcode limit or unable to pay its
+  initcode charge now aborts and rolls back the calling frame through opcode pricing,
+  instead of allowing the frame to succeed at end of code with a failed gasometer.
+  As an additional safeguard, bytecode and precompile exits reject success or revert
+  with a failed gasometer; a successful frame with exactly zero gas remaining is still valid.
 - Precompile subcalls with no explicit gas limit now forward the available gas on Frontier
   and other pre-EIP-150 configurations instead of failing as if `u64::MAX` were requested.
   Explicit limits still undergo the fork's existing affordability check.
 - `Gasometer::record_cost` compares the charge with the remaining gas rather than adding it
   to gas already used. Excessive charges return `OutOfGas` and fail the gasometer instead of
   overflowing in debug builds or wrapping in release builds, including after a prior failure.
+- With the `tracing` feature, a `CREATE` or `CREATE2` whose creator nonce is `2^64 - 1` emits
+  its `Create` event before the `Exit` event of the `MaxNonce` failure, as creations failing the
+  depth or balance check do. Before, that `Exit` had no matching `Create`, so a tracer pairing
+  the events closed the calling frame instead. A `CREATE2` or fixed-address creation
+  transaction from such a sender now also emits `Create` before its `Exit`. Execution outcomes
+  and gas are unchanged.
 - A precompile's subcall (`PrecompileHandle::call`) is priced as the `CALL` opcode it stands
   in for, input-memory expansion included: the gas known before the state access is checked
   before the target is read, and the target and its EIP-7702 delegate become warm in the
