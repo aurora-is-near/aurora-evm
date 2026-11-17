@@ -364,7 +364,7 @@ fn a_precompile_cannot_hide_a_failed_gas_charge() {
         assert_eq!(result.reason, ExitReason::Error(ExitError::OutOfGas));
         assert_eq!(result.gas, INTRINSIC + 1);
         assert_eq!(result.logs, 0);
-        assert!(result.output.is_empty());
+        assert_eq!(result.output, Vec::<u8>::new());
     }
 }
 
