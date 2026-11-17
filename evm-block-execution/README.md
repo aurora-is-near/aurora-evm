@@ -29,14 +29,16 @@ the pieces needed to execute a *whole block* and validate it against its header.
   withdrawals (EIP-4895).
 - Block roots (`state_root`, `receipts_root`, `withdrawals_root`, `requests_hash`, `logs_bloom`)
   and post-execution header checks.
-- Target hardforks: **post-merge** Ethereum mainline only.
+- Target hardforks: **Cancun through Osaka**, including the configured BPO blob schedules.
+- `stateless_validation` verifies sender signatures against the supplied public keys, validates
+  the ancestor chain and pre-execution header/body rules, then checks execution commitments
+  and the witness-backed post-state root.
 
 ### Out of scope
 
 - A full Ethereum node, networking, the mempool, payload building or the Consensus Layer.
-- Header-only / consensus checks that do not follow from execution (base-fee formula, gas-limit
-  bounds, timestamp ordering, difficulty/PoS, parent-relative checks) — callers must validate
-  these independently; they are not implied by a matching `state_root`.
+- Consensus Layer fork choice, finality and proof that the supplied parent belongs to the
+  canonical chain. Callers supply trusted chain configuration and the parent trust anchor.
 - Block reorg machinery (`BundleState` / `TransitionState` / reverts).
 - Pre-merge block/uncle rewards, ommers and the DAO fork.
 
@@ -67,6 +69,18 @@ so it is handled in two modes:
 
 All other roots (`receipts_root`, `withdrawals_root`, `logs_bloom`, `requests_hash`) are computed
 from complete lists and are therefore always available as pure functions.
+
+## Witness code availability
+
+An account proof can contain a nonempty code hash without the corresponding bytecode.
+`WitnessBackend::code_hash` and `has_code` answer from that proof. Hash-only paths such as
+`EXTCODEHASH`, account emptiness and CREATE collisions do not require bytecode. Execution,
+`EXTCODESIZE`, `EXTCODECOPY` and delegation resolution still reject missing required code.
+Gas checks run before state accesses that an unaffordable opcode must not perform.
+
+The targeted executor and stateless tests omit code, account proofs and storage proofs, with
+negative controls at affordable accesses. The EEST witness corpus supplies all pre-state code;
+it supplements these tests but does not establish compatibility with every minimal client witness.
 
 ## Post-execution validation
 

@@ -1,4 +1,5 @@
 mod code_withheld;
+mod oog_gates;
 mod witness_regressions;
 
 use super::{

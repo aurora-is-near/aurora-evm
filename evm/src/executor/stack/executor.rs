@@ -532,6 +532,11 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                     }
                 }
             };
+            // A runtime reaching the end of code must not hide an earlier gasometer failure.
+            let reason = match (reason, self.state.metadata().gasometer.check()) {
+                (ExitReason::Succeed(_) | ExitReason::Revert(_), Err(error)) => error.into(),
+                (reason, _) => reason,
+            };
             let runtime_kind = runtime.kind;
             let (reason, maybe_address, return_data) = match runtime_kind {
                 RuntimeKind::Create(created_address) => {
@@ -588,22 +593,6 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         let transaction_cost = gasometer::create_transaction_cost(init_code, access_list);
         let gasometer = &mut self.state.metadata_mut().gasometer;
         gasometer.record_transaction(transaction_cost)
-    }
-
-    fn maybe_record_init_code_cost(&mut self, init_code: &[u8]) -> Result<(), ExitError> {
-        if let Some(limit) = self.config.max_initcode_size {
-            // EIP-3860
-            if init_code.len() > limit {
-                self.state.metadata_mut().gasometer.fail();
-                return Err(ExitError::CreateContractLimit);
-            }
-            return self
-                .state
-                .metadata_mut()
-                .gasometer
-                .record_cost(gasometer::init_code_cost(init_code));
-        }
-        Ok(())
     }
 
     /// Execute a `CREATE` transaction.
@@ -1091,7 +1080,12 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             .record_authority_refund(refunded_accounts)
     }
 
-    /// Calculate gas limit and record it in the gasometer.
+    /// Calculates the gas limit of a call or a creation and records it in the gasometer.
+    ///
+    /// The callee is offered the requested gas, capped at what the caller may forward: all of
+    /// its remaining gas, or 63/64 of it from EIP-150 on (Yellow Paper `L(n) = n - floor(n / 64)`).
+    /// In estimate mode the sixty-fourth the caller keeps is charged to it first, so the gas
+    /// used is a sufficient gas limit for execution.
     fn calc_gas_limit_and_record(
         &mut self,
         target_gas: Option<u64>,
@@ -1099,13 +1093,12 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
     ) -> Result<u64, ExitError> {
         let initial_after_gas = self.state.metadata().gasometer.gas();
         let after_gas = if take_l64 && self.config.call_l64_after_gas {
+            let capped = l64(initial_after_gas);
             if self.config.estimate {
-                let diff = initial_after_gas - l64(initial_after_gas);
+                let diff = initial_after_gas - capped;
                 self.state.metadata_mut().gasometer.record_cost(diff)?;
-                initial_after_gas
-            } else {
-                l64(initial_after_gas)
             }
+            capped
         } else {
             initial_after_gas
         };
@@ -1124,10 +1117,6 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         target_gas: Option<u64>,
         take_l64: bool,
     ) -> Capture<(ExitReason, Vec<u8>), StackExecutorCreateInterrupt<'static>> {
-        if self.nonce(caller) >= U64_MAX {
-            return Capture::Exit((ExitError::MaxNonce.into(), Vec::new()));
-        }
-
         let address = self.create_address(scheme);
 
         event!(Create {
@@ -1138,6 +1127,13 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             init_code: &init_code,
             target_gas
         });
+
+        // A creator nonce that cannot be incremented fails the creation as the depth and balance
+        // checks below do (EELS `generic_create`); checked after the `Create` event, so that the
+        // `Exit` event of the failure closes this creation rather than the calling frame.
+        if self.nonce(caller) >= U64_MAX {
+            return Capture::Exit((ExitError::MaxNonce.into(), Vec::new()));
+        }
 
         if let Some(depth) = self.state.metadata().depth {
             // As Depth incremented in `enter_substate` we must check depth counter
@@ -1286,6 +1282,13 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             context: &context,
             is_static: precompile_is_static,
         }) {
+            // A precompile cannot turn a failed gas charge into success or a revert.
+            let result = match (result, self.state.metadata().gasometer.check()) {
+                (Ok(_) | Err(PrecompileFailure::Revert { .. }), Err(exit_status)) => {
+                    Err(PrecompileFailure::Error { exit_status })
+                }
+                (result, _) => result,
+            };
             return match result {
                 Ok(PrecompileOutput {
                     exit_status,
@@ -1472,6 +1475,7 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
                 .record_cost(u64::from(cost))?;
         } else {
             let is_static = self.state.metadata().is_static;
+            let mut prepared_memory_gas = None;
             let (gas_cost, memory_cost) = gasometer::dynamic_opcode_cost(
                 *address,
                 opcode,
@@ -1479,12 +1483,22 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> InterpreterHandler
                 is_static,
                 self.config,
                 self,
+                |executor, gas, memory| {
+                    prepared_memory_gas = Some(
+                        executor
+                            .state
+                            .metadata_mut()
+                            .gasometer
+                            .check_gas(gas, memory)?,
+                    );
+                    Ok(())
+                },
             )?;
 
             self.state
                 .metadata_mut()
                 .gasometer
-                .record_dynamic_cost(gas_cost, memory_cost)?;
+                .record_dynamic_cost_prepared(gas_cost, memory_cost, prepared_memory_gas)?;
         }
         Ok(())
     }
@@ -1677,11 +1691,6 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Vec<u8>), Self::CreateInterrupt> {
-        if let Err(e) = self.maybe_record_init_code_cost(&init_code) {
-            let reason: ExitReason = e.into();
-            emit_exit!(reason.clone());
-            return Capture::Exit((reason, Vec::new()));
-        }
         self.create_inner(caller, scheme, value, init_code, target_gas, true)
     }
 
@@ -1694,12 +1703,6 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
         init_code: Vec<u8>,
         target_gas: Option<u64>,
     ) -> Capture<(ExitReason, Vec<u8>), Self::CreateInterrupt> {
-        if let Err(e) = self.maybe_record_init_code_cost(&init_code) {
-            let reason: ExitReason = e.into();
-            emit_exit!(reason.clone());
-            return Capture::Exit((reason, Vec::new()));
-        }
-
         let capture = self.create_inner(caller, scheme, value, init_code, target_gas, true);
 
         if let Capture::Exit((ref reason, ref return_value)) = capture {
@@ -1856,8 +1859,14 @@ struct StackExecutorHandle<'inner, 'config, 'precompiles, S, P> {
 impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
     for StackExecutorHandle<'_, 'config, '_, S, P>
 {
-    // Perform subcall in provided context.
-    /// Precompile specifies in which context the subcall is executed.
+    /// Performs the subcall in the context the precompile provides.
+    ///
+    /// The subcall is priced as the `CALL` opcode it stands in for (Yellow Paper Appendix H.2,
+    /// `C_CALL`), which no opcode records for it. As in `dynamic_opcode_cost`, the gas known
+    /// before the state access is checked first, then the target and its EIP-7702 delegate are
+    /// warmed and the full cost is recorded: a target the frame cannot afford is never read, and
+    /// a later access to the target is priced warm. A static frame transfers no value, as with
+    /// the opcode.
     fn call(
         &mut self,
         code_address: H160,
@@ -1867,36 +1876,48 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> PrecompileHandle
         is_static: bool,
         context: &Context,
     ) -> (ExitReason, Vec<u8>) {
-        // For normal calls the cost is recorded at opcode level.
-        // Since we don't go through opcodes we need manually record the call
-        // cost. Not doing so will make the code panic as recording the call stipend
-        // will do an underflow.
-        let target_is_cold = self.executor.is_cold(code_address, None);
-        let delegated_designator_is_cold = self
-            .executor
-            .get_authority_target(code_address)
-            .map(|target| self.executor.is_cold(target, None));
-
-        let gas_cost = gasometer::GasCost::Call {
-            value: transfer.clone().map_or(U256_ZERO, |x| x.value),
-            gas: U256::from(gas_limit.unwrap_or(u64::MAX)),
-            target_is_cold,
-            delegated_designator_is_cold,
-            target_exists: self.executor.exists(code_address),
-        };
-
-        // We record the length of the input.
+        let value = transfer
+            .as_ref()
+            .map_or(U256_ZERO, |transfer| transfer.value);
+        if self.is_static && !value.is_zero() {
+            // The subcall fails as the `CALL` opcode does in a static context (execution specs:
+            // `WriteInStaticContext`), and the frame's gas is consumed.
+            self.executor.state.metadata_mut().gasometer.fail();
+            return (
+                ExitReason::Error(ExitError::InvalidCode(Opcode::CALL)),
+                Vec::new(),
+            );
+        }
+        // The input is priced as the memory a `CALL` reads it from, at offset zero.
         let memory_cost = Some(gasometer::MemoryCost {
             offset: 0,
             len: input.len(),
         });
-
+        let target_is_cold = self.executor.is_cold(code_address, None);
+        let prepared_memory_gas = match self.executor.state.metadata_mut().gasometer.check_gas(
+            gasometer::call_access_gas(target_is_cold, !value.is_zero(), self.executor.config),
+            memory_cost,
+        ) {
+            Ok(memory_gas) => memory_gas,
+            Err(error) => return (ExitReason::Error(error), Vec::new()),
+        };
+        let delegated_designator_is_cold =
+            gasometer::get_and_set_warm(self.executor, code_address, target_is_cold);
+        let gas_cost = gasometer::GasCost::Call {
+            value,
+            // `None` forwards the available gas in `call_inner`; it is not an explicit
+            // request for `u64::MAX`, which would fail the pre-EIP-150 affordability check.
+            gas: gas_limit.map_or(U256_ZERO, U256::from),
+            target_is_cold,
+            delegated_designator_is_cold,
+            target_exists: self.executor.exists(code_address),
+        };
         if let Err(error) = self
             .executor
             .state
             .metadata_mut()
             .gasometer
-            .record_dynamic_cost(gas_cost, memory_cost)
+            .record_dynamic_cost_prepared(gas_cost, memory_cost, Some(prepared_memory_gas))
         {
             return (ExitReason::Error(error), Vec::new());
         }

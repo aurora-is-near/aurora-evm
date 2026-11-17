@@ -6,8 +6,9 @@
 //! so such a witness validates the block; omitted code that runs must still fail it.
 
 use super::{
-    BlockExecutor, Spec, account, addr, block, chain_spec, empty_blob_schedule, legacy_transfer,
-    present,
+    BlockExecutor, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, Spec,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, account, addr, block, chain_spec, empty_blob_schedule,
+    legacy_transfer, present,
 };
 use crate::block::BlobExcessGasAndPrice;
 use crate::crypto::keccak256;
@@ -23,10 +24,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const COINBASE: H160 = H160::repeat_byte(0xcb);
 
-/// Executes a Cancun block of one transaction over `pre`, proven by a witness that omits the code
-/// of every account in `withheld`. The block makes no system calls, so the post-state is the
-/// transaction's alone.
+/// Executes a block of one transaction over `pre` under `spec`, proven by a witness that omits
+/// the code of every account in `withheld`. The block makes no pre-execution system calls, so
+/// the post-state is the transaction's alone.
 fn run_without_codes(
+    spec: Spec,
     pre: &BTreeMap<H160, MemoryAccount>,
     tx: TxEnv,
     withheld: &[H160],
@@ -43,14 +45,21 @@ fn run_without_codes(
     blk.block_number = U256::zero();
     blk.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice::default());
     let db = WitnessBackend::from_witness(blk.vicinity(1), witness, root, BTreeMap::new()).unwrap();
-    BlockExecutor::new(
-        chain_spec(Spec::Cancun, empty_blob_schedule()),
-        blk,
-        vec![tx],
-        db,
-    )
-    .unwrap()
-    .execute()
+    BlockExecutor::new(chain_spec(spec, empty_blob_schedule()), blk, vec![tx], db)
+        .unwrap()
+        .execute()
+}
+
+/// Prague ends a block with calls to the EIP-7002 and EIP-7251 request contracts, which must
+/// have code: `STOP` runtimes that return no requests.
+fn with_request_contracts(mut pre: BTreeMap<H160, MemoryAccount>) -> BTreeMap<H160, MemoryAccount> {
+    for address in [
+        WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+        CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+    ] {
+        pre.insert(address, account(0, 1, vec![0x00]));
+    }
+    pre
 }
 
 /// `pre` after a successful transaction from `caller` at gas price 1 over a zero base fee: the
@@ -114,7 +123,7 @@ fn extcodehash_of_an_account_whose_code_is_withheld_comes_from_its_leaf() {
     ]);
     let tx = legacy_transfer(caller, prober, U256::zero(), 0, 1);
 
-    let output = run_without_codes(&pre, tx, &[target]).unwrap();
+    let output = run_without_codes(Spec::Cancun, &pre, tx, &[target]).unwrap();
 
     // The hash the leaf carries: neither `KECCAK_EMPTY` from empty bytes nor zero from absence.
     let target_hash = keccak256(&target_code);
@@ -145,7 +154,7 @@ fn withheld_code_of_an_executed_contract_still_fails_the_block() {
     let tx = legacy_transfer(caller, prober, U256::zero(), 0, 1);
 
     assert_eq!(
-        run_without_codes(&pre, tx, &[prober, target]).unwrap_err(),
+        run_without_codes(Spec::Cancun, &pre, tx, &[prober, target]).unwrap_err(),
         BlockExecutionError::MissingWitness(WitnessDbError::Code {
             address: prober,
             code_hash: keccak256(&store_extcodehash(target)),
@@ -168,7 +177,7 @@ fn selfdestruct_to_a_contract_whose_code_is_withheld_sees_it_exist() {
     ]);
     let tx = legacy_transfer(caller, destroyer, U256::zero(), 0, 1);
 
-    let output = run_without_codes(&pre, tx, &[beneficiary]).unwrap();
+    let output = run_without_codes(Spec::Cancun, &pre, tx, &[beneficiary]).unwrap();
 
     // Intrinsic gas, `PUSH20`, `SELFDESTRUCT` and a cold beneficiary; no new-account charge.
     assert_eq!(output.result.gas_used, 21_000 + 3 + 5_000 + 2_600);
@@ -203,7 +212,7 @@ fn create2_collision_with_a_contract_whose_code_is_withheld_is_detected() {
     let mut tx = legacy_transfer(caller, creator, U256::zero(), 0, 1);
     tx.gas_limit = 1_000_000;
 
-    let output = run_without_codes(&pre, tx, &[occupant]).unwrap();
+    let output = run_without_codes(Spec::Cancun, &pre, tx, &[occupant]).unwrap();
 
     assert!(output.result.receipts[0].success);
     assert!(!output.state.codes.contains_key(&keccak256(&occupant_code)));
@@ -219,4 +228,121 @@ fn create2_collision_with_a_contract_whose_code_is_withheld_is_detected() {
     let mut expected = settled(&pre, caller, output.result.gas_used);
     expected.get_mut(&creator).unwrap().nonce = U256::from(2u64);
     assert_eq!(witness_state_root(&output.state), Ok(state_root(&expected)));
+}
+
+/// `BALANCE(target)`, then `CALL(target, value 1)` with every other operand zero.
+fn balance_then_value_call(target: H160) -> Vec<u8> {
+    let mut code = vec![0x73];
+    code.extend_from_slice(target.as_bytes());
+    code.extend_from_slice(&[
+        0x31, 0x50, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 1, 0x73,
+    ]);
+    code.extend_from_slice(target.as_bytes());
+    code.extend_from_slice(&[0x60, 0, 0xf1, 0x00]);
+    code
+}
+
+/// `STATICCALL(target)` with every other operand zero.
+fn static_call(target: H160) -> Vec<u8> {
+    let mut code = vec![0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73];
+    code.extend_from_slice(target.as_bytes());
+    code.extend_from_slice(&[0x60, 0, 0xfa, 0x00]);
+    code
+}
+
+/// From Prague a `CALL`-family target is inspected for an EIP-7702 delegation, which needs its
+/// code. The reference client charges the value transfer first and never loads a target it
+/// cannot pay for, so its witness carries the leaf the `BALANCE` loaded but not the code.
+#[test]
+fn a_call_that_cannot_pay_the_value_transfer_needs_no_code_of_its_target() {
+    let caller = addr(0xca);
+    let prober = addr(0xc1);
+    let target = addr(0xc2);
+    let target_code = vec![0x60, 0x01, 0x00];
+    let pre = with_request_contracts(BTreeMap::from([
+        (caller, account(1_000_000, 0, vec![])),
+        (prober, account(1, 1, balance_then_value_call(target))),
+        (target, account(0, 1, target_code.clone())),
+    ]));
+    // 1 374 gas remain at the call: below the 9 000 the transfer costs.
+    let mut tx = legacy_transfer(caller, prober, U256::zero(), 0, 1);
+    tx.gas_limit = 25_000;
+
+    let output = run_without_codes(Spec::Prague, &pre, tx, &[target]).unwrap();
+
+    assert!(!output.result.receipts[0].success);
+    assert_eq!(output.result.gas_used, 25_000);
+    assert!(!output.state.codes.contains_key(&keccak256(&target_code)));
+    let expected = settled(&pre, caller, 25_000);
+    assert_eq!(witness_state_root(&output.state), Ok(state_root(&expected)));
+}
+
+/// The same for the cold-access cost: a cold target the call cannot pay for is never loaded,
+/// neither its leaf nor its code.
+#[test]
+fn a_static_call_that_cannot_pay_the_cold_access_needs_no_code_of_its_target() {
+    let caller = addr(0xca);
+    let prober = addr(0xc1);
+    let target = addr(0xc2);
+    let target_code = vec![0x60, 0x01, 0x00];
+    let pre = with_request_contracts(BTreeMap::from([
+        (caller, account(1_000_000, 0, vec![])),
+        (prober, account(0, 1, static_call(target))),
+        (target, account(0, 1, target_code.clone())),
+    ]));
+    // 2 000 gas remain at the call: below the 2 600 a cold account costs.
+    let gas_limit = 21_000 + 18 + 2_000;
+    let mut tx = legacy_transfer(caller, prober, U256::zero(), 0, 1);
+    tx.gas_limit = gas_limit;
+
+    let output = run_without_codes(Spec::Prague, &pre, tx, &[target]).unwrap();
+
+    assert!(!output.result.receipts[0].success);
+    assert_eq!(output.result.gas_used, gas_limit);
+    assert!(!output.state.codes.contains_key(&keccak256(&target_code)));
+    let expected = settled(&pre, caller, gas_limit);
+    assert_eq!(witness_state_root(&output.state), Ok(state_root(&expected)));
+}
+
+/// The second hop: a delegated target is loaded with its designator, but the delegate it points
+/// to is loaded only once its own access cost is affordable. The reference client stops there
+/// without the delegate, so its witness carries the designator and not the delegate's code.
+#[test]
+fn a_call_that_cannot_pay_the_delegate_access_needs_no_code_of_the_delegate() {
+    let caller = addr(0xca);
+    let prober = addr(0xc1);
+    let target = addr(0xc2);
+    let delegate = addr(0xd1);
+    let delegate_code = vec![0x60, 0x01, 0x00];
+    let mut designator = vec![0xef, 0x01, 0x00];
+    designator.extend_from_slice(delegate.as_bytes());
+    let pre = with_request_contracts(BTreeMap::from([
+        (caller, account(1_000_000, 0, vec![])),
+        (prober, account(0, 1, static_call(target))),
+        (target, account(0, 1, designator)),
+        (delegate, account(0, 1, delegate_code.clone())),
+    ]));
+    // 3 000 gas remain at the call: enough for the cold target, not for the cold delegate too.
+    let gas_limit = 21_000 + 18 + 3_000;
+    let mut tx = legacy_transfer(caller, prober, U256::zero(), 0, 1);
+    tx.gas_limit = gas_limit;
+
+    let output = run_without_codes(Spec::Prague, &pre, tx, &[delegate]).unwrap();
+
+    assert!(!output.result.receipts[0].success);
+    assert_eq!(output.result.gas_used, gas_limit);
+    assert!(!output.state.codes.contains_key(&keccak256(&delegate_code)));
+    let expected = settled(&pre, caller, gas_limit);
+    assert_eq!(witness_state_root(&output.state), Ok(state_root(&expected)));
+
+    // With gas to spare the delegate runs, and its code is owed.
+    let mut tx = legacy_transfer(caller, prober, U256::zero(), 0, 1);
+    tx.gas_limit = 100_000;
+    assert_eq!(
+        run_without_codes(Spec::Prague, &pre, tx, &[delegate]).unwrap_err(),
+        BlockExecutionError::MissingWitness(WitnessDbError::Code {
+            address: delegate,
+            code_hash: keccak256(&delegate_code),
+        })
+    );
 }

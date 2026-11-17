@@ -147,20 +147,14 @@ impl Backend for MemoryBackend<'_> {
     }
 
     fn basic(&self, address: H160) -> Basic {
-        self.state
-            .get(&address)
-            .map(|a| Basic {
-                balance: a.balance,
-                nonce: a.nonce,
-            })
-            .unwrap_or_default()
+        self.state.get(&address).map_or_default(|a| Basic {
+            balance: a.balance,
+            nonce: a.nonce,
+        })
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
-        self.state
-            .get(&address)
-            .map(|v| v.code.clone())
-            .unwrap_or_default()
+        self.state.get(&address).map_or_default(|v| v.code.clone())
     }
 
     fn code_hash(&self, address: H160) -> H256 {
@@ -176,8 +170,7 @@ impl Backend for MemoryBackend<'_> {
     fn storage(&self, address: H160, index: H256) -> H256 {
         self.state
             .get(&address)
-            .map(|v| v.storage.get(&index).copied().unwrap_or_default())
-            .unwrap_or_default()
+            .map_or_default(|v| v.storage.get(&index).copied().unwrap_or_default())
     }
 
     fn is_empty_storage(&self, address: H160) -> bool {

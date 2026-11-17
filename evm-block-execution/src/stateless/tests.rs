@@ -1,10 +1,13 @@
+mod code_withheld;
 mod eest;
 mod minimal_witness;
+mod oog_gates;
 mod post_execution;
 
 use super::{StatelessValidationError, stateless_validation};
 use crate::block::{
     AncestorChainError, Block, BlockBody, BlockRecoveryError, BlockValidationError, Header,
+    UncompressedPublicKey,
 };
 use crate::chain_spec::ChainSpec;
 use crate::eips::eip1559::BaseFeeParams;
@@ -14,6 +17,7 @@ use crate::execution_types::witness::ExecutionWitness;
 use crate::spec::Spec;
 use crate::system_calls::BEACON_ROOTS_ADDRESS;
 use crate::test_utils::witness_of;
+use crate::transaction::{SignedTxEnvelope, SignedTxLegacy, TxKind, TxLegacy, TxSignature};
 use crate::witness_backend::{RevealedAccount, WitnessDbError, WitnessStateError};
 use aurora_evm::backend::MemoryAccount;
 use hex_literal::hex;
@@ -296,4 +300,40 @@ fn a_witness_without_the_pre_state_root_is_rejected_before_execution() {
             pre_state_root: state_root
         })
     );
+}
+
+/// The sender: secret key 1, whose public key is the secp256k1 generator.
+fn sender_key() -> (libsecp256k1::SecretKey, UncompressedPublicKey) {
+    let mut secret = [0u8; 32];
+    secret[31] = 1;
+    let secret = libsecp256k1::SecretKey::parse(&secret).unwrap();
+    let public = libsecp256k1::PublicKey::from_secret_key(&secret).serialize();
+    (secret, UncompressedPublicKey(public))
+}
+
+/// A legacy call at gas price 2, signed under chain id 1.
+fn signed_call(secret: &libsecp256k1::SecretKey, target: H160, gas_limit: u64) -> SignedTxEnvelope {
+    let tx = TxLegacy {
+        chain_id: Some(1),
+        nonce: U256::zero(),
+        gas_price: U256::from(2),
+        gas_limit,
+        to: TxKind::Call(target),
+        value: U256::zero(),
+        data: Vec::new(),
+    };
+    let unsigned = SignedTxEnvelope::Legacy(SignedTxLegacy {
+        tx: tx.clone(),
+        signature: TxSignature::new(false, U256::zero(), U256::zero()),
+    });
+    let message = libsecp256k1::Message::parse(&unsigned.signature_hash().0);
+    let (signature, recovery_id) = libsecp256k1::sign(&message, secret);
+    SignedTxEnvelope::Legacy(SignedTxLegacy {
+        tx,
+        signature: TxSignature::new(
+            recovery_id.serialize() == 1,
+            U256::from_big_endian(&signature.r.b32()),
+            U256::from_big_endian(&signature.s.b32()),
+        ),
+    })
 }
