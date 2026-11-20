@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `Config` adds `has_static_call` and `create_fails_on_code_deposit_oog`.
+  Exhaustive struct literals must supply both fields; existing preset constructors set
+  them according to the corresponding EIP-214 and EIP-2 rules.
 - CREATE and CREATE2 validate the EIP-3860 initcode size and charge its word cost during
   opcode pricing, before copying or hashing initcode and invoking the creation handler.
   The initcode fee is included in `RecordDynamicCost`, replacing the later `RecordCost`
@@ -42,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Static calls with custom pre-EIP-161 account-existence rules no longer materialize
+  absent accounts through touches or zero-value transfers. Existing-account touches
+  and CALL pricing are unchanged, including the new-account fee for nested zero-value
+  CALLs and subsequent nonstatic CALLs to the same absent address.
+- STATICCALL is rejected before stack or state access when disabled by `Config` and
+  never charges the new-account fee, including with custom account-existence rules.
+- Frontier contract creation preserves initcode effects and returns an empty contract
+  when code-deposit gas is insufficient. EIP-2 configurations still fail creation.
+- Code-deposit cost overflow now fails the gasometer with `OutOfGas` instead of
+  overflowing or wrapping the charge in the public `Gasometer::record_deposit` method.
 - A final CREATE or CREATE2 exceeding the EIP-3860 initcode limit or unable to pay its
   initcode charge now aborts and rolls back the calling frame through opcode pricing,
   instead of allowing the frame to succeed at end of code with a failed gasometer.
