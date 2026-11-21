@@ -208,6 +208,8 @@ pub struct Config {
     pub empty_considered_exists: bool,
     /// Whether create transactions and create opcode increases nonce by one.
     pub create_increase_nonce: bool,
+    /// EIP-2: fail creation if the returned code cannot be deposited.
+    pub create_fails_on_code_deposit_oog: bool,
     /// Stack limit.
     pub stack_limit: usize,
     /// Memory limit.
@@ -222,6 +224,12 @@ pub struct Config {
     pub call_stipend: u64,
     /// Has delegate call.
     pub has_delegate_call: bool,
+    /// EIP-214: enable STATICCALL independently of return-data opcodes.
+    ///
+    /// With `empty_considered_exists`, static calls preserve absent accounts while
+    /// still touching existing ones. Nested zero-value CALLs retain the configured
+    /// new-account fee; their static context does not change opcode pricing.
+    pub has_static_call: bool,
     /// Has create2.
     pub has_create2: bool,
     /// Has revert.
@@ -306,6 +314,7 @@ impl Config {
             err_on_call_with_more_gas: true,
             empty_considered_exists: true,
             create_increase_nonce: false,
+            create_fails_on_code_deposit_oog: false,
             call_l64_after_gas: false,
             stack_limit: 1024,
             memory_limit: usize::MAX,
@@ -314,6 +323,7 @@ impl Config {
             max_initcode_size: None,
             call_stipend: 2300,
             has_delegate_call: false,
+            has_static_call: false,
             has_create2: false,
             has_revert: false,
             has_return_data: false,
@@ -372,6 +382,7 @@ impl Config {
             err_on_call_with_more_gas: false,
             empty_considered_exists: false,
             create_increase_nonce: true,
+            create_fails_on_code_deposit_oog: true,
             call_l64_after_gas: true,
             stack_limit: 1024,
             memory_limit: usize::MAX,
@@ -380,6 +391,7 @@ impl Config {
             max_initcode_size: None,
             call_stipend: 2300,
             has_delegate_call: true,
+            has_static_call: true,
             has_create2: true,
             has_revert: true,
             has_return_data: true,
@@ -515,6 +527,7 @@ impl Config {
             err_on_call_with_more_gas: false,
             empty_considered_exists: false,
             create_increase_nonce: true,
+            create_fails_on_code_deposit_oog: true,
             call_l64_after_gas: true,
             stack_limit: 1024,
             memory_limit: usize::MAX,
@@ -523,6 +536,7 @@ impl Config {
             max_initcode_size,
             call_stipend: 2300,
             has_delegate_call: true,
+            has_static_call: true,
             has_create2: true,
             has_revert: true,
             has_return_data: true,

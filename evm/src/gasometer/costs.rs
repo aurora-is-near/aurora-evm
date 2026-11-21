@@ -4,6 +4,15 @@ use crate::gasometer::consts;
 use crate::Config;
 use primitive_types::{H256, U256};
 
+/// Code-deposit gas, without charging or changing the gasometer on failure.
+#[inline]
+pub fn code_deposit_cost(len: usize) -> Result<u64, ExitError> {
+    u64::try_from(len)
+        .ok()
+        .and_then(|len| len.checked_mul(u64::from(consts::G_CODEDEPOSIT)))
+        .ok_or(ExitError::OutOfGas)
+}
+
 pub fn call_extra_check(gas: U256, after_gas: u64, config: &Config) -> Result<(), ExitError> {
     if config.err_on_call_with_more_gas && U256::from(after_gas) < gas {
         Err(ExitError::OutOfGas)
@@ -289,7 +298,7 @@ pub fn call_cost(
     is_cold: bool,
     delegated_designator_is_cold: Option<bool>,
     is_call_or_callcode: bool,
-    is_call_or_staticcall: bool,
+    is_call: bool,
     new_account: bool,
     config: &Config,
 ) -> u64 {
@@ -300,7 +309,7 @@ pub fn call_cost(
         config.gas_call,
         config,
     ) + xfer_cost(is_call_or_callcode, transfers_value)
-        + new_cost(is_call_or_staticcall, new_account, transfers_value, config)
+        + new_cost(is_call, new_account, transfers_value, config)
 }
 
 pub const fn non_delegated_access_cost(is_cold: bool, regular_value: u64, config: &Config) -> u64 {
@@ -346,14 +355,9 @@ fn xfer_cost(is_call_or_callcode: bool, transfers_value: bool) -> u64 {
     }
 }
 
-fn new_cost(
-    is_call_or_staticcall: bool,
-    new_account: bool,
-    transfers_value: bool,
-    config: &Config,
-) -> u64 {
+fn new_cost(is_call: bool, new_account: bool, transfers_value: bool, config: &Config) -> u64 {
     let eip161 = !config.empty_considered_exists;
-    if is_call_or_staticcall {
+    if is_call {
         if eip161 {
             if transfers_value && new_account {
                 u64::from(consts::G_NEWACCOUNT)

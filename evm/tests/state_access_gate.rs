@@ -321,6 +321,44 @@ fn cases() -> Vec<Case> {
     ]
 }
 
+#[test]
+fn disabled_staticcall_rejects_before_stack_or_state_access() {
+    for mut config in [Config::frontier(), Config::osaka()] {
+        config.has_static_call = false;
+        for probe in [
+            staticcall(0),
+            Probe {
+                code: vec![0xfa],
+                push_gas: 0,
+            },
+        ] {
+            let mut case = Case::new("disabled STATICCALL", probe, 0);
+            case.config = config.clone();
+            let outcome = run(&case, 100_000);
+            assert_eq!(
+                outcome.reason,
+                ExitReason::Error(ExitError::InvalidCode(Opcode::STATICCALL))
+            );
+
+            assert_eq!(outcome.used, outcome.limit);
+            assert_eq!(outcome.reads, 0);
+            assert_eq!(outcome.delegate_reads, 0);
+        }
+    }
+}
+
+#[test]
+fn staticcall_flag_is_independent_of_return_data() {
+    let mut case = Case::new("custom STATICCALL", staticcall(0), 40);
+    case.config = Config::frontier();
+    case.config.has_static_call = true;
+    assert!(!case.config.has_return_data);
+
+    let outcome = run(&case, 40);
+    assert!(outcome.reason.is_succeed());
+    assert_eq!(outcome.used, outcome.limit);
+}
+
 /// What a transaction did, run with `gas_left` at its probed opcode.
 #[derive(Debug)]
 struct Outcome {
