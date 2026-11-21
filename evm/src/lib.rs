@@ -49,5 +49,6 @@ pub mod backend;
 pub mod core;
 pub mod executor;
 pub mod gasometer;
+mod macros;
 pub mod maybe_borrowed;
 pub mod runtime;
