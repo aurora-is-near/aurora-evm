@@ -17,6 +17,9 @@ pub const KECCAK_EMPTY: H256 = H256([
 
 /// `keccak256` of the code bytes.
 pub(crate) fn code_hash_of(code: &[u8]) -> H256 {
+    if code.is_empty() {
+        return KECCAK_EMPTY;
+    }
     H256::from_slice(<[u8; 32]>::from(Keccak256::digest(code)).as_slice())
 }
 
