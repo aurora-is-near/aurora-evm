@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, fail with `InvalidCode` even when their memory operands are missing or do not fit
   memory, where `StackUnderflow` or `OutOfGas` was reported before; all gas is consumed
   either way.
+- The `std` feature no longer enables the optional tracing, SCALE, or Serde dependencies
+  on its own; it still forwards their `std` features when they are enabled.
 
 ### Removed
 

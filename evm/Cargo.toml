@@ -35,10 +35,10 @@ std = [
     "primitive-types/std",
     "rlp/std",
     "sha3/std",
-    "environmental/std",
-    "scale-codec/std",
-    "scale-info/std",
-    "serde/std",
+    "environmental?/std",
+    "scale-codec?/std",
+    "scale-info?/std",
+    "serde?/std",
 ]
 with-codec = [
     "scale-codec",
