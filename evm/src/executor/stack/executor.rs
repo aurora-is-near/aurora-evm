@@ -1240,7 +1240,14 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         }
 
         self.enter_substate(gas_limit, is_static);
-        self.state.touch(context.address);
+        // The entered frame inherits static mode from its caller.
+        let frame_is_static = self.state.metadata().is_static();
+        // Custom pre-EIP-161 static calls must preserve absence in the journal itself:
+        // a temporary empty entry would also suppress a later CALL's new-account fee.
+        let preserve_absence = self.config.empty_considered_exists && frame_is_static;
+        if !preserve_absence || self.state.exists(context.address) {
+            self.state.touch(context.address);
+        }
 
         if let Some(depth) = self.state.metadata().depth {
             if depth > self.config.call_stack_limit {
@@ -1251,7 +1258,19 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 
         // Transfer funds if needed
         if let Some(transfer) = transfer {
-            match self.state.transfer(transfer) {
+            let result = if preserve_absence && transfer.value == U256_ZERO {
+                // Keep touches of existing accounts, but do not let a zero transfer
+                // materialize either endpoint. CALL pricing is unchanged.
+                for address in [transfer.source, transfer.target] {
+                    if address != context.address && self.state.exists(address) {
+                        self.state.touch(address);
+                    }
+                }
+                Ok(())
+            } else {
+                self.state.transfer(transfer)
+            };
+            match result {
                 Ok(()) => (),
                 Err(e) => {
                     let _ = self.exit_substate(&StackExitKind::Reverted);
@@ -1260,17 +1279,13 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
             }
         }
 
-        // At this point, the state has been modified in enter_substate to
-        // reflect both the is_static parameter of this call and the is_static
-        // of the caller context.
-        let precompile_is_static = self.state.metadata().is_static();
         if let Some(result) = self.precompile_set.execute(&mut StackExecutorHandle {
             executor: self,
             code_address,
             input: &input,
             gas_limit: Some(gas_limit),
             context: &context,
-            is_static: precompile_is_static,
+            is_static: frame_is_static,
         }) {
             // A precompile cannot turn a failed gas charge into success or a revert.
             let result = match (result, self.state.metadata().gasometer.check()) {
@@ -1338,7 +1353,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
 
         match reason {
             ExitReason::Succeed(s) => {
-                let out = return_data;
+                let mut out = return_data;
                 let address = created_address;
                 // As of EIP-3541 code starting with 0xef cannot be deployed
                 if let Err(e) = check_first_byte_eof_magic(self.config, &out) {
@@ -1355,11 +1370,18 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                     }
                 }
 
-                match self
-                    .state
-                    .metadata_mut()
-                    .gasometer
-                    .record_deposit(out.len())
+                // EELS Frontier keeps initcode effects and gas when code deposit cannot be
+                // paid. Price without charging so this case does not fail the gasometer.
+                let mut deposit_cost = gasometer::code_deposit_cost(out.len());
+                if !self.config.create_fails_on_code_deposit_oog
+                    && !deposit_cost.as_ref().is_ok_and(|&cost| cost <= self.gas())
+                {
+                    out.clear();
+                    deposit_cost = Ok(0);
+                }
+
+                match deposit_cost
+                    .and_then(|cost| self.state.metadata_mut().gasometer.record_cost(cost))
                 {
                     Ok(()) => {
                         let exit_result = self.exit_substate(&StackExitKind::Succeeded);
@@ -1374,6 +1396,8 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
                         (ExitReason::Succeed(s), Some(address), Vec::new())
                     }
                     Err(e) => {
+                        // Pricing overflow must fail the frame just like an unaffordable charge.
+                        self.state.metadata_mut().gasometer.fail();
                         let _ = self.exit_substate(&StackExitKind::Failed);
                         (ExitReason::Error(e), None, Vec::new())
                     }

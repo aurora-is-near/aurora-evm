@@ -1,5 +1,6 @@
 use super::Control;
 use crate::core::utils::{U256_ZERO, U64_MAX, USIZE_MAX};
+use crate::macros::{as_usize_or_fail, pop_h256, pop_u256, push_h256, push_u256, try_or_fail};
 use crate::prelude::*;
 use crate::{
     CallScheme, Capture, Context, CreateScheme, ExitError, ExitSucceed, Handler, Runtime, Transfer,
@@ -9,7 +10,7 @@ use primitive_types::{H256, U256};
 use sha3::{Digest, Keccak256};
 
 pub fn sha3<H: Handler>(runtime: &mut Runtime) -> Control<H> {
-    pop_u256!(runtime, from, len);
+    pop_u256!(runtime.machine, from, len);
 
     // Cast to `usize` after length checking to avoid overflow
     let from = if len == U256_ZERO {
@@ -27,67 +28,70 @@ pub fn sha3<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     };
 
     let ret = Keccak256::digest(data.as_slice());
-    push_h256!(runtime, H256::from_slice(<[u8; 32]>::from(ret).as_slice()));
+    push_h256!(
+        runtime.machine,
+        H256::from_slice(<[u8; 32]>::from(ret).as_slice())
+    );
 
     Control::Continue
 }
 
 pub fn chainid<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.chain_id());
+    push_u256!(runtime.machine, handler.chain_id());
 
     Control::Continue
 }
 
 pub fn address<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     let ret = H256::from(runtime.context.address);
-    push_h256!(runtime, ret);
+    push_h256!(runtime.machine, ret);
 
     Control::Continue
 }
 
 pub fn balance<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    pop_h256!(runtime, address);
-    push_u256!(runtime, handler.balance(address.into()));
+    pop_h256!(runtime.machine, address);
+    push_u256!(runtime.machine, handler.balance(address.into()));
 
     Control::Continue
 }
 
 pub fn selfbalance<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.balance(runtime.context.address));
+    push_u256!(runtime.machine, handler.balance(runtime.context.address));
 
     Control::Continue
 }
 
 pub fn origin<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     let ret = H256::from(handler.origin());
-    push_h256!(runtime, ret);
+    push_h256!(runtime.machine, ret);
 
     Control::Continue
 }
 
 pub fn caller<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     let ret = H256::from(runtime.context.caller);
-    push_h256!(runtime, ret);
+    push_h256!(runtime.machine, ret);
 
     Control::Continue
 }
 
 pub fn callvalue<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     let ret = H256(runtime.context.apparent_value.to_big_endian());
-    push_h256!(runtime, ret);
+    push_h256!(runtime.machine, ret);
 
     Control::Continue
 }
 
 pub fn gasprice<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     let ret = H256(handler.gas_price().to_big_endian());
-    push_h256!(runtime, ret);
+    push_h256!(runtime.machine, ret);
 
     Control::Continue
 }
 
 pub fn base_fee<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.block_base_fee_per_gas());
+    push_u256!(runtime.machine, handler.block_base_fee_per_gas());
     Control::Continue
 }
 
@@ -95,7 +99,7 @@ pub fn base_fee<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
 /// EIP-7516: BLOBBASEFEE opcode
 pub fn blob_base_fee<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     let blob_base_fee = U256::from(handler.blob_base_fee().unwrap_or_default());
-    push_u256!(runtime, blob_base_fee);
+    push_u256!(runtime.machine, blob_base_fee);
     Control::Continue
 }
 
@@ -128,24 +132,24 @@ pub fn blob_hash<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
 
 /// NOTE: For EIP-7702 should return 2 (size of `0xEF01`)
 pub fn extcodesize<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
-    pop_h256!(runtime, address);
-    push_u256!(runtime, handler.code_size(address.into()));
+    pop_h256!(runtime.machine, address);
+    push_u256!(runtime.machine, handler.code_size(address.into()));
 
     Control::Continue
 }
 
 /// NOTE: For EIP-7702 should return  `keccak(0xEF01)`
 pub fn extcodehash<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
-    pop_h256!(runtime, address);
-    push_h256!(runtime, handler.code_hash(address.into()));
+    pop_h256!(runtime.machine, address);
+    push_h256!(runtime.machine, handler.code_hash(address.into()));
 
     Control::Continue
 }
 
 /// NOTE: For EIP-7702 should not copy from designated address
 pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    pop_h256!(runtime, address);
-    pop_u256!(runtime, memory_offset, code_offset, len);
+    pop_h256!(runtime.machine, address);
+    pop_u256!(runtime.machine, memory_offset, code_offset, len);
 
     if len == U256_ZERO {
         return Control::Continue;
@@ -174,13 +178,13 @@ pub fn extcodecopy<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H>
 
 pub fn returndatasize<H: Handler>(runtime: &mut Runtime) -> Control<H> {
     let size = U256::from(runtime.return_data_buffer.len());
-    push_u256!(runtime, size);
+    push_u256!(runtime.machine, size);
 
     Control::Continue
 }
 
 pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
-    pop_u256!(runtime, memory_offset, data_offset, len);
+    pop_u256!(runtime.machine, memory_offset, data_offset, len);
 
     // If `len` is zero then nothing happens to the memory, regardless
     // of the value of `memory_offset`. In particular, the value taken
@@ -221,35 +225,35 @@ pub fn returndatacopy<H: Handler>(runtime: &mut Runtime) -> Control<H> {
 }
 
 pub fn blockhash<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    pop_u256!(runtime, number);
-    push_h256!(runtime, handler.block_hash(number));
+    pop_u256!(runtime.machine, number);
+    push_h256!(runtime.machine, handler.block_hash(number));
 
     Control::Continue
 }
 
 pub fn coinbase<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_h256!(runtime, handler.block_coinbase());
+    push_h256!(runtime.machine, handler.block_coinbase());
     Control::Continue
 }
 
 pub fn timestamp<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.block_timestamp());
+    push_u256!(runtime.machine, handler.block_timestamp());
     Control::Continue
 }
 
 pub fn number<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.block_number());
+    push_u256!(runtime.machine, handler.block_number());
     Control::Continue
 }
 
 pub fn difficulty<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.block_difficulty());
+    push_u256!(runtime.machine, handler.block_difficulty());
     Control::Continue
 }
 
 pub fn prevrandao<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
     if let Some(rand) = handler.block_randomness() {
-        push_h256!(runtime, rand);
+        push_h256!(runtime.machine, rand);
         Control::Continue
     } else {
         difficulty(runtime, handler)
@@ -257,14 +261,14 @@ pub fn prevrandao<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> 
 }
 
 pub fn gaslimit<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.block_gas_limit());
+    push_u256!(runtime.machine, handler.block_gas_limit());
     Control::Continue
 }
 
 pub fn sload<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    pop_h256!(runtime, index);
+    pop_h256!(runtime.machine, index);
     let value = handler.storage(runtime.context.address, index);
-    push_h256!(runtime, value);
+    push_h256!(runtime.machine, value);
 
     event!(SLoad {
         address: runtime.context.address,
@@ -276,7 +280,7 @@ pub fn sload<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
 }
 
 pub fn sstore<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
-    pop_h256!(runtime, index, value);
+    pop_h256!(runtime.machine, index, value);
 
     event!(SStore {
         address: runtime.context.address,
@@ -315,8 +319,8 @@ pub fn tload<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
 /// EIP-1153: Transient storage
 /// Store value to transient storage
 pub fn tstore<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
-    pop_h256!(runtime, index);
-    pop_u256!(runtime, value);
+    pop_h256!(runtime.machine, index);
+    pop_u256!(runtime.machine, value);
     match handler.tstore(runtime.context.address, index, value) {
         Ok(()) => Control::Continue,
         Err(e) => Control::Exit(e.into()),
@@ -326,7 +330,7 @@ pub fn tstore<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> 
 /// CANCUN hard fork
 /// EIP-5656: MCOPY - Memory copying instruction
 pub fn mcopy<H: Handler>(runtime: &mut Runtime, _handler: &mut H) -> Control<H> {
-    pop_u256!(runtime, dst, src, len);
+    pop_u256!(runtime.machine, dst, src, len);
     if len == U256_ZERO {
         return Control::Continue;
     }
@@ -349,13 +353,13 @@ pub fn mcopy<H: Handler>(runtime: &mut Runtime, _handler: &mut H) -> Control<H> 
 }
 
 pub fn gas<H: Handler>(runtime: &mut Runtime, handler: &H) -> Control<H> {
-    push_u256!(runtime, handler.gas_left());
+    push_u256!(runtime.machine, handler.gas_left());
 
     Control::Continue
 }
 
 pub fn log<H: Handler>(runtime: &mut Runtime, n: u8, handler: &mut H) -> Control<H> {
-    pop_u256!(runtime, offset, len);
+    pop_u256!(runtime.machine, offset, len);
 
     // Cast to `usize` after length checking to avoid overflow
     let offset = if len == U256_ZERO {
@@ -400,7 +404,7 @@ pub fn log<H: Handler>(runtime: &mut Runtime, n: u8, handler: &mut H) -> Control
 ///  * <https://github.com/ethereum/go-ethereum/blob/141cd425310b503c5678e674a8c3872cf46b7086/core/state/statedb.go#L449>
 ///  * <https://eips.ethereum.org/EIPS/eip-6780>
 pub fn selfdestruct<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Control<H> {
-    pop_h256!(runtime, target);
+    pop_h256!(runtime.machine, target);
 
     match handler.mark_delete(runtime.context.address, target.into()) {
         Ok(()) => (),
@@ -413,7 +417,7 @@ pub fn selfdestruct<H: Handler>(runtime: &mut Runtime, handler: &mut H) -> Contr
 pub fn create<H: Handler>(runtime: &mut Runtime, is_create2: bool, handler: &mut H) -> Control<H> {
     runtime.return_data_buffer = Vec::new();
 
-    pop_u256!(runtime, value, code_offset, len);
+    pop_u256!(runtime.machine, value, code_offset, len);
 
     // Cast to `usize` after length checking to avoid overflow
     let code_offset = if len == U256_ZERO {
@@ -431,7 +435,7 @@ pub fn create<H: Handler>(runtime: &mut Runtime, is_create2: bool, handler: &mut
     };
 
     let scheme = if is_create2 {
-        pop_h256!(runtime, salt);
+        pop_h256!(runtime.machine, salt);
         let code_hash = H256::from_slice(<[u8; 32]>::from(Keccak256::digest(&code)).as_slice());
         CreateScheme::Create2 {
             caller: runtime.context.address,
@@ -467,8 +471,8 @@ pub fn create<H: Handler>(runtime: &mut Runtime, is_create2: bool, handler: &mut
 pub fn call<H: Handler>(runtime: &mut Runtime, scheme: CallScheme, handler: &mut H) -> Control<H> {
     runtime.return_data_buffer = Vec::new();
 
-    pop_u256!(runtime, gas);
-    pop_h256!(runtime, to);
+    pop_u256!(runtime.machine, gas);
+    pop_h256!(runtime.machine, to);
     let gas = if gas > U64_MAX {
         None
     } else {
@@ -477,14 +481,14 @@ pub fn call<H: Handler>(runtime: &mut Runtime, scheme: CallScheme, handler: &mut
 
     let value = match scheme {
         CallScheme::Call | CallScheme::CallCode => {
-            pop_u256!(runtime, value);
+            pop_u256!(runtime.machine, value);
             value
         }
         CallScheme::DelegateCall | CallScheme::StaticCall => U256_ZERO,
     };
 
-    pop_u256!(runtime, in_offset, in_len);
-    pop_u256!(runtime, out_offset, out_len);
+    pop_u256!(runtime.machine, in_offset, in_len);
+    pop_u256!(runtime.machine, out_offset, out_len);
 
     // Cast to `usize` after length checking to avoid overflow
     let in_offset = if in_len == U256_ZERO {

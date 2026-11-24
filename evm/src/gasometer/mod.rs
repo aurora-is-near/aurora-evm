@@ -45,6 +45,8 @@ mod costs;
 mod memory;
 mod utils;
 
+pub(crate) use costs::code_deposit_cost;
+
 use crate::core::utils::U256_ZERO;
 use crate::core::{ExitError, Opcode, Stack};
 use crate::prelude::*;
@@ -244,15 +246,15 @@ impl<'config> Gasometer<'config> {
         self.record_refund(refund)
     }
 
-    /// Record `CREATE` code deposit.
+    /// Charge for depositing `len` bytes of contract code.
     ///
     /// # Errors
-    /// Return `ExitError`
-    /// NOTE: in that context usize->u64 `as_conversions` is save
-    #[allow(clippy::as_conversions)]
+    /// Returns `OutOfGas` and fails the gasometer if the cost overflows or exceeds
+    /// the remaining gas. A previously failed gasometer retains its error.
     #[inline]
     pub fn record_deposit(&mut self, len: usize) -> Result<(), ExitError> {
-        let cost = len as u64 * u64::from(consts::G_CODEDEPOSIT);
+        self.inner.as_ref().map_err(Clone::clone)?;
+        let cost = try_or_fail!(self.inner, code_deposit_cost(len));
         self.record_cost(cost)
     }
 
@@ -936,7 +938,7 @@ pub(crate) fn dynamic_opcode_cost<H: Handler>(
                 },
             }
         }
-        Opcode::STATICCALL => {
+        Opcode::STATICCALL if config.has_static_call => {
             let target = stack.peek_h256(1)?.into();
             call_memory = Some(peek_memory_cost(stack, 2, 3)?.join(peek_memory_cost(stack, 4, 5)?));
             let target_is_cold = handler.is_cold(target, None);
@@ -956,6 +958,7 @@ pub(crate) fn dynamic_opcode_cost<H: Handler>(
                 },
             }
         }
+        Opcode::STATICCALL => GasCost::Invalid(opcode),
         Opcode::SHA3 => GasCost::Sha3 {
             len: stack.peek(1)?,
         },
@@ -1266,16 +1269,8 @@ impl Inner<'_> {
                 delegated_designator_is_cold,
                 target_exists,
                 ..
-            } => costs::call_cost(
-                U256_ZERO,
-                target_is_cold,
-                delegated_designator_is_cold,
-                false,
-                false,
-                !target_exists,
-                self.config,
-            ),
-            GasCost::StaticCall {
+            }
+            | GasCost::StaticCall {
                 target_is_cold,
                 delegated_designator_is_cold,
                 target_exists,
@@ -1285,7 +1280,7 @@ impl Inner<'_> {
                 target_is_cold,
                 delegated_designator_is_cold,
                 false,
-                true,
+                false,
                 !target_exists,
                 self.config,
             ),
@@ -1586,6 +1581,42 @@ impl MemoryCost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_deposit_pricing_and_charging_share_the_boundary() {
+        let config = Config::frontier();
+        assert_eq!(code_deposit_cost(0), Ok(0));
+        assert_eq!(code_deposit_cost(100), Ok(20_000));
+
+        for budget in [19_999, 20_000, 20_001] {
+            let mut gasometer = Gasometer::new(budget, &config);
+            if budget < 20_000 {
+                assert_eq!(gasometer.record_deposit(100), Err(ExitError::OutOfGas));
+                assert_eq!(gasometer.gas(), 0);
+                assert_eq!(gasometer.record_deposit(0), Err(ExitError::OutOfGas));
+            } else {
+                assert_eq!(gasometer.record_deposit(100), Ok(()));
+                assert_eq!(gasometer.gas(), budget - 20_000);
+                assert_eq!(gasometer.record_deposit(0), Ok(()));
+            }
+        }
+
+        // Exercise multiplication overflow without allocating code, on targets where
+        // usize can represent such a length. On RV32 even usize::MAX fits in u64 gas.
+        if let Ok(max_len) = usize::try_from(u64::MAX / 200) {
+            assert_eq!(code_deposit_cost(max_len), Ok(u64::MAX - 15));
+            assert_eq!(code_deposit_cost(max_len + 1), Err(ExitError::OutOfGas));
+
+            let mut gasometer = Gasometer::new(u64::MAX, &config);
+            assert_eq!(
+                gasometer.record_deposit(max_len + 1),
+                Err(ExitError::OutOfGas)
+            );
+            assert_eq!(gasometer.record_cost(0), Err(ExitError::OutOfGas));
+        } else {
+            assert_eq!(code_deposit_cost(usize::MAX), Ok(858_993_459_000));
+        }
+    }
 
     #[test]
     fn authority_refund_is_suppressed_only_in_estimate_mode() {
