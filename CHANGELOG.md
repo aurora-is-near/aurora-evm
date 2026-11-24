@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `MemoryStackSubstate` and `MemoryStackState` are no longer `Send` or `Sync`:
+  frames share a single-threaded cache for each installed code version.
+- The memory stack journal hashes non-empty installed code on first request, even if that
+  request comes from a child that later reverts. Empty code needs no cache. Public
+  `account_mut` detaches the entry's cache; its reads remain uncached until the next `set_code`.
 - CREATE and CREATE2 validate the EIP-3860 initcode size and charge its word cost during
   opcode pricing, before copying or hashing initcode and invoking the creation handler.
   The initcode fee is included in `RecordDynamicCost`, replacing the later `RecordCost`

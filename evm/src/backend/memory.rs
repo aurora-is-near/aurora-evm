@@ -91,7 +91,7 @@ impl<'vicinity> MemoryBackend<'vicinity> {
         &self.state
     }
 
-    /// Get a mutable reference to the underlying `BTreeMap` storing the state.
+    /// Get mutable access to the underlying state.
     pub const fn state_mut(&mut self) -> &mut BTreeMap<H160, MemoryAccount> {
         &mut self.state
     }
@@ -160,7 +160,7 @@ impl Backend for MemoryBackend<'_> {
     fn code_hash(&self, address: H160) -> H256 {
         self.state
             .get(&address)
-            .map_or(KECCAK_EMPTY, |v| code_hash_of(&v.code))
+            .map_or(KECCAK_EMPTY, |account| code_hash_of(&account.code))
     }
 
     fn has_code(&self, address: H160) -> bool {
