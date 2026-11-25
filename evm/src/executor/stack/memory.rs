@@ -9,11 +9,6 @@ use core::cell::OnceCell;
 use core::mem;
 use primitive_types::{H160, H256, U256};
 
-#[cfg(not(feature = "std"))]
-use alloc::collections::btree_map::Entry;
-#[cfg(feature = "std")]
-use std::collections::btree_map::Entry;
-
 #[derive(Clone, Debug)]
 pub struct MemoryStackAccount {
     pub basic: Basic,
