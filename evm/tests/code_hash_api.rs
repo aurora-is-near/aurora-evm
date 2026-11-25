@@ -1,10 +1,10 @@
 //! Public journal code ownership and export through the backend's `Apply` API.
 
 use aurora_evm::backend::{
-    Apply, ApplyBackend, Backend, Basic, MemoryAccount, MemoryBackend, MemoryVicinity,
+    Apply, ApplyBackend, Backend, Basic, MemoryAccount, MemoryBackend, MemoryVicinity, KECCAK_EMPTY,
 };
 use aurora_evm::executor::stack::{
-    Code, MemoryStackAccount, MemoryStackState, StackState, StackSubstateMetadata,
+    JournalCode, MemoryStackAccount, MemoryStackState, StackState, StackSubstateMetadata,
 };
 use aurora_evm::Config;
 use primitive_types::{H160, U256};
@@ -33,11 +33,20 @@ const fn vicinity() -> MemoryVicinity {
 fn memory_stack_account_supports_public_struct_literals() {
     let account = MemoryStackAccount {
         basic: Basic::default(),
-        code: Some(Code::new(vec![0x5b])),
+        code: vec![0x5b].into(),
         reset: false,
     };
 
-    assert_eq!(account.code.unwrap().as_bytes(), &[0x5b]);
+    assert_eq!(account.code.as_bytes(), Some([0x5b].as_slice()));
+}
+
+#[test]
+fn empty_code_does_not_retain_a_reserved_buffer() {
+    let code = JournalCode::from(Vec::with_capacity(32));
+
+    assert!(matches!(code, JournalCode::Empty));
+    assert_eq!(code.hash(), Some(KECCAK_EMPTY));
+    assert_eq!(code.into_bytes().unwrap().capacity(), 0);
 }
 
 #[test]
@@ -50,21 +59,21 @@ fn deconstruct_moves_unique_bytecode_and_preserves_an_external_owner() {
     let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
     let bytes = vec![0x5b, 0x00];
     let unique_ptr = bytes.as_ptr();
-    let external = Code::new(vec![0x60, 0x01, 0x00]);
-    let shared_ptr = external.as_bytes().as_ptr();
+    let external = JournalCode::from(vec![0x60, 0x01, 0x00]);
+    let shared_ptr = external.as_bytes().unwrap().as_ptr();
     state.set_code(unique, bytes);
-    state.account_mut(shared).code = Some(external.clone());
+    state.account_mut(shared).code = external.clone();
     let (updates, logs) = state.deconstruct();
     backend.apply(updates, logs, false);
 
     assert_eq!(backend.state()[&unique].code, [0x5b, 0x00]);
     assert_eq!(backend.state()[&unique].code.as_ptr(), unique_ptr);
-    assert_eq!(backend.state()[&shared].code, external.as_bytes());
+    assert_eq!(backend.state()[&shared].code, external.as_bytes().unwrap());
     assert_ne!(backend.state()[&shared].code.as_ptr(), shared_ptr);
-    assert_eq!(backend.code_hash(shared), external.hash());
+    assert_eq!(Some(backend.code_hash(shared)), external.hash());
 
     // The surviving owner can now reclaim the original bytes without copying.
-    let bytes = external.into_bytes();
+    let bytes = external.into_bytes().unwrap();
 
     assert_eq!(bytes, [0x60, 0x01, 0x00]);
     assert_eq!(bytes.as_ptr(), shared_ptr);

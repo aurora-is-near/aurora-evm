@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** `MemoryStackAccount::code` is now `Option<Code>`. Construct installed code
-  with `Code::new(bytes)`, borrow bytes with `as_bytes()`, or recover them with `into_bytes()`.
+- **Breaking:** `MemoryStackAccount::code` is now `JournalCode`, the journal's code override.
+  `JournalCode::default()` keeps the backend code; `bytes.into()` installs the bytes, and
+  empty bytes clear the code. `Apply::Modify::code` remains `Option<Vec<u8>>`.
   `MemoryStackAccount`, `MemoryStackSubstate`, and `MemoryStackState` no longer implement
   `Send` or `Sync`.
 - Memory stack frames share the immutable bytes and lazy hash of each installed code version.

@@ -9,75 +9,139 @@ use core::cell::OnceCell;
 use core::mem;
 use primitive_types::{H160, H256, U256};
 
-/// Immutable bytecode with a lazily computed hash shared by its clones.
-#[derive(Clone, Debug)]
-pub struct Code(CodeStorage);
-
-#[derive(Clone, Debug)]
-enum CodeStorage {
+/// What the journal has recorded about an account's code.
+///
+/// A value is written only by `set_code`, or by assigning [`MemoryStackAccount::code`],
+/// and describes the journal alone: this type never reads the backend and never caches
+/// code read from it. The three variants are distinct states:
+///
+/// - [`NotSet`](Self::NotSet): the code was not set, so the backend code stays in effect;
+/// - [`Empty`](Self::Empty): the code was set to empty bytes, so the account has no code
+///   even if the backend still holds a contract;
+/// - [`Bytecode`](Self::Bytecode): the code was set to these non-empty bytes.
+///
+/// The accessors [`as_bytes`](Self::as_bytes), [`hash`](Self::hash) and
+/// [`into_bytes`](Self::into_bytes) return `None` for `NotSet` and `Some` for the other
+/// two. On `None`, [`MemoryStackState`] asks the backend when the code is read and leaves
+/// the backend code as is when the journal is applied.
+///
+/// A child frame starts with the value visible in its parent. Committing the child keeps
+/// the value it set; reverting or discarding the child restores the parent's value.
+/// Frames holding the same `Bytecode` share one buffer and one lazily computed hash, so a
+/// hash first requested in a child that later reverts stays cached for the parent.
+#[derive(Clone, Debug, Default)]
+pub enum JournalCode {
+    /// The code has not been set in the frames. The accessors return
+    /// `None`: reads use the backend code, and applying the journal leaves that code as is.
+    #[default]
+    NotSet,
+    /// The code was set to empty bytes. The accessors return empty code ([`KECCAK_EMPTY`]
+    /// as its hash): the account has no code even if the backend holds a contract, and
+    /// applying the journal clears the backend code.
     Empty,
-    WithBytes(Rc<BytecodeWithLazyHash>),
+    /// The code was set to these bytes, which are never empty. The accessors return them,
+    /// and applying the journal writes them. Frames holding this version share the bytes
+    /// and their lazily computed hash.
+    Bytecode(Rc<CodeWithLazyHash>),
 }
 
+/// Immutable non-empty bytecode and its lazily computed Keccak-256 hash.
+///
+/// Frames sharing this version reuse the same bytes and cached hash.
 #[derive(Debug)]
-struct BytecodeWithLazyHash {
-    bytes: Vec<u8>,
+pub struct CodeWithLazyHash {
+    code: Vec<u8>,
     hash: OnceCell<H256>,
 }
 
-impl Code {
-    /// Takes ownership of the bytes without hashing or copying them.
-    #[must_use]
-    pub fn new(bytes: Vec<u8>) -> Self {
-        if bytes.is_empty() {
-            Self::empty()
-        } else {
-            Self(CodeStorage::WithBytes(Rc::new(BytecodeWithLazyHash {
-                bytes,
-                hash: OnceCell::new(),
-            })))
-        }
-    }
-
-    /// An explicit empty-code override, with no allocation or hash cell.
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self(CodeStorage::Empty)
-    }
-
-    /// Whether this version contains no bytecode.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        matches!(self.0, CodeStorage::Empty)
-    }
-
+impl CodeWithLazyHash {
     /// Borrows the bytecode without copying or hashing it.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        match &self.0 {
-            CodeStorage::Empty => &[],
-            CodeStorage::WithBytes(inner) => &inner.bytes,
-        }
+    pub const fn as_bytes(&self) -> &[u8] {
+        self.code.as_slice()
     }
 
-    /// Return the Keccak-256 hash of the bytecode, computing it on first use.
+    /// Returns the cached hash, computing it on first use.
     #[must_use]
     pub fn hash(&self) -> H256 {
-        match &self.0 {
-            CodeStorage::Empty => KECCAK_EMPTY,
-            CodeStorage::WithBytes(inner) => *inner.hash.get_or_init(|| code_hash_of(&inner.bytes)),
+        *self.hash.get_or_init(|| code_hash_of(&self.code))
+    }
+}
+
+/// Records `code` as set, exactly as `set_code` does.
+///
+/// An empty vector records an explicit clear ([`JournalCode::Empty`]): the journal
+/// neither retains its buffer nor allocates a hash cell. A non-empty vector becomes
+/// a new [`JournalCode::Bytecode`] version without copying or hashing its bytes.
+/// The result is never [`JournalCode::NotSet`]: use
+/// `JournalCode::default()` to keep the backend code.
+impl From<Vec<u8>> for JournalCode {
+    fn from(code: Vec<u8>) -> Self {
+        if code.is_empty() {
+            return Self::Empty;
+        }
+
+        Self::Bytecode(Rc::new(CodeWithLazyHash {
+            code,
+            hash: OnceCell::new(),
+        }))
+    }
+}
+
+impl JournalCode {
+    /// Borrows the recorded code without copying, hashing or reading the backend.
+    ///
+    /// Returns `None` for [`NotSet`](Self::NotSet), `Some(&[])` for [`Empty`](Self::Empty)
+    /// and the bytes for [`Bytecode`](Self::Bytecode).
+    #[must_use]
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::NotSet => None,
+            Self::Empty => Some(&[]),
+            Self::Bytecode(code) => Some(code.as_bytes()),
         }
     }
 
-    /// Returns owned bytes, copying only if another handle still shares this version.
+    /// Returns the Keccak-256 hash of the recorded code without reading the backend.
+    ///
+    /// Returns `None` for [`NotSet`](Self::NotSet) and [`KECCAK_EMPTY`] for
+    /// [`Empty`](Self::Empty), both without hashing. For [`Bytecode`](Self::Bytecode) the
+    /// hash is computed on the first call and then shared by every frame holding this
+    /// version.
     #[must_use]
-    pub fn into_bytes(self) -> Vec<u8> {
-        match self.0 {
-            CodeStorage::Empty => Vec::new(),
-            CodeStorage::WithBytes(inner) => match Rc::try_unwrap(inner) {
-                Ok(inner) => inner.bytes,
-                Err(shared) => shared.bytes.clone(),
-            },
+    pub fn hash(&self) -> Option<H256> {
+        match self {
+            Self::NotSet => None,
+            Self::Empty => Some(KECCAK_EMPTY),
+            Self::Bytecode(code) => Some(code.hash()),
+        }
+    }
+
+    /// Whether the recorded code is non-empty; `None` when the code is not set.
+    #[must_use]
+    pub const fn has_code(&self) -> Option<bool> {
+        match self {
+            Self::NotSet => None,
+            Self::Empty => Some(false),
+            Self::Bytecode(_) => Some(true),
+        }
+    }
+
+    /// Converts the record into the `code` field of [`Apply::Modify`].
+    ///
+    /// Returns `None` for [`NotSet`](Self::NotSet), which leaves the backend code as is,
+    /// `Some` of an empty vector for [`Empty`](Self::Empty), which clears it, and the
+    /// bytes for [`Bytecode`](Self::Bytecode). The buffer is moved out when this is the
+    /// last handle to the version and copied when another handle still shares it.
+    #[must_use]
+    pub fn into_bytes(self) -> Option<Vec<u8>> {
+        match self {
+            Self::NotSet => None,
+            Self::Empty => Some(Vec::new()),
+            Self::Bytecode(code) => Some(match Rc::try_unwrap(code) {
+                Ok(owned) => owned.code,
+                Err(shared) => shared.code.clone(),
+            }),
         }
     }
 }
@@ -85,8 +149,14 @@ impl Code {
 #[derive(Clone, Debug)]
 pub struct MemoryStackAccount {
     pub basic: Basic,
-    /// `None` inherits backend code; `Some(Code::empty())` explicitly clears it.
-    pub code: Option<Code>,
+    /// What was recorded for this account's code, as seen by the frame owning this entry.
+    ///
+    /// It is the journal's own record, not a cache: with [`JournalCode::NotSet`] the
+    /// backend code is in effect and has been neither read nor copied here. Assigning a
+    /// value has the effect of `set_code`: `bytes.into()` installs the bytes or, when
+    /// they are empty, clears the code; [`JournalCode::NotSet`] drops the record so that
+    /// the backend code is in effect again.
+    pub code: JournalCode,
     pub reset: bool,
 }
 
@@ -192,7 +262,7 @@ impl<'config> MemoryStackSubstate<'config> {
                 Apply::Modify {
                     address,
                     basic: account.basic.clone(),
-                    code: account.code.take().map(Code::into_bytes),
+                    code: mem::take(&mut account.code).into_bytes(),
                     storage,
                     reset_storage: account.reset,
                 }
@@ -319,13 +389,12 @@ impl<'config> MemoryStackSubstate<'config> {
     /// Returns an owned copy of journaled code, or `None` if the backend supplies it.
     #[must_use]
     pub fn known_code(&self, address: H160) -> Option<Vec<u8>> {
-        self.journaled_code(address)
-            .map(|code| code.as_bytes().to_vec())
+        self.journaled_code(address).as_bytes().map(<[u8]>::to_vec)
     }
 
-    fn journaled_code(&self, address: H160) -> Option<&Code> {
+    fn journaled_code(&self, address: H160) -> &JournalCode {
         self.known_account(address)
-            .and_then(|account| account.code.as_ref())
+            .map_or(&JournalCode::NotSet, |account| &account.code)
     }
 
     /// Get known empty status of the account from the current accounts state.
@@ -413,7 +482,7 @@ impl<'config> MemoryStackSubstate<'config> {
 
         MemoryStackAccount {
             basic: backend.basic(address),
-            code: None,
+            code: JournalCode::NotSet,
             reset: false,
         }
     }
@@ -476,9 +545,12 @@ impl<'config> MemoryStackSubstate<'config> {
                 .is_some_and(|parent| parent.is_created(address))
     }
 
-    /// Replaces journaled code; only non-empty versions need a shared hash cell.
+    /// Records `code` for the account in the current frame, replacing any earlier record.
+    ///
+    /// Empty bytes record [`JournalCode::Empty`] without allocating; non-empty bytes
+    /// record a new [`JournalCode::Bytecode`] version whose hash is not computed yet.
     pub fn set_code<B: Backend>(&mut self, address: H160, code: Vec<u8>, backend: &B) {
-        self.account_mut(address, backend).code = Some(Code::new(code));
+        self.account_mut(address, backend).code = code.into();
     }
 
     /// # Errors
@@ -625,6 +697,17 @@ impl<B: Backend> Backend for MemoryStackState<'_, '_, B> {
             .unwrap_or_else(|| self.backend.basic(address))
     }
 
+    /// Returns the account's bytecode as seen by the current frame.
+    ///
+    /// [`MemoryStackSubstate::known_code`] checks the nearest journal entry, starting
+    /// in this frame and walking up to its parents. An explicit empty override returns
+    /// an empty vector; a non-empty override returns an owned copy of its bytes.
+    /// Neither case reads the backend.
+    ///
+    /// This is the stack state's only direct call to the underlying [`Backend::code`]:
+    /// it is made when there is no entry or its code is [`JournalCode::NotSet`].
+    /// The returned bytes are not cached in the journal. Hash and presence queries
+    /// use separate backend methods, which may themselves load code.
     fn code(&self, address: H160) -> Vec<u8> {
         self.substate
             .known_code(address)
@@ -634,13 +717,15 @@ impl<B: Backend> Backend for MemoryStackState<'_, '_, B> {
     fn code_hash(&self, address: H160) -> H256 {
         self.substate
             .journaled_code(address)
-            .map_or_else(|| self.backend.code_hash(address), Code::hash)
+            .hash()
+            .unwrap_or_else(|| self.backend.code_hash(address))
     }
 
     fn has_code(&self, address: H160) -> bool {
         self.substate
             .journaled_code(address)
-            .map_or_else(|| self.backend.has_code(address), |code| !code.is_empty())
+            .has_code()
+            .unwrap_or_else(|| self.backend.has_code(address))
     }
 
     fn storage(&self, address: H160, key: H256) -> H256 {
@@ -705,10 +790,10 @@ impl<'config, B: Backend> StackState<'config> for MemoryStackState<'_, 'config, 
                 return false;
             }
 
-            if let Some(code) = &account.code {
-                return code.is_empty();
-            }
-            return !self.backend.has_code(address);
+            return !account
+                .code
+                .has_code()
+                .unwrap_or_else(|| self.backend.has_code(address));
         }
 
         let basic = self.backend.basic(address);
@@ -845,7 +930,7 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BytecodeWithLazyHash, Code, CodeStorage, MemoryStackState};
+    use super::{CodeWithLazyHash, JournalCode, MemoryStackState};
     use crate::backend::{
         code_hash_of, Backend, MemoryAccount, MemoryBackend, MemoryVicinity, KECCAK_EMPTY,
     };
@@ -859,9 +944,9 @@ mod tests {
     fn shared_code<'a>(
         state: &'a MemoryStackState<'_, '_, impl Backend>,
         address: H160,
-    ) -> &'a Rc<BytecodeWithLazyHash> {
+    ) -> &'a Rc<CodeWithLazyHash> {
         let account = &state.substate.accounts[&address];
-        let Some(Code(CodeStorage::WithBytes(code))) = account.code.as_ref() else {
+        let JournalCode::Bytecode(code) = &account.code else {
             panic!("expected shared code in the current frame");
         };
         code
@@ -936,7 +1021,7 @@ mod tests {
 
         assert!(state.has_code(address));
         assert!(Rc::ptr_eq(&parent, child));
-        assert_eq!(child.bytes.as_ptr(), buffer);
+        assert_eq!(child.code.as_ptr(), buffer);
         assert_eq!(child.hash.get(), None);
 
         state.exit_commit().unwrap();
@@ -1017,7 +1102,7 @@ mod tests {
 
         assert!(Rc::ptr_eq(shared_code(&state, address), &original));
 
-        state.account_mut(address).code = Some(Code::new(vec![0x5b]));
+        state.account_mut(address).code = vec![0x5b].into();
         let replacement = shared_code(&state, address);
         let replacement_hash = code_hash_of(&[0x5b]);
 
@@ -1046,9 +1131,15 @@ mod tests {
 
         state.touch(address);
 
-        assert!(state.substate.journaled_code(address).is_none());
+        assert!(matches!(
+            state.substate.journaled_code(address),
+            JournalCode::NotSet
+        ));
         assert_eq!(state.code_hash(address), code_hash_of(&[0x5b]));
-        assert!(state.substate.journaled_code(address).is_none());
+        assert!(matches!(
+            state.substate.journaled_code(address),
+            JournalCode::NotSet
+        ));
 
         state.set_code(address, vec![0x00]);
         state.set_code(address, Vec::new());
@@ -1056,7 +1147,7 @@ mod tests {
         assert_eq!(state.code_hash(address), KECCAK_EMPTY);
         assert!(matches!(
             state.substate.journaled_code(address),
-            Some(Code(CodeStorage::Empty))
+            JournalCode::Empty
         ));
     }
 
@@ -1279,7 +1370,7 @@ mod tests {
         assert_eq!(executor.state().code_hash(authority), KECCAK_EMPTY);
         assert!(matches!(
             executor.state().substate.journaled_code(authority),
-            Some(Code(CodeStorage::Empty))
+            JournalCode::Empty
         ));
     }
 
@@ -1387,15 +1478,15 @@ mod tests {
         // Cached account
         assert!(!stack_state.is_empty(addr1));
 
-        // Ensure that code will pass `is_some` check to catch data from backend.
+        // Updating balances leaves the backend code unchanged.
         let acc1 = stack_state.substate.known_account(addr1).unwrap();
         let acc2 = stack_state.substate.known_account(addr2).unwrap();
 
         assert_eq!(acc1.basic.balance, U256::one());
-        assert!(acc1.code.is_none());
+        assert!(matches!(acc1.code, JournalCode::NotSet));
         assert_eq!(acc2.basic.balance, U256::one());
         // NOTE: code is not cached
-        assert!(acc2.code.is_none());
+        assert!(matches!(acc2.code, JournalCode::NotSet));
 
         stack_state.reset_balance(addr1);
 
@@ -1408,7 +1499,7 @@ mod tests {
 
         assert_eq!(acc2.basic.balance, U256::zero());
         // NOTE: code is not cached
-        assert!(acc2.code.is_none());
+        assert!(matches!(acc2.code, JournalCode::NotSet));
         // Get code from backend, but in backend code is not empty, so account is not empty.
         assert!(!stack_state.is_empty(addr2));
         // Get code from backend, but in backend code is not empty
@@ -1468,7 +1559,7 @@ mod tests {
             .substate
             .accounts
             .values()
-            .all(|account| account.code.is_none()));
+            .all(|account| matches!(account.code, JournalCode::NotSet)));
         assert_eq!(stack_state.code_hash(contract), code_hash_of(&code));
         assert!(stack_state.has_code(contract));
         assert_eq!(stack_state.code_hash(absent), KECCAK_EMPTY);
