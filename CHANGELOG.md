@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `Backend::original_storage` now returns `H256` instead of `Option<H256>`.
+  Transaction-entry snapshots may return `self.storage(address, index)`; journaled backends
+  must return the original, not the current slot value. Legacy and fixed-price estimate
+  SSTOREs skip this read.
 - **Breaking:** `MemoryStackSubstate` and `MemoryStackState` are no longer `Send` or `Sync`:
   frames share a single-threaded cache for each installed code version.
 - The memory stack journal hashes non-empty installed code on first request, even if that
@@ -52,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Committing a child that touches an account no longer discards a parent storage reset
+  or exposes pre-reset slots to later reads and SSTORE pricing.
 - Static calls with custom pre-EIP-161 account-existence rules no longer materialize
   absent accounts through touches or zero-value transfers. Existing-account touches
   and CALL pricing are unchanged, including the new-account fee for nested zero-value
