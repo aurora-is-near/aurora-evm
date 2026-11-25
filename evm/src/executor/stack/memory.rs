@@ -1,4 +1,4 @@
-use crate::backend::{code_hash_of, Apply, Backend, Basic, Log};
+use crate::backend::{code_hash_of, Apply, Backend, Basic, Log, KECCAK_EMPTY};
 use crate::core::utils::{U256_ONE, U256_ZERO, U64_MAX};
 use crate::executor::stack::executor::{
     Accessed, Authorization, StackState, StackSubstateMetadata,
@@ -9,28 +9,85 @@ use core::cell::OnceCell;
 use core::mem;
 use primitive_types::{H160, H256, U256};
 
+/// Immutable bytecode with a lazily computed hash shared by its clones.
+#[derive(Clone, Debug)]
+pub struct Code(CodeStorage);
+
+#[derive(Clone, Debug)]
+enum CodeStorage {
+    Empty,
+    WithBytes(Rc<BytecodeWithLazyHash>),
+}
+
+#[derive(Debug)]
+struct BytecodeWithLazyHash {
+    bytes: Vec<u8>,
+    hash: OnceCell<H256>,
+}
+
+impl Code {
+    /// Takes ownership of the bytes without hashing or copying them.
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        if bytes.is_empty() {
+            Self::empty()
+        } else {
+            Self(CodeStorage::WithBytes(Rc::new(BytecodeWithLazyHash {
+                bytes,
+                hash: OnceCell::new(),
+            })))
+        }
+    }
+
+    /// An explicit empty-code override, with no allocation or hash cell.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(CodeStorage::Empty)
+    }
+
+    /// Whether this version contains no bytecode.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        matches!(self.0, CodeStorage::Empty)
+    }
+
+    /// Borrows the bytecode without copying or hashing it.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        match &self.0 {
+            CodeStorage::Empty => &[],
+            CodeStorage::WithBytes(inner) => &inner.bytes,
+        }
+    }
+
+    /// Return the Keccak-256 hash of the bytecode, computing it on first use.
+    #[must_use]
+    pub fn hash(&self) -> H256 {
+        match &self.0 {
+            CodeStorage::Empty => KECCAK_EMPTY,
+            CodeStorage::WithBytes(inner) => *inner.hash.get_or_init(|| code_hash_of(&inner.bytes)),
+        }
+    }
+
+    /// Returns owned bytes, copying only if another handle still shares this version.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self.0 {
+            CodeStorage::Empty => Vec::new(),
+            CodeStorage::WithBytes(inner) => match Rc::try_unwrap(inner) {
+                Ok(inner) => inner.bytes,
+                Err(shared) => shared.bytes.clone(),
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MemoryStackAccount {
     pub basic: Basic,
-    pub code: Option<Vec<u8>>,
+    /// `None` inherits backend code; `Some(Code::empty())` explicitly clears it.
+    pub code: Option<Code>,
     pub reset: bool,
-}
-
-/// Journal-owned metadata stays outside the publicly mutable account type.
-#[derive(Clone, Debug)]
-struct JournalAccount {
-    account: MemoryStackAccount,
-    // Frames inheriting this code version share its first hash, even across rollback.
-    code_hash: Option<Rc<OnceCell<H256>>>,
-}
-
-impl JournalAccount {
-    fn code_hash(&self) -> Option<H256> {
-        let code = self.account.code.as_deref()?;
-        let hash = || code_hash_of(code);
-        let cache = self.code_hash.as_ref();
-        Some(cache.map_or_else(hash, |cell| *cell.get_or_init(hash)))
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -38,7 +95,7 @@ pub struct MemoryStackSubstate<'config> {
     metadata: StackSubstateMetadata<'config>,
     parent: Option<Box<Self>>,
     logs: Vec<Log>,
-    accounts: BTreeMap<H160, JournalAccount>,
+    accounts: BTreeMap<H160, MemoryStackAccount>,
     storages: BTreeMap<(H160, H256), H256>,
     tstorages: BTreeMap<(H160, H256), U256>,
     deletes: BTreeSet<H160>,
@@ -82,8 +139,8 @@ impl<'config> MemoryStackSubstate<'config> {
     /// Deconstruct the memory stack substate, return state to be applied. Panic if the
     /// substate is not in the top-level substate.
     ///
-    /// # Panics
-    /// Panic if parent presents
+    /// ## Panics
+    /// It panics if parent presents
     #[must_use]
     pub fn deconstruct<B: Backend>(
         mut self,
@@ -126,8 +183,8 @@ impl<'config> MemoryStackSubstate<'config> {
                         .expect("New account was just inserted");
                     // Reset storage for CREATE call as initially it's always should be empty.
                     // NOTE: related to `ethereum-tests`: `stSStoreTest/InitCollisionParis.json`
-                    account.account.reset = true;
-                    &mut account.account
+                    account.reset = true;
+                    account
                 } else {
                     self.account_mut(address, backend)
                 };
@@ -135,7 +192,7 @@ impl<'config> MemoryStackSubstate<'config> {
                 Apply::Modify {
                     address,
                     basic: account.basic.clone(),
-                    code: account.code.clone(),
+                    code: account.code.take().map(Code::into_bytes),
                     storage,
                     reset_storage: account.reset,
                 }
@@ -191,7 +248,7 @@ impl<'config> MemoryStackSubstate<'config> {
 
         let mut resets = BTreeSet::new();
         for (address, account) in &exited.accounts {
-            if account.account.reset {
+            if account.reset {
                 resets.insert(*address);
             }
         }
@@ -230,7 +287,7 @@ impl<'config> MemoryStackSubstate<'config> {
     /// Exit discard. Represents discard execution of the `substate`.
     ///
     /// # Errors
-    /// Return `ExitError`. At the momoet it's not throwing any real error.
+    /// Return `ExitError`. At the moment it's not throwing any real error.
     ///
     /// # Panics
     /// Cannot discard on root substate
@@ -245,15 +302,10 @@ impl<'config> MemoryStackSubstate<'config> {
     /// recursively in the parent state.
     #[must_use]
     pub fn known_account(&self, address: H160) -> Option<&MemoryStackAccount> {
-        self.known_account_entry(address)
-            .map(|entry| &entry.account)
-    }
-
-    fn known_account_entry(&self, address: H160) -> Option<&JournalAccount> {
         self.accounts.get(&address).or_else(|| {
             self.parent
                 .as_ref()
-                .and_then(|parent| parent.known_account_entry(address))
+                .and_then(|parent| parent.known_account(address))
         })
     }
 
@@ -264,11 +316,16 @@ impl<'config> MemoryStackSubstate<'config> {
         self.known_account(address).map(|acc| acc.basic.clone())
     }
 
-    /// Get known code from the current accounts state.
-    /// If it's `None` just take a look.
+    /// Returns an owned copy of journaled code, or `None` if the backend supplies it.
     #[must_use]
     pub fn known_code(&self, address: H160) -> Option<Vec<u8>> {
-        self.known_account(address).and_then(|acc| acc.code.clone())
+        self.journaled_code(address)
+            .map(|code| code.as_bytes().to_vec())
+    }
+
+    fn journaled_code(&self, address: H160) -> Option<&Code> {
+        self.known_account(address)
+            .and_then(|account| account.code.as_ref())
     }
 
     /// Get known empty status of the account from the current accounts state.
@@ -280,7 +337,7 @@ impl<'config> MemoryStackSubstate<'config> {
         }
 
         if let Some(account) = self.accounts.get(&address) {
-            if account.account.reset {
+            if account.reset {
                 return Some(H256::default());
             }
         }
@@ -295,7 +352,7 @@ impl<'config> MemoryStackSubstate<'config> {
     #[must_use]
     pub fn known_original_storage(&self, address: H160) -> Option<H256> {
         if let Some(account) = self.accounts.get(&address) {
-            if account.account.reset {
+            if account.reset {
                 return Some(H256::default());
             }
         }
@@ -333,33 +390,32 @@ impl<'config> MemoryStackSubstate<'config> {
     }
 
     fn account_mut<B: Backend>(&mut self, address: H160, backend: &B) -> &mut MemoryStackAccount {
-        &mut self.account_entry_mut(address, backend).account
+        self.accounts.entry(address).or_insert_with(|| {
+            Self::load_account_for_frame(self.parent.as_deref(), address, backend)
+        })
     }
 
-    #[allow(clippy::map_entry)]
-    fn account_entry_mut<B: Backend>(&mut self, address: H160, backend: &B) -> &mut JournalAccount {
-        if !self.accounts.contains_key(&address) {
-            let account = self.known_account_entry(address).map_or_else(
-                || JournalAccount {
-                    account: MemoryStackAccount {
-                        basic: backend.basic(address),
-                        code: None,
-                        reset: false,
-                    },
-                    code_hash: None,
-                },
-                |parent| {
-                    let mut account = parent.clone();
-                    account.account.reset = false;
-                    account
-                },
-            );
-            self.accounts.insert(address, account);
+    /// Inherits the nearest journal entry or loads only the backend's basic fields.
+    #[inline]
+    fn load_account_for_frame<B: Backend>(
+        parent: Option<&Self>,
+        address: H160,
+        backend: &B,
+    ) -> MemoryStackAccount {
+        if let Some(account) = parent.and_then(|frame| frame.known_account(address)) {
+            return MemoryStackAccount {
+                basic: account.basic.clone(),
+                code: account.code.clone(),
+                // The parent still owns any storage reset it recorded.
+                reset: false,
+            };
         }
 
-        self.accounts
-            .get_mut(&address)
-            .expect("New account was just inserted")
+        MemoryStackAccount {
+            basic: backend.basic(address),
+            code: None,
+            reset: false,
+        }
     }
 
     /// # Errors
@@ -420,11 +476,9 @@ impl<'config> MemoryStackSubstate<'config> {
                 .is_some_and(|parent| parent.is_created(address))
     }
 
-    /// Installs a new code version. Only non-empty code needs a lazy hash cache.
+    /// Replaces journaled code; only non-empty versions need a shared hash cell.
     pub fn set_code<B: Backend>(&mut self, address: H160, code: Vec<u8>, backend: &B) {
-        let entry = self.account_entry_mut(address, backend);
-        entry.code_hash = (!code.is_empty()).then(|| Rc::new(OnceCell::new()));
-        entry.account.code = Some(code);
+        self.account_mut(address, backend).code = Some(Code::new(code));
     }
 
     /// # Errors
@@ -579,15 +633,13 @@ impl<B: Backend> Backend for MemoryStackState<'_, '_, B> {
 
     fn code_hash(&self, address: H160) -> H256 {
         self.substate
-            .known_account_entry(address)
-            .and_then(JournalAccount::code_hash)
-            .unwrap_or_else(|| self.backend.code_hash(address))
+            .journaled_code(address)
+            .map_or_else(|| self.backend.code_hash(address), Code::hash)
     }
 
     fn has_code(&self, address: H160) -> bool {
         self.substate
-            .known_account(address)
-            .and_then(|account| account.code.as_deref())
+            .journaled_code(address)
             .map_or_else(|| self.backend.has_code(address), |code| !code.is_empty())
     }
 
@@ -764,12 +816,10 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
         }
     }
 
-    /// Detaches this entry's hash cache before exposing mutable code.
-    /// Use [`StackState::set_code`] to install code with lazy hashing.
+    /// Returns this frame's journal entry. Editing account data preserves the code's
+    /// cached hash; replacing its `code` selects a different code version.
     pub fn account_mut(&mut self, address: H160) -> &mut MemoryStackAccount {
-        let entry = self.substate.account_entry_mut(address, self.backend);
-        entry.code_hash = None;
-        &mut entry.account
+        self.substate.account_mut(address, self.backend)
     }
 
     #[must_use]
@@ -795,25 +845,26 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
 
 #[cfg(test)]
 mod tests {
+    use super::{BytecodeWithLazyHash, Code, CodeStorage, MemoryStackState};
     use crate::backend::{
         code_hash_of, Backend, MemoryAccount, MemoryBackend, MemoryVicinity, KECCAK_EMPTY,
     };
     use crate::executor::stack::executor::StackSubstateMetadata;
-    use crate::executor::stack::memory::MemoryStackState;
     use crate::executor::stack::StackState;
     use crate::prelude::*;
     use crate::Config;
-    use core::cell::OnceCell;
     use primitive_types::{H160, H256, U256};
 
-    fn hash_cache<'a>(
+    // Inspect this frame's own entry: a fallback to the parent would mask a missing child entry.
+    fn shared_code<'a>(
         state: &'a MemoryStackState<'_, '_, impl Backend>,
         address: H160,
-    ) -> Option<&'a Rc<OnceCell<H256>>> {
-        state
-            .substate
-            .known_account_entry(address)
-            .and_then(|entry| entry.code_hash.as_ref())
+    ) -> &'a Rc<BytecodeWithLazyHash> {
+        let account = &state.substate.accounts[&address];
+        let Some(Code(CodeStorage::WithBytes(code))) = account.code.as_ref() else {
+            panic!("expected shared code in the current frame");
+        };
+        code
     }
 
     fn memory_vicinity() -> MemoryVicinity {
@@ -845,27 +896,54 @@ mod tests {
         let backend = MemoryBackend::new(&vicinity, BTreeMap::new());
         let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
         state.set_code(address, code);
-        let parent = Rc::clone(hash_cache(&state, address).unwrap());
+        let parent = Rc::clone(shared_code(&state, address));
 
-        assert_eq!(parent.get(), None);
+        assert_eq!(parent.hash.get(), None);
 
         state.enter(0, false);
         state.touch(address);
         state.enter(0, false);
         state.touch(address);
 
-        assert!(Rc::ptr_eq(&parent, hash_cache(&state, address).unwrap()));
-        assert_eq!(parent.get(), None);
+        assert!(Rc::ptr_eq(&parent, shared_code(&state, address)));
+        assert_eq!(parent.hash.get(), None);
         assert_eq!(state.code_hash(address), expected);
 
         state.exit_revert().unwrap();
         state.exit_discard().unwrap();
 
         // Inspect the parent before another code_hash call can fill a missing cache.
-        let restored = hash_cache(&state, address).unwrap();
+        let restored = shared_code(&state, address);
 
         assert!(Rc::ptr_eq(restored, &parent));
-        assert_eq!(restored.get(), Some(&expected));
+        assert_eq!(restored.hash.get(), Some(&expected));
+    }
+
+    #[test]
+    fn a_child_commit_reuses_unhashed_code_and_its_original_buffer() {
+        let address = H160::from_low_u64_be(1);
+        let code = vec![0x5b; 24_576];
+        let buffer = code.as_ptr();
+        let config = Config::osaka();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::new());
+        let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
+        state.set_code(address, code);
+        let parent = Rc::clone(shared_code(&state, address));
+        state.enter(0, false);
+        state.touch(address);
+        let child = shared_code(&state, address);
+
+        assert!(state.has_code(address));
+        assert!(Rc::ptr_eq(&parent, child));
+        assert_eq!(child.bytes.as_ptr(), buffer);
+        assert_eq!(child.hash.get(), None);
+
+        state.exit_commit().unwrap();
+        let committed = shared_code(&state, address);
+
+        assert!(Rc::ptr_eq(committed, &parent));
+        assert_eq!(committed.hash.get(), None);
     }
 
     #[test]
@@ -878,39 +956,53 @@ mod tests {
         for commit in [false, true] {
             let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
             state.set_code(address, vec![0x00]);
-            let original = Rc::clone(hash_cache(&state, address).unwrap());
+            let original = Rc::clone(shared_code(&state, address));
             state.enter(0, false);
             state.set_code(address, vec![0x5b]);
-            let replacement = Rc::clone(hash_cache(&state, address).unwrap());
+            let replacement = Rc::clone(shared_code(&state, address));
 
             assert!(!Rc::ptr_eq(&original, &replacement));
-            assert_eq!(replacement.get(), None);
+            assert_eq!(replacement.hash.get(), None);
 
             let expected = code_hash_of(&[0x5b]);
 
             assert_eq!(state.code_hash(address), expected);
-            assert_eq!(replacement.get(), Some(&expected));
-            assert_eq!(original.get(), None);
+            assert_eq!(replacement.hash.get(), Some(&expected));
+            assert_eq!(original.hash.get(), None);
 
             if commit {
                 state.exit_commit().unwrap();
 
-                assert!(Rc::ptr_eq(
-                    hash_cache(&state, address).unwrap(),
-                    &replacement
-                ));
+                assert!(Rc::ptr_eq(shared_code(&state, address), &replacement));
                 assert_eq!(state.code_hash(address), expected);
             } else {
                 state.exit_revert().unwrap();
 
-                assert!(Rc::ptr_eq(hash_cache(&state, address).unwrap(), &original));
+                assert!(Rc::ptr_eq(shared_code(&state, address), &original));
                 assert_eq!(state.code_hash(address), code_hash_of(&[0x00]));
             }
         }
     }
 
     #[test]
-    fn public_account_edits_detach_only_the_child_cache() {
+    fn replacing_hashed_code_does_not_reuse_the_previous_hash() {
+        let address = H160::from_low_u64_be(1);
+        let config = Config::osaka();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::new());
+        let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
+        state.set_code(address, vec![0x00]);
+
+        assert_eq!(state.code_hash(address), code_hash_of(&[0x00]));
+
+        state.set_code(address, vec![0x5b]);
+
+        assert!(shared_code(&state, address).hash.get().is_none());
+        assert_eq!(state.code_hash(address), code_hash_of(&[0x5b]));
+    }
+
+    #[test]
+    fn public_account_edits_replace_only_the_child_code() {
         let address = H160::from_low_u64_be(1);
         let config = Config::osaka();
         let vicinity = memory_vicinity();
@@ -918,26 +1010,30 @@ mod tests {
         let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
         state.set_code(address, vec![0x00]);
         let expected = state.code_hash(address);
-        let original = Rc::clone(hash_cache(&state, address).unwrap());
+        let original = Rc::clone(shared_code(&state, address));
 
         state.enter(0, false);
-        let mut edited = state.substate.known_account(address).unwrap().clone();
-        edited.code = Some(vec![0x5b]);
-        *state.account_mut(address) = edited;
+        state.account_mut(address).basic.balance = U256::one();
 
-        assert!(hash_cache(&state, address).is_none());
-        assert_eq!(state.code_hash(address), code_hash_of(&[0x5b]));
-        assert!(hash_cache(&state, address).is_none());
+        assert!(Rc::ptr_eq(shared_code(&state, address), &original));
+
+        state.account_mut(address).code = Some(Code::new(vec![0x5b]));
+        let replacement = shared_code(&state, address);
+        let replacement_hash = code_hash_of(&[0x5b]);
+
+        assert_eq!(replacement.hash.get(), None);
+        assert_eq!(state.code_hash(address), replacement_hash);
+        assert_eq!(replacement.hash.get(), Some(&replacement_hash));
 
         state.exit_revert().unwrap();
 
-        assert!(Rc::ptr_eq(hash_cache(&state, address).unwrap(), &original));
-        assert_eq!(original.get(), Some(&expected));
+        assert!(Rc::ptr_eq(shared_code(&state, address), &original));
+        assert_eq!(original.hash.get(), Some(&expected));
         assert_eq!(state.code_hash(address), expected);
     }
 
     #[test]
-    fn touch_and_empty_code_need_no_hash_cell() {
+    fn touching_an_account_keeps_backend_code_until_replaced() {
         let address = H160::from_low_u64_be(1);
         let config = Config::osaka();
         let vicinity = memory_vicinity();
@@ -950,16 +1046,18 @@ mod tests {
 
         state.touch(address);
 
-        assert!(hash_cache(&state, address).is_none());
+        assert!(state.substate.journaled_code(address).is_none());
         assert_eq!(state.code_hash(address), code_hash_of(&[0x5b]));
-        assert!(hash_cache(&state, address).is_none());
+        assert!(state.substate.journaled_code(address).is_none());
 
         state.set_code(address, vec![0x00]);
         state.set_code(address, Vec::new());
 
-        assert!(hash_cache(&state, address).is_none());
         assert_eq!(state.code_hash(address), KECCAK_EMPTY);
-        assert!(hash_cache(&state, address).is_none());
+        assert!(matches!(
+            state.substate.journaled_code(address),
+            Some(Code(CodeStorage::Empty))
+        ));
     }
 
     #[test]
@@ -1035,7 +1133,7 @@ mod tests {
 
         // Only the reverted calls read the hash. Inspect their shared cell without filling it.
         assert_eq!(
-            hash_cache(executor.state(), created).unwrap().get(),
+            shared_code(executor.state(), created).hash.get(),
             Some(&expected)
         );
 
@@ -1098,7 +1196,7 @@ mod tests {
         assert!(!created.is_zero());
         assert_eq!(executor.state().code(created).len(), 24_576);
         assert_eq!(
-            hash_cache(executor.state(), created).unwrap().get(),
+            shared_code(executor.state(), created).hash.get(),
             Some(&expected)
         );
         assert_eq!(executor.state().code_hash(created), expected);
@@ -1144,7 +1242,7 @@ mod tests {
         assert_eq!(executor.state().basic(authority).nonce, U256::from(2));
         assert_eq!(executor.state().code(authority), designator);
         assert_eq!(
-            hash_cache(executor.state(), authority).unwrap().get(),
+            shared_code(executor.state(), authority).hash.get(),
             Some(&expected)
         );
     }
@@ -1179,7 +1277,10 @@ mod tests {
         assert_eq!(executor.state().basic(authority).nonce, U256::from(2));
         assert_eq!(executor.state().code(authority), Vec::<u8>::new());
         assert_eq!(executor.state().code_hash(authority), KECCAK_EMPTY);
-        assert!(hash_cache(executor.state(), authority).is_none());
+        assert!(matches!(
+            executor.state().substate.journaled_code(authority),
+            Some(Code(CodeStorage::Empty))
+        ));
     }
 
     #[test]
@@ -1367,11 +1468,12 @@ mod tests {
             .substate
             .accounts
             .values()
-            .all(|entry| entry.account.code.is_none()));
+            .all(|account| account.code.is_none()));
         assert_eq!(stack_state.code_hash(contract), code_hash_of(&code));
         assert!(stack_state.has_code(contract));
         assert_eq!(stack_state.code_hash(absent), KECCAK_EMPTY);
         assert!(!stack_state.has_code(absent));
+
         for address in [eoa, contract, absent] {
             assert_code_invariants(&stack_state, address);
         }
@@ -1434,7 +1536,9 @@ mod tests {
         stack_state.set_code(address, new_code.clone());
 
         assert_eq!(stack_state.code_hash(address), code_hash_of(&new_code));
+
         stack_state.exit_revert().unwrap();
+
         assert_eq!(stack_state.code_hash(address), code_hash_of(&code));
         assert!(stack_state.has_code(address));
 

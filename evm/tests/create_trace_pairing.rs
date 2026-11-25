@@ -147,6 +147,7 @@ fn failed_creations_pair_their_create_and_exit_events() {
     let mut depth_limited = Config::prague();
     // The calling frame is the deepest allowed, so it cannot create.
     depth_limited.call_stack_limit = 0;
+
     for create2 in [false, true] {
         for (error, config, value, creator_nonce) in [
             (ExitError::MaxNonce, &prague, 0, u64::MAX),
@@ -155,6 +156,7 @@ fn failed_creations_pair_their_create_and_exit_events() {
         ] {
             let case = format!("{error:?}, CREATE2: {create2}");
             let outcome = run(config, create2, value, creator_nonce);
+
             assert_eq!(
                 outcome.frames,
                 [
@@ -180,8 +182,10 @@ fn failed_creations_pair_their_create_and_exit_events() {
 #[test]
 fn a_successful_creation_pairs_its_create_and_exit_events() {
     let stopped = ExitReason::Succeed(ExitSucceed::Stopped);
+
     for create2 in [false, true] {
         let outcome = run(&Config::prague(), create2, 0, 1);
+
         assert_eq!(
             outcome.frames,
             [
@@ -221,6 +225,7 @@ fn a_create2_transaction_with_an_exhausted_nonce_pairs_its_events() {
         )
     });
     let max_nonce = ExitReason::Error(ExitError::MaxNonce);
+
     assert_eq!(frames.0, [Frame::Create, Frame::Exit(max_nonce.clone())]);
     assert_eq!(reason, max_nonce);
     assert_eq!(executor.state().basic(CALLER).nonce, U256::from(u64::MAX));

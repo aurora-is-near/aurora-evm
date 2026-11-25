@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** `MemoryStackSubstate` and `MemoryStackState` are no longer `Send` or `Sync`:
-  frames share a single-threaded cache for each installed code version.
-- The memory stack journal hashes non-empty installed code on first request, even if that
-  request comes from a child that later reverts. Empty code needs no cache. Public
-  `account_mut` detaches the entry's cache; its reads remain uncached until the next `set_code`.
+- **Breaking:** `MemoryStackAccount::code` is now `Option<Code>`. Construct installed code
+  with `Code::new(bytes)`, borrow bytes with `as_bytes()`, or recover them with `into_bytes()`.
+  `MemoryStackAccount`, `MemoryStackSubstate`, and `MemoryStackState` no longer implement
+  `Send` or `Sync`.
+- Memory stack frames share the immutable bytes and lazy hash of each installed code version.
+  The first hash request fills the cache even if it comes from a child that later reverts.
+  Explicitly cleared code needs no allocation and returns the known empty hash.
 - **Breaking:** `Config` adds `has_static_call` and `create_fails_on_code_deposit_oog`.
   Exhaustive struct literals must supply both fields; existing preset constructors set
   them according to the corresponding EIP-214 and EIP-2 rules.

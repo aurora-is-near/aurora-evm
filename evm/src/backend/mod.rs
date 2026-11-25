@@ -216,6 +216,7 @@ mod tests {
 
     #[test]
     fn keccak_empty_is_the_hash_of_empty_code() {
+        assert_eq!(KECCAK_EMPTY.as_bytes(), &Keccak256::digest([])[..]);
         assert_eq!(code_hash_of(&[]), KECCAK_EMPTY);
         assert_ne!(code_hash_of(&[0x00]), KECCAK_EMPTY);
     }
