@@ -210,7 +210,8 @@ pub struct Config {
     pub create_increase_nonce: bool,
     /// Stack limit.
     pub stack_limit: usize,
-    /// Memory limit.
+    /// Maximum word-rounded memory size per frame; exceeding it halts the frame out of gas.
+    /// This is a custom VM resource cap, not an Ethereum fork rule. Presets use `usize::MAX`.
     pub memory_limit: usize,
     /// Call limit.
     pub call_stack_limit: usize,

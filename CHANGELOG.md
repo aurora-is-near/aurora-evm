@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With a finite `Config::memory_limit`, `Memory::resize_offset` and `Memory::resize_end`
+  now return `OutOfGas` if the word-rounded end exceeds the cap. An opcode exceeding
+  the cap on a read or write halts its frame with `OutOfGas` instead
+  of reading past the cap or reaching a fatal write error. CALL output ranges are checked
+  before child entry; return-data copy failures are not ordinary call failures.
+  Default presets remain uncapped.
 - A final CREATE or CREATE2 exceeding the EIP-3860 initcode limit or unable to pay its
   initcode charge now aborts and rolls back the calling frame through opcode pricing,
   instead of allowing the frame to succeed at end of code with a failed gasometer.
