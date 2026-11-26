@@ -1016,10 +1016,10 @@ pub(crate) fn dynamic_opcode_cost<H: Handler>(
         Opcode::SSTORE if !is_static => {
             let index = stack.peek_h256(0)?;
             let value = stack.peek_h256(1)?;
+            let net_metering = !config.estimate && config.sstore_gas_metering;
             // EIP-2200: the store needs strictly more than the call stipend, checked before its
             // slot is read.
-            if !config.estimate && config.sstore_gas_metering && config.sstore_revert_under_stipend
-            {
+            if net_metering && config.sstore_revert_under_stipend {
                 check_gas(handler, config.call_stipend + 1, None)?;
             }
             let target_is_cold = handler.is_cold(address, Some(index));
@@ -1027,7 +1027,11 @@ pub(crate) fn dynamic_opcode_cost<H: Handler>(
                 handler.warm_target((address, Some(index)));
             }
             GasCost::SStore {
-                original: handler.original_storage(address, index),
+                original: if net_metering {
+                    handler.original_storage(address, index)
+                } else {
+                    H256::zero()
+                },
                 current: handler.storage(address, index),
                 new: value,
                 target_is_cold,
@@ -1448,7 +1452,8 @@ pub enum GasCost {
     },
     /// Gas cost for `SSTORE`.
     SStore {
-        /// Original value.
+        /// Transaction-entry value for net metering. Legacy and fixed-price estimate
+        /// tariffs ignore this field; opcode pricing supplies zero without reading storage.
         original: H256,
         /// Current value.
         current: H256,

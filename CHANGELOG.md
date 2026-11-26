@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory stack frames share the immutable bytes and lazy hash of each installed code version.
   The first hash request fills the cache even if it comes from a child that later reverts.
   Explicitly cleared code needs no allocation and returns the known empty hash.
+- **Breaking:** `Backend::original_storage` now returns `H256` instead of `Option<H256>`.
+  Transaction-entry snapshots may return `self.storage(address, index)`; journaled backends
+  must return the original, not the current slot value. Legacy and fixed-price estimate
+  SSTOREs skip this read.
 - **Breaking:** `Config` adds `has_static_call` and `create_fails_on_code_deposit_oog`.
   Exhaustive struct literals must supply both fields; existing preset constructors set
   them according to the corresponding EIP-214 and EIP-2 rules.
@@ -55,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Committing a child that touches an account no longer discards a parent storage reset
+  or exposes pre-reset slots to later reads and SSTORE pricing.
 - Static calls with custom pre-EIP-161 account-existence rules no longer materialize
   absent accounts through touches or zero-value transfers. Existing-account touches
   and CALL pricing are unchanged, including the new-account fee for nested zero-value

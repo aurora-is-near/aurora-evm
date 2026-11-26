@@ -116,7 +116,7 @@ impl Backend for ReadProbe<'_> {
         self.read(address);
         self.inner.is_empty_storage(address)
     }
-    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
+    fn original_storage(&self, address: H160, index: H256) -> H256 {
         self.read(address);
         self.inner.original_storage(address, index)
     }

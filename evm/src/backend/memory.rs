@@ -179,8 +179,8 @@ impl Backend for MemoryBackend<'_> {
             .is_none_or(|v| v.storage.is_empty())
     }
 
-    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
-        Some(self.storage(address, index))
+    fn original_storage(&self, address: H160, index: H256) -> H256 {
+        self.storage(address, index)
     }
     fn blob_gas_price(&self) -> Option<u128> {
         self.vicinity.blob_gas_price
