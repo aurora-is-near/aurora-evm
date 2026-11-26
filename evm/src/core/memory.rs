@@ -13,12 +13,12 @@ pub struct Memory {
     data: Vec<u8>,
     /// Memory effective length, that changed after resize operations.
     effective_len: usize,
-    /// Memory limit
+    /// Maximum effective memory size per frame, in bytes.
     limit: usize,
 }
 
 impl Memory {
-    /// Create a new memory with the given limit.
+    /// Creates memory with a per-frame effective-size limit; expansion beyond it is out of gas.
     #[must_use]
     pub const fn new(limit: usize) -> Self {
         Self {
@@ -66,7 +66,8 @@ impl Memory {
     /// with 32 bytes as the step. If the length is zero, this function does nothing.
     ///
     /// # Errors
-    /// Return `ExitError::InvalidRange` if `offset + len` is overflow.
+    /// Returns `ExitError::InvalidRange` on overflow, or `ExitError::OutOfGas` if the
+    /// word-rounded range exceeds the configured limit.
     pub fn resize_offset(&mut self, offset: usize, len: usize) -> Result<(), ExitError> {
         if len == 0 {
             return Ok(());
@@ -80,10 +81,15 @@ impl Memory {
     /// Resize the memory, making it cover to `end`, with 32 bytes as the step.
     ///
     /// # Errors
-    /// Return `ExitError::InvalidRange` if `end` value is overflow in `next_multiple_of_32` call.
+    /// Returns `ExitError::InvalidRange` if word rounding overflows, or `ExitError::OutOfGas`
+    /// if the rounded size exceeds the configured limit. Failure leaves the size unchanged.
     pub fn resize_end(&mut self, end: usize) -> Result<(), ExitError> {
         if end > self.effective_len {
             let new_end = next_multiple_of_32(end).ok_or(ExitError::InvalidRange)?;
+            // Check expansion before CALL can run a child and commit its state.
+            if new_end > self.limit {
+                return Err(ExitError::OutOfGas);
+            }
             self.effective_len = new_end;
         }
 

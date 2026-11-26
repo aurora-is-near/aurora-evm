@@ -107,37 +107,24 @@ pub fn finish_call(
 
     match reason {
         ExitReason::Succeed(_) => {
-            let value_to_push = if runtime
-                .machine
-                .memory_mut()
-                .copy_data(
-                    out_offset,
-                    U256_ZERO,
-                    target_len,
-                    &runtime.return_data_buffer[..],
-                )
-                .is_ok()
-            {
-                U256_ONE
-            } else {
-                U256_ZERO
-            };
-            runtime
-                .machine
-                .stack_mut()
-                .push(value_to_push)
-                .map_err(Into::into)
-        }
-        ExitReason::Revert(_) => {
-            runtime.machine.stack_mut().push(U256_ZERO)?;
-
-            let _ = runtime.machine.memory_mut().copy_data(
+            runtime.machine.memory_mut().copy_data(
                 out_offset,
                 U256_ZERO,
                 target_len,
-                &runtime.return_data_buffer[..],
-            );
-
+                &runtime.return_data_buffer,
+            )?;
+            runtime.machine.stack_mut().push(U256_ONE)?;
+            Ok(())
+        }
+        ExitReason::Revert(_) => {
+            // A reverted child can still return data to its caller.
+            runtime.machine.memory_mut().copy_data(
+                out_offset,
+                U256_ZERO,
+                target_len,
+                &runtime.return_data_buffer,
+            )?;
+            runtime.machine.stack_mut().push(U256_ZERO)?;
             Ok(())
         }
         ExitReason::Error(_) => {
@@ -150,5 +137,38 @@ pub fn finish_call(
 
             Err(e.into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finish_call;
+    use crate::prelude::Rc;
+    use crate::{Context, ExitFatal, ExitReason, ExitRevert, ExitSucceed, Runtime};
+    use primitive_types::{H160, U256};
+
+    fn assert_copy_failure_before_status(reason: ExitReason) {
+        let context = Context {
+            address: H160::zero(),
+            caller: H160::zero(),
+            apparent_value: U256::zero(),
+        };
+        let mut runtime = Runtime::new(Rc::default(), Rc::default(), context, 1, 32);
+
+        // Bypass CALL's range check: one output byte at offset 32 exceeds the caller's cap.
+        let result = finish_call(&mut runtime, 1, 32, reason, [0xab].into());
+
+        assert_eq!(result, Err(ExitReason::Fatal(ExitFatal::NotSupported)));
+        assert!(runtime.machine().stack().is_empty());
+    }
+
+    #[test]
+    fn success_propagates_output_copy_failure_before_pushing_one() {
+        assert_copy_failure_before_status(ExitSucceed::Returned.into());
+    }
+
+    #[test]
+    fn revert_propagates_output_copy_failure_before_pushing_zero() {
+        assert_copy_failure_before_status(ExitRevert::Reverted.into());
     }
 }
