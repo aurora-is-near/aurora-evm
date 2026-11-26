@@ -315,6 +315,7 @@ impl<'config> StackSubstateMetadata<'config> {
 }
 
 #[auto_impl::auto_impl(& mut, Box)]
+/// Journaled execution state.
 pub trait StackState<'config>: Backend {
     fn metadata(&self) -> &StackSubstateMetadata<'config>;
     fn metadata_mut(&mut self) -> &mut StackSubstateMetadata<'config>;
@@ -1593,9 +1594,7 @@ impl<'config, S: StackState<'config>, P: PrecompileSet> Handler
     }
 
     fn original_storage(&self, address: H160, index: H256) -> H256 {
-        self.state
-            .original_storage(address, index)
-            .unwrap_or_default()
+        self.state.original_storage(address, index)
     }
 
     /// Check is account exists on backend side

@@ -167,15 +167,7 @@ impl<'config> MemoryStackSubstate<'config> {
         self.parent = Some(Box::new(entering));
     }
 
-    /// Exit commit represent successful execution of the `substate`.
-    ///
-    /// It includes:
-    /// - swallow commit
-    ///   - gas recording
-    ///   - warmed accesses merging
-    /// - logs merging
-    /// - for account existed from substate with reset flag, remove storages by keys
-    /// - merge substate data: accounts, storages, tstorages, deletes, creates
+    /// Commits the current frame's gas, accesses, logs and state changes to its parent.
     ///
     /// # Errors
     /// Return `ExitError` that is thrown by gasometer gas calculation errors.
@@ -189,28 +181,51 @@ impl<'config> MemoryStackSubstate<'config> {
         self.metadata.swallow_commit(exited.metadata)?;
         self.logs.append(&mut exited.logs);
 
-        let mut resets = BTreeSet::new();
-        for (address, account) in &exited.accounts {
-            if account.account.reset {
-                resets.insert(*address);
-            }
-        }
-        let mut reset_keys = BTreeSet::new();
-        for (address, key) in self.storages.keys() {
-            if resets.contains(address) {
-                reset_keys.insert((*address, *key));
-            }
-        }
-        for (address, key) in reset_keys {
-            self.storages.remove(&(address, key));
-        }
-
-        self.accounts.append(&mut exited.accounts);
+        self.commit_accounts(exited.accounts);
         self.storages.append(&mut exited.storages);
         self.tstorages.append(&mut exited.tstorages);
         self.deletes.append(&mut exited.deletes);
         self.creates.append(&mut exited.creates);
         Ok(())
+    }
+
+    /// Merges a successful child's account entries into this parent frame.
+    ///
+    /// Only a reset issued by the child clears the parent's pending slot writes. Otherwise
+    /// the child's account data replaces the parent's but preserves any earlier reset.
+    /// The caller merges the child's slot writes afterwards, so writes after a reset survive.
+    fn commit_accounts(&mut self, child_accounts: BTreeMap<H160, JournalAccount>) {
+        // Collect child resets before merging flags: a parent reset must not clear slots twice.
+        let resets: BTreeSet<_> = child_accounts
+            .iter()
+            .filter_map(|(address, entry)| entry.account.reset.then_some(*address))
+            .collect();
+
+        // Only parent writes are in this map; exit_commit appends the child's writes afterwards.
+        if !resets.is_empty() {
+            self.storages
+                .retain(|(address, _), _| !resets.contains(address));
+        }
+
+        // With no parent account entries to reconcile, move the whole child map.
+        if self.accounts.is_empty() {
+            self.accounts = child_accounts;
+            return;
+        }
+
+        for (address, mut child) in child_accounts {
+            match self.accounts.entry(address) {
+                Entry::Occupied(mut parent) => {
+                    // The child's account data wins, but a touch must not undo a parent's reset.
+                    child.account.reset |= parent.get().account.reset;
+                    parent.insert(child);
+                }
+                Entry::Vacant(entry) => {
+                    // No parent entry for this address: keep the child's reset flag as-is.
+                    entry.insert(child);
+                }
+            }
+        }
     }
 
     /// Exit revert. Represents revert execution of the `substate`.
@@ -292,6 +307,7 @@ impl<'config> MemoryStackSubstate<'config> {
         None
     }
 
+    /// A journaled reset makes every slot originally zero; otherwise consult the backend.
     #[must_use]
     pub fn known_original_storage(&self, address: H160) -> Option<H256> {
         if let Some(account) = self.accounts.get(&address) {
@@ -601,12 +617,10 @@ impl<B: Backend> Backend for MemoryStackState<'_, '_, B> {
         self.backend.is_empty_storage(address)
     }
 
-    fn original_storage(&self, address: H160, key: H256) -> Option<H256> {
-        if let Some(value) = self.substate.known_original_storage(address) {
-            return Some(value);
-        }
-
-        self.backend.original_storage(address, key)
+    fn original_storage(&self, address: H160, key: H256) -> H256 {
+        self.substate
+            .known_original_storage(address)
+            .unwrap_or_else(|| self.backend.original_storage(address, key))
     }
     fn blob_gas_price(&self) -> Option<u128> {
         self.backend.blob_gas_price()
