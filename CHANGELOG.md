@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when code-deposit gas is insufficient. EIP-2 configurations still fail creation.
 - Code-deposit cost overflow now fails the gasometer with `OutOfGas` instead of
   overflowing or wrapping the charge in the public `Gasometer::record_deposit` method.
+- **Breaking:** `Log` RLP encodes `data` as a byte string, not a list of bytes. The decoder
+  requires exactly one complete log and rejects previously emitted list-form data and trailing bytes.
 - A final CREATE or CREATE2 exceeding the EIP-3860 initcode limit or unable to pay its
   initcode charge now aborts and rolls back the calling frame through opcode pricing,
   instead of allowing the frame to succeed at end of code with a failed gasometer.
