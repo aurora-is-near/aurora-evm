@@ -30,6 +30,6 @@ module_name_repetitions = "allow"
 aurora-evm = { path = "evm" }
 auto_impl = "1.0"
 primitive-types = { version = "0.13", default-features = false }
-rlp = { version = "0.6", default-features = false, features = ["derive"] }
+rlp = { version = "0.6", default-features = false }
 sha3 = { version = "0.10", default-features = false }
 serde = { version = "1.0", default-features = false }

@@ -15,18 +15,7 @@ pub const EMPTY_LOGS_HASH: H256 = H256(hex!(
 /// `keccak256(rlp(logs))` as recorded in the `post[].logs` field of a fixture.
 #[must_use]
 pub fn logs_hash(logs: &[Log]) -> H256 {
-    let mut stream = rlp::RlpStream::new_list(logs.len());
-    for log in logs {
-        stream.begin_list(3);
-        stream.append(&log.address);
-        stream.begin_list(log.topics.len());
-        for topic in &log.topics {
-            stream.append(topic);
-        }
-        stream.append(&log.data);
-    }
-
-    H256::from(<[u8; 32]>::from(Keccak256::digest(stream.out())))
+    H256(Keccak256::digest(rlp::encode_list(logs)).into())
 }
 
 /// Compares the logs and the receipt of an executed transaction with the fixture: the logs hash
@@ -594,6 +583,7 @@ mod tests {
             topics: vec![],
             data: vec![],
         };
+
         assert_eq!(
             logs_hash(&[log]),
             H256(hex!(

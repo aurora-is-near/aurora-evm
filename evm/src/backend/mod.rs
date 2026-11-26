@@ -38,7 +38,8 @@ pub struct Basic {
     pub nonce: U256,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default, rlp::RlpEncodable, rlp::RlpDecodable)]
+/// An Ethereum log, encoded as RLP `[address, topics, data]` with byte-string data.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(
     feature = "with-codec",
     derive(scale_codec::Encode, scale_codec::Decode, scale_info::TypeInfo)
@@ -48,6 +49,68 @@ pub struct Log {
     pub address: H160,
     pub topics: Vec<H256>,
     pub data: Vec<u8>,
+}
+
+impl rlp::Encodable for Log {
+    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
+        stream.begin_list(3);
+        stream.append(&self.address);
+        stream.append_list(&self.topics);
+        stream.append(&self.data.as_slice());
+    }
+}
+
+/// Decodes one canonical RLP log: a 20-byte address, a list of 32-byte topics, and byte-string
+/// data. Rejects malformed fields and trailing bytes after the log.
+impl rlp::Decodable for Log {
+    fn decode(rlp: &rlp::Rlp<'_>) -> Result<Self, rlp::DecoderError> {
+        // Rlp's list iterator treats malformed items as the end of the list.
+        // Advance by validated item lengths instead, including within the topics list.
+        fn take_item<'a>(input: &mut &'a [u8]) -> Result<rlp::Rlp<'a>, rlp::DecoderError> {
+            if input.is_empty() {
+                return Err(rlp::DecoderError::RlpIncorrectListLen);
+            }
+
+            let len = rlp::Rlp::new(input).payload_info()?.total();
+            let (item, rest) = input.split_at(len);
+            *input = rest;
+
+            Ok(rlp::Rlp::new(item))
+        }
+
+        if !rlp.is_list() {
+            return Err(rlp::DecoderError::RlpExpectedToBeList);
+        }
+        if rlp.payload_info()?.total() != rlp.as_raw().len() {
+            return Err(rlp::DecoderError::RlpIsTooBig);
+        }
+
+        let mut fields = rlp.data()?;
+        let address = take_item(&mut fields)?;
+        let topics = take_item(&mut fields)?;
+        let data = take_item(&mut fields)?;
+
+        if !fields.is_empty() {
+            return Err(rlp::DecoderError::RlpIncorrectListLen);
+        }
+        if !topics.is_list() {
+            return Err(rlp::DecoderError::RlpExpectedToBeList);
+        }
+
+        let address = address.as_val()?;
+        let mut topic_bytes = topics.data()?;
+        let mut decoded_topics = Vec::new();
+
+        while !topic_bytes.is_empty() {
+            decoded_topics.push(take_item(&mut topic_bytes)?.as_val()?);
+        }
+
+        Ok(Self {
+            address,
+            topics: decoded_topics,
+            data: data.as_val()?,
+        })
+    }
 }
 
 /// Apply state operation.
