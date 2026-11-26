@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Memory::effective_data()` returns an MSIZE-sized snapshot, borrowing materialized
+  bytes when possible and padding unwritten bytes with zeroes when needed.
+
 ### Changed
 
 - **Breaking:** `MemoryStackAccount::code` is now `JournalCode`, the journal's code override.
