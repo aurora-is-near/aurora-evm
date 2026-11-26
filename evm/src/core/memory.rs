@@ -34,7 +34,8 @@ impl Memory {
         self.limit
     }
 
-    /// Get the length of the current memory range.
+    /// Length of the materialized buffer, not MSIZE. Unwritten memory can make it shorter
+    /// than [`Self::effective_len`]; direct writes without expansion can make it longer.
     #[must_use]
     // TODO: rust-v1.87 - const fn
     #[allow(clippy::missing_const_for_fn)]
@@ -42,13 +43,13 @@ impl Memory {
         self.data.len()
     }
 
-    /// Get the effective length.
+    /// Active memory size in bytes (MSIZE), rounded to a multiple of 32.
     #[must_use]
     pub const fn effective_len(&self) -> usize {
         self.effective_len
     }
 
-    /// Return true if current effective memory range is zero.
+    /// Whether the materialized buffer is empty, even if effective memory has expanded.
     #[must_use]
     // TODO: rust-v1.87 - const fn
     #[allow(clippy::missing_const_for_fn)]
@@ -56,10 +57,26 @@ impl Memory {
         self.len() == 0
     }
 
-    /// Return the full memory.
+    /// Materialized bytes only; use [`Self::effective_data`] for a zero-padded MSIZE snapshot.
     #[must_use]
     pub const fn data(&self) -> &Vec<u8> {
         &self.data
+    }
+
+    /// Returns exactly [`Self::effective_len`] bytes, including unwritten zeroes.
+    ///
+    /// Borrows a fully materialized range; otherwise allocates a padded snapshot on demand.
+    /// This does not expand the stored buffer or change memory gas accounting.
+    #[must_use]
+    pub fn effective_data(&self) -> Cow<'_, [u8]> {
+        if self.data.len() >= self.effective_len {
+            Cow::Borrowed(&self.data[..self.effective_len])
+        } else {
+            let mut snapshot = Vec::with_capacity(self.effective_len);
+            snapshot.extend_from_slice(&self.data);
+            snapshot.resize(self.effective_len, 0);
+            Cow::Owned(snapshot)
+        }
     }
 
     /// Resize the memory, making it cover the memory region of `offset..offset + len`,
