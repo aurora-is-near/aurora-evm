@@ -74,6 +74,7 @@ fn static_precompile_zero_transfer_preserves_absent_endpoints_and_existing_touch
                     accounts.insert(address, MemoryAccount::default());
                 }
             }
+
             let vicinity = vicinity();
             let mut backend = MemoryBackend::new(&vicinity, accounts);
             let state =
@@ -105,6 +106,7 @@ fn static_precompile_zero_transfer_preserves_absent_endpoints_and_existing_touch
             for (address, exists) in [(SOURCE, source_exists), (TARGET, target_exists)] {
                 assert_eq!(values.iter().any(|value| matches!(value, Apply::Modify { address: touched, .. } if *touched == address)), exists);
             }
+
             backend.apply(values, logs, false);
 
             assert_eq!(backend.exists(SOURCE), source_exists);
@@ -123,8 +125,9 @@ fn static_callcode_and_delegatecall_keep_the_execution_account() {
     ] {
         let mut config = Config::istanbul();
         config.empty_considered_exists = true;
-        // CALLCODE may carry value in a static frame: it transfers to itself.
         let mut code = vec![0x60, 32, 0x60, 0, 0x60, 0, 0x60, 0];
+
+        // CALLCODE may carry value in a static frame: it transfers to itself.
         if opcode == Opcode::CALLCODE {
             code.extend_from_slice(&[0x60, value]);
         }
@@ -182,8 +185,10 @@ fn static_callcode_and_delegatecall_keep_the_execution_account() {
         );
         assert!(!executor.state().exists(TARGET));
         assert_eq!(executor.state().basic(SOURCE).balance, U256::from(7));
+
         let (values, logs) = executor.into_state().deconstruct();
         backend.apply(values, logs, false);
+
         assert!(!backend.exists(TARGET));
         assert_eq!(backend.basic(SOURCE).balance, U256::from(7));
     }

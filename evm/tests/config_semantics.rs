@@ -45,6 +45,7 @@ fn vicinity() -> MemoryVicinity {
 #[test]
 fn presets_enable_staticcall_and_eip2_after_frontier() {
     let frontier = Config::frontier();
+
     assert!(!frontier.has_static_call);
     assert!(!frontier.create_fails_on_code_deposit_oog);
 
@@ -142,6 +143,7 @@ fn code_deposit_boundary_preserves_or_reverts_all_initcode_effects() {
             } else {
                 assert!(reason.is_succeed(), "{reason:?}");
             }
+
             assert_eq!(output, b"");
 
             let expected_used = if failed {
@@ -149,13 +151,16 @@ fn code_deposit_boundary_preserves_or_reverts_all_initcode_effects() {
             } else {
                 intrinsic + INIT_GAS + if insufficient { 0 } else { DEPOSIT_GAS }
             };
+
             assert_eq!(executor.used_gas(), expected_used);
 
             let (values, logs) = executor.into_state().deconstruct();
             let logs: Vec<_> = logs.into_iter().collect();
 
             assert_eq!(logs.len(), usize::from(!failed));
+
             backend.apply(values, logs, false);
+
             assert_eq!(backend.exists(address), !failed);
             assert_eq!(
                 backend.storage(address, H256::zero()),
@@ -210,6 +215,7 @@ fn static_call_code(target: H160, followup: Option<H160>) -> Vec<u8> {
 fn static_calls_preserve_absence_without_changing_call_prices_or_existing_touches() {
     const TARGET: H160 = H160([0xdd; 20]);
     const MIDDLE: H160 = H160([0xee; 20]);
+
     for legacy_existence in [false, true] {
         for target_balance in [None, Some(0), Some(1)] {
             for nested in [false, true] {
@@ -299,6 +305,7 @@ fn static_calls_preserve_absence_without_changing_call_prices_or_existing_touche
 
                     let materialized =
                         target_balance.is_some() || followup_call || !legacy_existence;
+
                     // Check the journal before applying: delayed filtering cannot protect CALL pricing.
                     assert_eq!(executor.state().exists(TARGET), materialized);
 
@@ -384,6 +391,7 @@ fn create_opcode_returns_address_on_frontier_deposit_failure() {
         );
 
         let (_, logs) = executor.into_state().deconstruct();
+
         assert_eq!(logs.into_iter().count(), usize::from(!fails_on_oog));
     }
 }
@@ -391,6 +399,7 @@ fn create_opcode_returns_address_on_frontier_deposit_failure() {
 #[test]
 fn frontier_create_opcode_deposit_boundary_preserves_applied_state() {
     let config = Config::frontier();
+
     for deposit_budget in [DEPOSIT_GAS - 1, DEPOSIT_GAS, DEPOSIT_GAS + 1] {
         // Copy the initcode, CREATE with value 7, then STOP (no post-CREATE gas needed).
         let mut code = vec![
@@ -442,7 +451,9 @@ fn frontier_create_opcode_deposit_boundary_preserves_applied_state() {
 
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].address, address);
+
         backend.apply(values, logs, false);
+
         assert!(backend.exists(address));
         assert_eq!(backend.basic(address).balance, U256::from(7));
         assert_eq!(backend.basic(CONTRACT).balance, U256::zero());
@@ -498,6 +509,7 @@ fn frontier_deposit_policy_does_not_mask_other_creation_errors() {
         assert_eq!(executor.state().basic(CALLER).balance, U256::from(7));
 
         let (_, logs) = executor.into_state().deconstruct();
+
         assert_eq!(logs.into_iter().count(), 0);
     }
 }

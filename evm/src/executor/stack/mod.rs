@@ -10,7 +10,9 @@ mod tagged_runtime;
 pub use self::executor::{
     Accessed, Authorization, StackExecutor, StackExitKind, StackState, StackSubstateMetadata,
 };
-pub use self::memory::{MemoryStackAccount, MemoryStackState, MemoryStackSubstate};
+pub use self::memory::{
+    CodeWithLazyHash, JournalCode, MemoryStackAccount, MemoryStackState, MemoryStackSubstate,
+};
 pub use self::precompile::{
     PrecompileFailure, PrecompileFn, PrecompileHandle, PrecompileOutput, PrecompileSet,
 };

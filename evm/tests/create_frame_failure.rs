@@ -130,6 +130,7 @@ fn terminal_create_failure_burns_gas_and_reverts_storage() {
             for oversized in [false, true] {
                 let (code, gas) = creation(create2, oversized);
                 let result = run(&config, code, None, INTRINSIC + gas, &());
+
                 if config.max_initcode_size.is_some() {
                     assert_eq!(result.reason, ExitReason::Error(ExitError::OutOfGas));
                     assert_eq!(result.storage[0], H256::zero());
@@ -150,9 +151,11 @@ fn a_parent_can_handle_the_failed_creation_frame() {
         for oversized in [false, true] {
             let (code, gas) = creation(create2, oversized);
             let mut parent = STORE_ONE.to_vec();
+
             for _ in 0..5 {
                 parent.extend_from_slice(&[0x60, 0]);
             }
+
             parent.push(0x73);
             parent.extend_from_slice(CONTRACT.as_bytes());
             parent.push(0x62);
@@ -160,11 +163,13 @@ fn a_parent_can_handle_the_failed_creation_frame() {
             // Store the CALL result in slot 1; it must be zero, while the parent's slot 0 survives.
             parent.extend_from_slice(&[0xf1, 0x60, 1, 0x55]);
             let result = run(&Config::prague(), code, Some(parent), 400_000, &());
+
             assert!(result.reason.is_succeed(), "{:?}", result.reason);
             assert_eq!(
                 result.storage,
                 [H256::zero(), H256::from_low_u64_be(1), H256::zero()]
             );
+
             // Parent SSTORE, CALL operands/cold access, child budget, PUSH1 and cold no-op SSTORE.
             assert_eq!(
                 result.gas,
@@ -179,20 +184,25 @@ fn delegatecall_failure_reverts_only_the_delegated_storage_changes() {
     for create2 in [false, true] {
         for oversized in [false, true] {
             let (code, mut gas) = creation(create2, oversized);
+
             if !oversized {
                 // DELEGATECALL writes the parent's already warm, dirty slot: 100, not 22,100.
                 gas -= 22_000;
             }
+
             let mut parent = vec![0x60, 2, 0x60, 0, 0x55];
+
             for _ in 0..4 {
                 parent.extend_from_slice(&[0x60, 0]);
             }
+
             parent.push(0x73);
             parent.extend_from_slice(CONTRACT.as_bytes());
             parent.push(0x62);
             parent.extend_from_slice(&u32::try_from(gas).unwrap().to_be_bytes()[1..]);
             parent.extend_from_slice(&[0xf4, 0x60, 1, 0x55]);
             let result = run(&Config::prague(), code, Some(parent), 400_000, &());
+
             assert!(result.reason.is_succeed(), "{:?}", result.reason);
             assert_eq!(
                 result.storage,
@@ -213,6 +223,7 @@ fn creation_with_exactly_enough_initcode_gas_succeeds() {
         // The missing fourth gas pays the second initcode word; zero-filled initcode is STOP.
         let limit = INTRINSIC + gas + 1;
         let result = run(&Config::prague(), code, None, limit, &());
+
         assert!(result.reason.is_succeed(), "{:?}", result.reason);
         assert_eq!(result.gas, limit);
         assert_eq!(result.storage[0], H256::from_low_u64_be(1));
@@ -225,6 +236,7 @@ fn maximum_initcode_size_is_valid_at_the_exact_gas_boundary() {
     use aurora_evm::gasometer::{GasCost, Gasometer};
 
     let config = Config::prague();
+
     for create2 in [false, true] {
         let len = U256::from(49_152);
         let cost = if create2 {
@@ -235,13 +247,19 @@ fn maximum_initcode_size_is_valid_at_the_exact_gas_boundary() {
         // 1,536 words: 3,072 initcode gas, 9,216 memory gas and (CREATE2 only) 9,216 hash gas.
         let opcode_gas = 32_000 + 3_072 + if create2 { 9_216 } else { 0 };
         let mut meter = Gasometer::new(opcode_gas, &config);
+
         assert_eq!(meter.gas_cost(cost, opcode_gas), Ok(opcode_gas));
+
         meter.record_dynamic_cost(cost, None).unwrap();
+
         assert_eq!(meter.total_used_gas(), opcode_gas);
+
         let limit = INTRINSIC + STORE_GAS + 9 + u64::from(create2) * 3 + 9_216 + opcode_gas;
+
         for short in [false, true] {
             let gas = limit - u64::from(short);
             let result = run(&config, creation_code(create2, 49_152), None, gas, &());
+
             assert_eq!(
                 result.reason,
                 if short {
@@ -282,6 +300,7 @@ fn initcode_is_charged_in_the_creation_opcode_event() {
             }
         }
     }
+
     for create2 in [false, true] {
         for oversized in [false, true] {
             let (code, gas) = creation(create2, oversized);
@@ -290,12 +309,15 @@ fn initcode_is_charged_in_the_creation_opcode_event() {
                 run(&Config::prague(), code, None, INTRINSIC + gas + 1, &())
             });
             let mut expected = vec![(22_100, 0)]; // The preceding SSTORE.
+
             if oversized {
                 assert_eq!(result.reason, ExitReason::Error(ExitError::OutOfGas));
             } else {
                 assert!(result.reason.is_succeed());
+
                 expected.push((32_004 + if create2 { 12 } else { 0 }, 6));
             }
+
             assert_eq!(costs.dynamic, expected);
             assert!(!costs.separate.contains(&4), "no delayed initcode charge");
         }
@@ -312,9 +334,11 @@ fn insufficient_creation_endowment_is_an_ordinary_failure() {
         // Record that CREATE returned zero, retaining the earlier storage write.
         code.extend_from_slice(&[0x15, 0x60, 0, 0x55]);
         let result = run(&Config::prague(), code, None, 100_000, &());
+
         assert!(result.reason.is_succeed(), "{:?}", result.reason);
         assert_eq!(result.storage[0], H256::from_low_u64_be(1));
         assert_eq!(result.creator_nonce, U256::one());
+
         // Full CREATE price, including initcode, then ISZERO, PUSH1 and warm no-op SSTORE.
         assert_eq!(result.gas, INTRINSIC + gas + 1 + 3 + 3 + 100);
     }
@@ -361,6 +385,7 @@ fn a_precompile_cannot_hide_a_failed_gas_charge() {
             INTRINSIC + 1,
             &SwallowedCharge { fail: true, revert },
         );
+
         assert_eq!(result.reason, ExitReason::Error(ExitError::OutOfGas));
         assert_eq!(result.gas, INTRINSIC + 1);
         assert_eq!(result.logs, 0);
@@ -377,9 +402,11 @@ fn a_frame_can_succeed_with_exactly_zero_gas_left() {
         INTRINSIC + STORE_GAS,
         &(),
     );
+
     assert!(result.reason.is_succeed());
     assert_eq!(result.gas, INTRINSIC + STORE_GAS);
     assert_eq!(result.storage[0], H256::from_low_u64_be(1));
+
     let result = run(
         &Config::prague(),
         Vec::new(),
@@ -390,6 +417,7 @@ fn a_frame_can_succeed_with_exactly_zero_gas_left() {
             revert: false,
         },
     );
+
     assert!(result.reason.is_succeed());
     assert_eq!(result.gas, INTRINSIC + 1);
     assert_eq!(result.logs, 1);

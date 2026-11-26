@@ -1590,11 +1590,13 @@ mod tests {
     #[test]
     fn code_deposit_pricing_and_charging_share_the_boundary() {
         let config = Config::frontier();
+
         assert_eq!(code_deposit_cost(0), Ok(0));
         assert_eq!(code_deposit_cost(100), Ok(20_000));
 
         for budget in [19_999, 20_000, 20_001] {
             let mut gasometer = Gasometer::new(budget, &config);
+
             if budget < 20_000 {
                 assert_eq!(gasometer.record_deposit(100), Err(ExitError::OutOfGas));
                 assert_eq!(gasometer.gas(), 0);
@@ -1613,6 +1615,7 @@ mod tests {
             assert_eq!(code_deposit_cost(max_len + 1), Err(ExitError::OutOfGas));
 
             let mut gasometer = Gasometer::new(u64::MAX, &config);
+
             assert_eq!(
                 gasometer.record_deposit(max_len + 1),
                 Err(ExitError::OutOfGas)

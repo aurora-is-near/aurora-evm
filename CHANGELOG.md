@@ -9,15 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `MemoryStackAccount::code` is now `JournalCode`, the journal's code override.
+  `JournalCode::default()` keeps the backend code; `bytes.into()` installs the bytes, and
+  empty bytes clear the code. `Apply::Modify::code` remains `Option<Vec<u8>>`.
+  `MemoryStackAccount`, `MemoryStackSubstate`, and `MemoryStackState` no longer implement
+  `Send` or `Sync`.
+- Memory stack frames share the immutable bytes and lazy hash of each installed code version.
+  The first hash request fills the cache even if it comes from a child that later reverts.
+  Explicitly cleared code needs no allocation and returns the known empty hash.
 - **Breaking:** `Backend::original_storage` now returns `H256` instead of `Option<H256>`.
   Transaction-entry snapshots may return `self.storage(address, index)`; journaled backends
   must return the original, not the current slot value. Legacy and fixed-price estimate
   SSTOREs skip this read.
-- **Breaking:** `MemoryStackSubstate` and `MemoryStackState` are no longer `Send` or `Sync`:
-  frames share a single-threaded cache for each installed code version.
-- The memory stack journal hashes non-empty installed code on first request, even if that
-  request comes from a child that later reverts. Empty code needs no cache. Public
-  `account_mut` detaches the entry's cache; its reads remain uncached until the next `set_code`.
 - **Breaking:** `Config` adds `has_static_call` and `create_fails_on_code_deposit_oog`.
   Exhaustive struct literals must supply both fields; existing preset constructors set
   them according to the corresponding EIP-214 and EIP-2 rules.
