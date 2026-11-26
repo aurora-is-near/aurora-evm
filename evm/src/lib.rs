@@ -10,7 +10,7 @@ extern crate alloc;
 pub mod prelude {
     pub use alloc::{
         boxed::Box,
-        collections::{BTreeMap, BTreeSet},
+        collections::{btree_map::Entry, BTreeMap, BTreeSet},
         rc::Rc,
         vec::Vec,
     };
@@ -18,9 +18,10 @@ pub mod prelude {
 }
 #[cfg(feature = "std")]
 pub mod prelude {
+
     pub use std::{
         cell::RefCell,
-        collections::{BTreeMap, BTreeSet},
+        collections::{btree_map::Entry, BTreeMap, BTreeSet},
         rc::Rc,
         vec::Vec,
     };
@@ -49,5 +50,6 @@ pub mod backend;
 pub mod core;
 pub mod executor;
 pub mod gasometer;
+mod macros;
 pub mod maybe_borrowed;
 pub mod runtime;

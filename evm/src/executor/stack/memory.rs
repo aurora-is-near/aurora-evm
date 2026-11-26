@@ -5,6 +5,7 @@ use crate::executor::stack::executor::{
 };
 use crate::prelude::*;
 use crate::{ExitError, Transfer};
+use core::cell::OnceCell;
 use core::mem;
 use primitive_types::{H160, H256, U256};
 
@@ -15,12 +16,29 @@ pub struct MemoryStackAccount {
     pub reset: bool,
 }
 
+/// Journal-owned metadata stays outside the publicly mutable account type.
+#[derive(Clone, Debug)]
+struct JournalAccount {
+    account: MemoryStackAccount,
+    // Frames inheriting this code version share its first hash, even across rollback.
+    code_hash: Option<Rc<OnceCell<H256>>>,
+}
+
+impl JournalAccount {
+    fn code_hash(&self) -> Option<H256> {
+        let code = self.account.code.as_deref()?;
+        let hash = || code_hash_of(code);
+        let cache = self.code_hash.as_ref();
+        Some(cache.map_or_else(hash, |cell| *cell.get_or_init(hash)))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MemoryStackSubstate<'config> {
     metadata: StackSubstateMetadata<'config>,
     parent: Option<Box<Self>>,
     logs: Vec<Log>,
-    accounts: BTreeMap<H160, MemoryStackAccount>,
+    accounts: BTreeMap<H160, JournalAccount>,
     storages: BTreeMap<(H160, H256), H256>,
     tstorages: BTreeMap<(H160, H256), U256>,
     deletes: BTreeSet<H160>,
@@ -108,8 +126,8 @@ impl<'config> MemoryStackSubstate<'config> {
                         .expect("New account was just inserted");
                     // Reset storage for CREATE call as initially it's always should be empty.
                     // NOTE: related to `ethereum-tests`: `stSStoreTest/InitCollisionParis.json`
-                    account.reset = true;
-                    account
+                    account.account.reset = true;
+                    &mut account.account
                 } else {
                     self.account_mut(address, backend)
                 };
@@ -149,15 +167,7 @@ impl<'config> MemoryStackSubstate<'config> {
         self.parent = Some(Box::new(entering));
     }
 
-    /// Exit commit represent successful execution of the `substate`.
-    ///
-    /// It includes:
-    /// - swallow commit
-    ///   - gas recording
-    ///   - warmed accesses merging
-    /// - logs merging
-    /// - for account existed from substate with reset flag, remove storages by keys
-    /// - merge substate data: accounts, storages, tstorages, deletes, creates
+    /// Commits the current frame's gas, accesses, logs and state changes to its parent.
     ///
     /// # Errors
     /// Return `ExitError` that is thrown by gasometer gas calculation errors.
@@ -171,28 +181,51 @@ impl<'config> MemoryStackSubstate<'config> {
         self.metadata.swallow_commit(exited.metadata)?;
         self.logs.append(&mut exited.logs);
 
-        let mut resets = BTreeSet::new();
-        for (address, account) in &exited.accounts {
-            if account.reset {
-                resets.insert(*address);
-            }
-        }
-        let mut reset_keys = BTreeSet::new();
-        for (address, key) in self.storages.keys() {
-            if resets.contains(address) {
-                reset_keys.insert((*address, *key));
-            }
-        }
-        for (address, key) in reset_keys {
-            self.storages.remove(&(address, key));
-        }
-
-        self.accounts.append(&mut exited.accounts);
+        self.commit_accounts(exited.accounts);
         self.storages.append(&mut exited.storages);
         self.tstorages.append(&mut exited.tstorages);
         self.deletes.append(&mut exited.deletes);
         self.creates.append(&mut exited.creates);
         Ok(())
+    }
+
+    /// Merges a successful child's account entries into this parent frame.
+    ///
+    /// Only a reset issued by the child clears the parent's pending slot writes. Otherwise
+    /// the child's account data replaces the parent's but preserves any earlier reset.
+    /// The caller merges the child's slot writes afterwards, so writes after a reset survive.
+    fn commit_accounts(&mut self, child_accounts: BTreeMap<H160, JournalAccount>) {
+        // Collect child resets before merging flags: a parent reset must not clear slots twice.
+        let resets: BTreeSet<_> = child_accounts
+            .iter()
+            .filter_map(|(address, entry)| entry.account.reset.then_some(*address))
+            .collect();
+
+        // Only parent writes are in this map; exit_commit appends the child's writes afterwards.
+        if !resets.is_empty() {
+            self.storages
+                .retain(|(address, _), _| !resets.contains(address));
+        }
+
+        // With no parent account entries to reconcile, move the whole child map.
+        if self.accounts.is_empty() {
+            self.accounts = child_accounts;
+            return;
+        }
+
+        for (address, mut child) in child_accounts {
+            match self.accounts.entry(address) {
+                Entry::Occupied(mut parent) => {
+                    // The child's account data wins, but a touch must not undo a parent's reset.
+                    child.account.reset |= parent.get().account.reset;
+                    parent.insert(child);
+                }
+                Entry::Vacant(entry) => {
+                    // No parent entry for this address: keep the child's reset flag as-is.
+                    entry.insert(child);
+                }
+            }
+        }
     }
 
     /// Exit revert. Represents revert execution of the `substate`.
@@ -227,10 +260,15 @@ impl<'config> MemoryStackSubstate<'config> {
     /// recursively in the parent state.
     #[must_use]
     pub fn known_account(&self, address: H160) -> Option<&MemoryStackAccount> {
+        self.known_account_entry(address)
+            .map(|entry| &entry.account)
+    }
+
+    fn known_account_entry(&self, address: H160) -> Option<&JournalAccount> {
         self.accounts.get(&address).or_else(|| {
             self.parent
                 .as_ref()
-                .and_then(|parent| parent.known_account(address))
+                .and_then(|parent| parent.known_account_entry(address))
         })
     }
 
@@ -257,7 +295,7 @@ impl<'config> MemoryStackSubstate<'config> {
         }
 
         if let Some(account) = self.accounts.get(&address) {
-            if account.reset {
+            if account.account.reset {
                 return Some(H256::default());
             }
         }
@@ -269,10 +307,11 @@ impl<'config> MemoryStackSubstate<'config> {
         None
     }
 
+    /// A journaled reset makes every slot originally zero; otherwise consult the backend.
     #[must_use]
     pub fn known_original_storage(&self, address: H160) -> Option<H256> {
         if let Some(account) = self.accounts.get(&address) {
-            if account.reset {
+            if account.account.reset {
                 return Some(H256::default());
             }
         }
@@ -309,18 +348,26 @@ impl<'config> MemoryStackSubstate<'config> {
                 .is_some_and(|parent| parent.deleted(address))
     }
 
-    #[allow(clippy::map_entry)]
     fn account_mut<B: Backend>(&mut self, address: H160, backend: &B) -> &mut MemoryStackAccount {
+        &mut self.account_entry_mut(address, backend).account
+    }
+
+    #[allow(clippy::map_entry)]
+    fn account_entry_mut<B: Backend>(&mut self, address: H160, backend: &B) -> &mut JournalAccount {
         if !self.accounts.contains_key(&address) {
-            let account = self.known_account(address).cloned().map_or_else(
-                || MemoryStackAccount {
-                    basic: backend.basic(address),
-                    code: None::<Vec<_>>,
-                    reset: false,
+            let account = self.known_account_entry(address).map_or_else(
+                || JournalAccount {
+                    account: MemoryStackAccount {
+                        basic: backend.basic(address),
+                        code: None,
+                        reset: false,
+                    },
+                    code_hash: None,
                 },
-                |mut v| {
-                    v.reset = false;
-                    v
+                |parent| {
+                    let mut account = parent.clone();
+                    account.account.reset = false;
+                    account
                 },
             );
             self.accounts.insert(address, account);
@@ -389,8 +436,11 @@ impl<'config> MemoryStackSubstate<'config> {
                 .is_some_and(|parent| parent.is_created(address))
     }
 
+    /// Installs a new code version. Only non-empty code needs a lazy hash cache.
     pub fn set_code<B: Backend>(&mut self, address: H160, code: Vec<u8>, backend: &B) {
-        self.account_mut(address, backend).code = Some(code);
+        let entry = self.account_entry_mut(address, backend);
+        entry.code_hash = (!code.is_empty()).then(|| Rc::new(OnceCell::new()));
+        entry.account.code = Some(code);
     }
 
     /// # Errors
@@ -545,9 +595,9 @@ impl<B: Backend> Backend for MemoryStackState<'_, '_, B> {
 
     fn code_hash(&self, address: H160) -> H256 {
         self.substate
-            .known_account(address)
-            .and_then(|account| account.code.as_deref())
-            .map_or_else(|| self.backend.code_hash(address), code_hash_of)
+            .known_account_entry(address)
+            .and_then(JournalAccount::code_hash)
+            .unwrap_or_else(|| self.backend.code_hash(address))
     }
 
     fn has_code(&self, address: H160) -> bool {
@@ -567,12 +617,10 @@ impl<B: Backend> Backend for MemoryStackState<'_, '_, B> {
         self.backend.is_empty_storage(address)
     }
 
-    fn original_storage(&self, address: H160, key: H256) -> Option<H256> {
-        if let Some(value) = self.substate.known_original_storage(address) {
-            return Some(value);
-        }
-
-        self.backend.original_storage(address, key)
+    fn original_storage(&self, address: H160, key: H256) -> H256 {
+        self.substate
+            .known_original_storage(address)
+            .unwrap_or_else(|| self.backend.original_storage(address, key))
     }
     fn blob_gas_price(&self) -> Option<u128> {
         self.backend.blob_gas_price()
@@ -730,9 +778,12 @@ impl<'backend, 'config, B: Backend> MemoryStackState<'backend, 'config, B> {
         }
     }
 
-    /// Returns a mutable reference to an account given its address
+    /// Detaches this entry's hash cache before exposing mutable code.
+    /// Use [`StackState::set_code`] to install code with lazy hashing.
     pub fn account_mut(&mut self, address: H160) -> &mut MemoryStackAccount {
-        self.substate.account_mut(address, self.backend)
+        let entry = self.substate.account_entry_mut(address, self.backend);
+        entry.code_hash = None;
+        &mut entry.account
     }
 
     #[must_use]
@@ -766,7 +817,18 @@ mod tests {
     use crate::executor::stack::StackState;
     use crate::prelude::*;
     use crate::Config;
-    use primitive_types::{H160, U256};
+    use core::cell::OnceCell;
+    use primitive_types::{H160, H256, U256};
+
+    fn hash_cache<'a>(
+        state: &'a MemoryStackState<'_, '_, impl Backend>,
+        address: H160,
+    ) -> Option<&'a Rc<OnceCell<H256>>> {
+        state
+            .substate
+            .known_account_entry(address)
+            .and_then(|entry| entry.code_hash.as_ref())
+    }
 
     fn memory_vicinity() -> MemoryVicinity {
         MemoryVicinity {
@@ -785,6 +847,353 @@ mod tests {
             chain_id: U256::from(1),
             blob_hashes: vec![],
         }
+    }
+
+    #[test]
+    fn first_hash_read_in_a_reverting_child_populates_the_parent_cache() {
+        let address = H160::from_low_u64_be(1);
+        let code = vec![0x60; 24_576];
+        let expected = code_hash_of(&code);
+        let config = Config::osaka();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::new());
+        let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
+        state.set_code(address, code);
+        let parent = Rc::clone(hash_cache(&state, address).unwrap());
+
+        assert_eq!(parent.get(), None);
+
+        state.enter(0, false);
+        state.touch(address);
+        state.enter(0, false);
+        state.touch(address);
+
+        assert!(Rc::ptr_eq(&parent, hash_cache(&state, address).unwrap()));
+        assert_eq!(parent.get(), None);
+        assert_eq!(state.code_hash(address), expected);
+
+        state.exit_revert().unwrap();
+        state.exit_discard().unwrap();
+
+        // Inspect the parent before another code_hash call can fill a missing cache.
+        let restored = hash_cache(&state, address).unwrap();
+
+        assert!(Rc::ptr_eq(restored, &parent));
+        assert_eq!(restored.get(), Some(&expected));
+    }
+
+    #[test]
+    fn replacing_code_creates_an_independent_lazy_version() {
+        let address = H160::from_low_u64_be(1);
+        let config = Config::osaka();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::new());
+
+        for commit in [false, true] {
+            let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
+            state.set_code(address, vec![0x00]);
+            let original = Rc::clone(hash_cache(&state, address).unwrap());
+            state.enter(0, false);
+            state.set_code(address, vec![0x5b]);
+            let replacement = Rc::clone(hash_cache(&state, address).unwrap());
+
+            assert!(!Rc::ptr_eq(&original, &replacement));
+            assert_eq!(replacement.get(), None);
+
+            let expected = code_hash_of(&[0x5b]);
+
+            assert_eq!(state.code_hash(address), expected);
+            assert_eq!(replacement.get(), Some(&expected));
+            assert_eq!(original.get(), None);
+
+            if commit {
+                state.exit_commit().unwrap();
+
+                assert!(Rc::ptr_eq(
+                    hash_cache(&state, address).unwrap(),
+                    &replacement
+                ));
+                assert_eq!(state.code_hash(address), expected);
+            } else {
+                state.exit_revert().unwrap();
+
+                assert!(Rc::ptr_eq(hash_cache(&state, address).unwrap(), &original));
+                assert_eq!(state.code_hash(address), code_hash_of(&[0x00]));
+            }
+        }
+    }
+
+    #[test]
+    fn public_account_edits_detach_only_the_child_cache() {
+        let address = H160::from_low_u64_be(1);
+        let config = Config::osaka();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::new());
+        let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
+        state.set_code(address, vec![0x00]);
+        let expected = state.code_hash(address);
+        let original = Rc::clone(hash_cache(&state, address).unwrap());
+
+        state.enter(0, false);
+        let mut edited = state.substate.known_account(address).unwrap().clone();
+        edited.code = Some(vec![0x5b]);
+        *state.account_mut(address) = edited;
+
+        assert!(hash_cache(&state, address).is_none());
+        assert_eq!(state.code_hash(address), code_hash_of(&[0x5b]));
+        assert!(hash_cache(&state, address).is_none());
+
+        state.exit_revert().unwrap();
+
+        assert!(Rc::ptr_eq(hash_cache(&state, address).unwrap(), &original));
+        assert_eq!(original.get(), Some(&expected));
+        assert_eq!(state.code_hash(address), expected);
+    }
+
+    #[test]
+    fn touch_and_empty_code_need_no_hash_cell() {
+        let address = H160::from_low_u64_be(1);
+        let config = Config::osaka();
+        let vicinity = memory_vicinity();
+        let account = MemoryAccount {
+            code: vec![0x5b],
+            ..MemoryAccount::default()
+        };
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::from([(address, account)]));
+        let mut state = MemoryStackState::new(StackSubstateMetadata::new(0, &config), &backend);
+
+        state.touch(address);
+
+        assert!(hash_cache(&state, address).is_none());
+        assert_eq!(state.code_hash(address), code_hash_of(&[0x5b]));
+        assert!(hash_cache(&state, address).is_none());
+
+        state.set_code(address, vec![0x00]);
+        state.set_code(address, Vec::new());
+
+        assert!(hash_cache(&state, address).is_none());
+        assert_eq!(state.code_hash(address), KECCAK_EMPTY);
+        assert!(hash_cache(&state, address).is_none());
+    }
+
+    #[test]
+    fn reverting_calls_cache_the_created_code_hash() {
+        use crate::executor::stack::StackExecutor;
+
+        // ADDRESS; EXTCODEHASH; MSTORE(0); REVERT(0, 32), padded to maximum code size.
+        let mut runtime = vec![0x30, 0x3f, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xfd];
+        runtime.resize(24_576, 0);
+        let expected = code_hash_of(&runtime);
+        let mut init = vec![
+            0x61, 0x60, 0, 0x61, 0, 15, 0x60, 0, 0x39, 0x61, 0x60, 0, 0x60, 0, 0xf3,
+        ];
+        init.extend_from_slice(&runtime);
+        let len = u16::try_from(init.len()).unwrap().to_be_bytes();
+        // Copy appended initcode, CREATE, and save the returned address at memory[32].
+        let mut code = vec![
+            0x61, len[0], len[1], 0x61, 0, 0, 0x60, 0, 0x39, 0x61, len[0], len[1], 0x60, 0, 0x60,
+            0, 0xf0, 0x60, 32, 0x52,
+        ];
+
+        for i in 0..100_u16 {
+            let offset = (64 + i * 64).to_be_bytes();
+            code.extend_from_slice(&[
+                0x60, 32, 0x61, offset[0], offset[1], 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 32, 0x51,
+                0x61, 0x07, 0xd0, 0xf1,
+            ]);
+            let status_offset = (96 + i * 64).to_be_bytes();
+            code.extend_from_slice(&[0x61, status_offset[0], status_offset[1], 0x52]);
+        }
+
+        // Return the created address followed by the 100 (hash, status) pairs.
+        code.extend_from_slice(&[0x61, 0x19, 0x20, 0x60, 32, 0xf3]);
+        let init_offset = u16::try_from(code.len()).unwrap().to_be_bytes();
+        code[4..6].copy_from_slice(&init_offset);
+        code.extend_from_slice(&init);
+        let caller = H160::from_low_u64_be(0xca);
+        let creator = H160::from_low_u64_be(0xcc);
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(
+            &vicinity,
+            BTreeMap::from([
+                (caller, MemoryAccount::default()),
+                (
+                    creator,
+                    MemoryAccount {
+                        code,
+                        ..MemoryAccount::default()
+                    },
+                ),
+            ]),
+        );
+
+        let config = Config::osaka();
+        let limit = 10_000_000;
+        let state = MemoryStackState::new(StackSubstateMetadata::new(limit, &config), &backend);
+        let mut executor = StackExecutor::new_with_precompiles(state, &config, &());
+        let (reason, output) = executor.transact_call(
+            caller,
+            creator,
+            U256::zero(),
+            Vec::new(),
+            limit,
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert!(reason.is_succeed(), "{reason:?}");
+        assert_eq!(output.len(), 6_432);
+
+        let (address, results) = output.split_at(32);
+        let created = H160::from(H256::from_slice(address));
+
+        // Only the reverted calls read the hash. Inspect their shared cell without filling it.
+        assert_eq!(
+            hash_cache(executor.state(), created).unwrap().get(),
+            Some(&expected)
+        );
+
+        for result in results.as_chunks::<64>().0 {
+            assert_eq!(&result[..32], expected.as_bytes());
+            assert_eq!(&result[32..], &[0; 32]); // Every CALL reverted with its hash as data.
+        }
+    }
+
+    #[test]
+    fn created_code_hash_remains_cached_after_repeated_extcodehash() {
+        use crate::executor::stack::StackExecutor;
+
+        let caller = H160::from_low_u64_be(0xca);
+        let creator = H160::from_low_u64_be(0xcc);
+        // Store the six-byte initcode RETURN(0, 24576), then CREATE from that slice.
+        let mut code = vec![
+            0x65, 0x61, 0x60, 0, 0x60, 0, 0xf3, 0x60, 0, 0x52, 0x60, 6, 0x60, 26, 0x60, 0, 0xf0,
+        ];
+
+        for _ in 0..100 {
+            code.extend_from_slice(&[0x80, 0x3f, 0x50]); // DUP1; EXTCODEHASH; POP.
+        }
+
+        code.extend_from_slice(&[0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3]);
+        let expected = code_hash_of(&vec![0; 24_576]);
+        let config = Config::osaka();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(
+            &vicinity,
+            BTreeMap::from([
+                (caller, MemoryAccount::default()),
+                (
+                    creator,
+                    MemoryAccount {
+                        code,
+                        ..MemoryAccount::default()
+                    },
+                ),
+            ]),
+        );
+
+        let limit = 10_000_000;
+        let state = MemoryStackState::new(StackSubstateMetadata::new(limit, &config), &backend);
+        let mut executor = StackExecutor::new_with_precompiles(state, &config, &());
+        let (reason, output) = executor.transact_call(
+            caller,
+            creator,
+            U256::zero(),
+            Vec::new(),
+            limit,
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert!(reason.is_succeed(), "{reason:?}");
+
+        let created = H160::from(H256::from_slice(&output));
+
+        assert!(!created.is_zero());
+        assert_eq!(executor.state().code(created).len(), 24_576);
+        assert_eq!(
+            hash_cache(executor.state(), created).unwrap().get(),
+            Some(&expected)
+        );
+        assert_eq!(executor.state().code_hash(created), expected);
+    }
+
+    #[test]
+    fn reverting_delegated_call_caches_the_last_designator_hash() {
+        use crate::executor::stack::{Authorization, StackExecutor};
+
+        let caller = H160::from_low_u64_be(0xca);
+        let authority = H160::from_low_u64_be(0xaa);
+        let old_target = H160::from_low_u64_be(0xd1);
+        let target = H160::from_low_u64_be(0xd2);
+        // Delegated code runs at the authority address and reverts with EXTCODEHASH(ADDRESS).
+        let delegate = MemoryAccount {
+            code: vec![0x30, 0x3f, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xfd],
+            ..MemoryAccount::default()
+        };
+        let config = Config::prague();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::from([(target, delegate)]));
+        let limit = 200_000;
+        let state = MemoryStackState::new(StackSubstateMetadata::new(limit, &config), &backend);
+        let mut executor = StackExecutor::new_with_precompiles(state, &config, &());
+        let mut designator = vec![0xef, 0x01, 0x00];
+        designator.extend_from_slice(target.as_bytes());
+        let expected = code_hash_of(&designator);
+        let (reason, output) = executor.transact_call(
+            caller,
+            authority,
+            U256::zero(),
+            Vec::new(),
+            limit,
+            Vec::new(),
+            vec![
+                Authorization::new(authority, old_target, 0, true),
+                Authorization::new(authority, target, 1, true),
+            ],
+        );
+
+        assert!(reason.is_revert(), "{reason:?}");
+        assert_eq!(output, expected.as_bytes());
+        assert_eq!(executor.state().basic(authority).nonce, U256::from(2));
+        assert_eq!(executor.state().code(authority), designator);
+        assert_eq!(
+            hash_cache(executor.state(), authority).unwrap().get(),
+            Some(&expected)
+        );
+    }
+
+    #[test]
+    fn clearing_a_delegation_leaves_no_hash_cell() {
+        use crate::executor::stack::{Authorization, StackExecutor};
+
+        let caller = H160::from_low_u64_be(0xca);
+        let authority = H160::from_low_u64_be(0xaa);
+        let target = H160::from_low_u64_be(0xd1);
+        let config = Config::prague();
+        let vicinity = memory_vicinity();
+        let backend = MemoryBackend::new(&vicinity, BTreeMap::new());
+        let limit = 200_000;
+        let state = MemoryStackState::new(StackSubstateMetadata::new(limit, &config), &backend);
+        let mut executor = StackExecutor::new_with_precompiles(state, &config, &());
+        let (reason, _) = executor.transact_call(
+            caller,
+            authority,
+            U256::zero(),
+            Vec::new(),
+            limit,
+            Vec::new(),
+            vec![
+                Authorization::new(authority, target, 0, true),
+                Authorization::new(authority, H160::zero(), 1, true),
+            ],
+        );
+
+        assert!(reason.is_succeed(), "{reason:?}");
+        assert_eq!(executor.state().basic(authority).nonce, U256::from(2));
+        assert_eq!(executor.state().code(authority), Vec::<u8>::new());
+        assert_eq!(executor.state().code_hash(authority), KECCAK_EMPTY);
+        assert!(hash_cache(executor.state(), authority).is_none());
     }
 
     #[test]
@@ -880,18 +1289,21 @@ mod tests {
         let metadata = StackSubstateMetadata::new(0, &config);
 
         let mut stack_state = MemoryStackState::new(metadata, &backend);
+
         assert!(stack_state.is_empty(addr1));
         assert!(!stack_state.is_empty(addr2));
 
         // Accounts cached
         stack_state.deposit(addr1, U256::one());
         stack_state.deposit(addr2, U256::one());
+
         // Cached account
         assert!(!stack_state.is_empty(addr1));
 
         // Ensure that code will pass `is_some` check to catch data from backend.
-        let acc1 = stack_state.substate.accounts.get(&addr1).unwrap();
-        let acc2 = stack_state.substate.accounts.get(&addr2).unwrap();
+        let acc1 = stack_state.substate.known_account(addr1).unwrap();
+        let acc2 = stack_state.substate.known_account(addr2).unwrap();
+
         assert_eq!(acc1.basic.balance, U256::one());
         assert!(acc1.code.is_none());
         assert_eq!(acc2.basic.balance, U256::one());
@@ -899,12 +1311,14 @@ mod tests {
         assert!(acc2.code.is_none());
 
         stack_state.reset_balance(addr1);
+
         // Get from cache and code from backend.
         assert!(stack_state.is_empty(addr1));
         assert_eq!(stack_state.code(addr1), Vec::<u8>::new());
 
         stack_state.reset_balance(addr2);
-        let acc2 = stack_state.substate.accounts.get(&addr2).unwrap();
+        let acc2 = stack_state.substate.known_account(addr2).unwrap();
+
         assert_eq!(acc2.basic.balance, U256::zero());
         // NOTE: code is not cached
         assert!(acc2.code.is_none());
@@ -929,6 +1343,7 @@ mod tests {
         address: H160,
     ) {
         let code_hash = stack_state.code_hash(address);
+
         assert_eq!(code_hash, code_hash_of(&stack_state.code(address)));
         assert_eq!(stack_state.has_code(address), code_hash != KECCAK_EMPTY);
     }
@@ -950,6 +1365,7 @@ mod tests {
         let metadata = StackSubstateMetadata::new(0, &config);
 
         let mut stack_state = MemoryStackState::new(metadata, &backend);
+
         assert_eq!(stack_state.code_hash(eoa), KECCAK_EMPTY);
         assert!(!stack_state.has_code(eoa));
         assert_eq!(stack_state.code_hash(absent), KECCAK_EMPTY);
@@ -960,11 +1376,12 @@ mod tests {
         // A cached account without code changes still answers from the backend.
         stack_state.deposit(contract, U256::one());
         stack_state.deposit(absent, U256::one());
+
         assert!(stack_state
             .substate
             .accounts
             .values()
-            .all(|account| account.code.is_none()));
+            .all(|entry| entry.account.code.is_none()));
         assert_eq!(stack_state.code_hash(contract), code_hash_of(&code));
         assert!(stack_state.has_code(contract));
         assert_eq!(stack_state.code_hash(absent), KECCAK_EMPTY);
@@ -990,11 +1407,13 @@ mod tests {
         let metadata = StackSubstateMetadata::new(0, &config);
 
         let mut stack_state = MemoryStackState::new(metadata, &backend);
+
         assert!(stack_state.is_empty(eoa));
         assert!(!stack_state.is_empty(contract));
 
         // Code set in the substate shadows the backend.
         stack_state.set_code(eoa, new_code.clone());
+
         assert_eq!(stack_state.code_hash(eoa), code_hash_of(&new_code));
         assert!(stack_state.has_code(eoa));
         assert!(!stack_state.is_empty(eoa));
@@ -1002,6 +1421,7 @@ mod tests {
 
         // Cleared code makes the account empty although the backend still holds code.
         stack_state.set_code(contract, Vec::new());
+
         assert_eq!(stack_state.code_hash(contract), KECCAK_EMPTY);
         assert!(!stack_state.has_code(contract));
         assert!(stack_state.is_empty(contract));
@@ -1026,6 +1446,7 @@ mod tests {
         // A reverted substate drops its code change.
         stack_state.enter(0, false);
         stack_state.set_code(address, new_code.clone());
+
         assert_eq!(stack_state.code_hash(address), code_hash_of(&new_code));
         stack_state.exit_revert().unwrap();
         assert_eq!(stack_state.code_hash(address), code_hash_of(&code));
@@ -1035,10 +1456,13 @@ mod tests {
         stack_state.enter(0, false);
         stack_state.set_code(address, Vec::new());
         stack_state.enter(0, false);
+
         assert_eq!(stack_state.code_hash(address), KECCAK_EMPTY);
         assert!(!stack_state.has_code(address));
+
         stack_state.exit_commit().unwrap();
         stack_state.exit_commit().unwrap();
+
         assert_eq!(stack_state.code_hash(address), KECCAK_EMPTY);
         assert!(!stack_state.has_code(address));
         assert!(stack_state.is_empty(address));

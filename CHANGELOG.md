@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `Backend::original_storage` now returns `H256` instead of `Option<H256>`.
+  Transaction-entry snapshots may return `self.storage(address, index)`; journaled backends
+  must return the original, not the current slot value. Legacy and fixed-price estimate
+  SSTOREs skip this read.
+- **Breaking:** `MemoryStackSubstate` and `MemoryStackState` are no longer `Send` or `Sync`:
+  frames share a single-threaded cache for each installed code version.
+- The memory stack journal hashes non-empty installed code on first request, even if that
+  request comes from a child that later reverts. Empty code needs no cache. Public
+  `account_mut` detaches the entry's cache; its reads remain uncached until the next `set_code`.
+- **Breaking:** `Config` adds `has_static_call` and `create_fails_on_code_deposit_oog`.
+  Exhaustive struct literals must supply both fields; existing preset constructors set
+  them according to the corresponding EIP-214 and EIP-2 rules.
 - CREATE and CREATE2 validate the EIP-3860 initcode size and charge its word cost during
   opcode pricing, before copying or hashing initcode and invoking the creation handler.
   The initcode fee is included in `RecordDynamicCost`, replacing the later `RecordCost`
@@ -33,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, fail with `InvalidCode` even when their memory operands are missing or do not fit
   memory, where `StackUnderflow` or `OutOfGas` was reported before; all gas is consumed
   either way.
+- The `std` feature no longer enables the optional tracing, SCALE, or Serde dependencies
+  on its own; it still forwards their `std` features when they are enabled.
 
 ### Removed
 
@@ -48,6 +62,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of reading past the cap or reaching a fatal write error. CALL output ranges are checked
   before child entry; return-data copy failures are not ordinary call failures.
   Default presets remain uncapped.
+- Committing a child that touches an account no longer discards a parent storage reset
+  or exposes pre-reset slots to later reads and SSTORE pricing.
+- Static calls with custom pre-EIP-161 account-existence rules no longer materialize
+  absent accounts through touches or zero-value transfers. Existing-account touches
+  and CALL pricing are unchanged, including the new-account fee for nested zero-value
+  CALLs and subsequent nonstatic CALLs to the same absent address.
+- STATICCALL is rejected before stack or state access when disabled by `Config` and
+  never charges the new-account fee, including with custom account-existence rules.
+- Frontier contract creation preserves initcode effects and returns an empty contract
+  when code-deposit gas is insufficient. EIP-2 configurations still fail creation.
+- Code-deposit cost overflow now fails the gasometer with `OutOfGas` instead of
+  overflowing or wrapping the charge in the public `Gasometer::record_deposit` method.
 - A final CREATE or CREATE2 exceeding the EIP-3860 initcode limit or unable to pay its
   initcode charge now aborts and rolls back the calling frame through opcode pricing,
   instead of allowing the frame to succeed at end of code with a failed gasometer.

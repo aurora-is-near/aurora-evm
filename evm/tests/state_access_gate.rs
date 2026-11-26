@@ -27,6 +27,7 @@ struct ReadProbe<'a> {
     inner: MemoryBackend<'a>,
     account_reads: RefCell<BTreeMap<H160, usize>>,
     storage_reads: Cell<usize>,
+    original_reads: Cell<usize>,
 }
 
 impl ReadProbe<'_> {
@@ -110,7 +111,8 @@ impl Backend for ReadProbe<'_> {
         self.read(address);
         self.inner.is_empty_storage(address)
     }
-    fn original_storage(&self, address: H160, index: H256) -> Option<H256> {
+    fn original_storage(&self, address: H160, index: H256) -> H256 {
+        self.original_reads.set(self.original_reads.get() + 1);
         self.read_storage(address);
         self.inner.original_storage(address, index)
     }
@@ -321,6 +323,44 @@ fn cases() -> Vec<Case> {
     ]
 }
 
+#[test]
+fn disabled_staticcall_rejects_before_stack_or_state_access() {
+    for mut config in [Config::frontier(), Config::osaka()] {
+        config.has_static_call = false;
+        for probe in [
+            staticcall(0),
+            Probe {
+                code: vec![0xfa],
+                push_gas: 0,
+            },
+        ] {
+            let mut case = Case::new("disabled STATICCALL", probe, 0);
+            case.config = config.clone();
+            let outcome = run(&case, 100_000);
+            assert_eq!(
+                outcome.reason,
+                ExitReason::Error(ExitError::InvalidCode(Opcode::STATICCALL))
+            );
+
+            assert_eq!(outcome.used, outcome.limit);
+            assert_eq!(outcome.reads, 0);
+            assert_eq!(outcome.delegate_reads, 0);
+        }
+    }
+}
+
+#[test]
+fn staticcall_flag_is_independent_of_return_data() {
+    let mut case = Case::new("custom STATICCALL", staticcall(0), 40);
+    case.config = Config::frontier();
+    case.config.has_static_call = true;
+    assert!(!case.config.has_return_data);
+
+    let outcome = run(&case, 40);
+    assert!(outcome.reason.is_succeed());
+    assert_eq!(outcome.used, outcome.limit);
+}
+
 /// What a transaction did, run with `gas_left` at its probed opcode.
 #[derive(Debug)]
 struct Outcome {
@@ -329,6 +369,7 @@ struct Outcome {
     used: u64,
     /// Backend reads of the target account and of storage.
     reads: usize,
+    original_reads: usize,
     delegate_reads: usize,
     /// Backend reads of every account and of storage.
     total_reads: usize,
@@ -374,6 +415,7 @@ fn run_code(case: &Case, probe: &Probe, gas_left: u64) -> Outcome {
         ),
         account_reads: RefCell::default(),
         storage_reads: Cell::new(0),
+        original_reads: Cell::new(0),
     };
     let access_list_gas = ACCESS_LIST_ADDRESS_GAS
         * u64::try_from(case.access_list.len()).expect("a short access list");
@@ -395,8 +437,27 @@ fn run_code(case: &Case, probe: &Probe, gas_left: u64) -> Outcome {
         limit,
         used: executor.used_gas(),
         reads: backend.reads_of(TARGET) + backend.storage_reads.get(),
+        original_reads: backend.original_reads.get(),
         delegate_reads: backend.reads_of(DELEGATE),
         total_reads,
+    }
+}
+
+#[test]
+fn sstore_reads_the_original_only_for_net_metering() {
+    for net_metering in [false, true] {
+        for estimate in [false, true] {
+            let mut case = Case::new("SSTORE original reads", sstore(), 0);
+            case.config.sstore_gas_metering = net_metering;
+            case.config.estimate = estimate;
+            let outcome = run(&case, 50_000);
+
+            assert!(outcome.reason.is_succeed(), "{:?}", outcome.reason);
+            assert_eq!(
+                outcome.original_reads,
+                usize::from(net_metering && !estimate)
+            );
+        }
     }
 }
 

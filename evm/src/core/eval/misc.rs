@@ -2,6 +2,7 @@ use super::Control;
 
 use crate::core::utils::USIZE_MAX;
 use crate::core::{ExitError, ExitRevert, ExitSucceed, Machine};
+use crate::macros::{as_usize_or_fail, pop_h256, pop_u256, push_h256, push_u256, try_or_fail};
 use crate::utils::U256_ZERO;
 use core::cmp::min;
 use primitive_types::{H256, U256};
@@ -159,7 +160,8 @@ pub fn pc(state: &mut Machine, position: usize) -> Control {
 
 #[inline]
 pub fn msize(state: &mut Machine) -> Control {
-    push_u256!(state, state.memory.effective_len().into());
+    let size = state.memory.effective_len();
+    push_u256!(state, size.into());
     Control::Continue(1)
 }
 

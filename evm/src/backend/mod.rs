@@ -17,6 +17,9 @@ pub const KECCAK_EMPTY: H256 = H256([
 
 /// `keccak256` of the code bytes.
 pub(crate) fn code_hash_of(code: &[u8]) -> H256 {
+    if code.is_empty() {
+        return KECCAK_EMPTY;
+    }
     H256::from_slice(<[u8; 32]>::from(Keccak256::digest(code)).as_slice())
 }
 
@@ -118,8 +121,11 @@ pub trait Backend {
     fn storage(&self, address: H160, index: H256) -> H256;
     /// Check if the storage of the address is empty.
     fn is_empty_storage(&self, address: H160) -> bool;
-    /// Get original storage value of address at index, if available.
-    fn original_storage(&self, address: H160, index: H256) -> Option<H256>;
+    /// Returns the slot's original value for SSTORE net metering (EIP-2200).
+    ///
+    /// A transaction-entry snapshot can delegate to [`Self::storage`]. An overlay must
+    /// preserve the original across writes; zero denotes an empty slot, not missing data.
+    fn original_storage(&self, address: H160, index: H256) -> H256;
     /// CANCUN hard fork
     /// [EIP-4844]: Shard Blob Transactions
     /// [EIP-7516]: BLOBBASEFEE instruction
@@ -195,8 +201,8 @@ mod tests {
         fn is_empty_storage(&self, _: H160) -> bool {
             true
         }
-        fn original_storage(&self, _: H160, _: H256) -> Option<H256> {
-            None
+        fn original_storage(&self, _: H160, _: H256) -> H256 {
+            H256::zero()
         }
         fn blob_gas_price(&self) -> Option<u128> {
             None

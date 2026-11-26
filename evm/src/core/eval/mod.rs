@@ -1,10 +1,11 @@
-#[macro_use]
-mod macros;
 mod arithmetic;
 mod bitwise;
 mod misc;
 
 use crate::core::{ExitError, ExitReason, ExitSucceed, InterpreterHandler, Machine, Opcode};
+use crate::macros::{
+    op1_u256_fn, op2_u256, op2_u256_bool_ref, op2_u256_fn, op2_u256_tuple, op3_u256_fn,
+};
 use core::ops::{BitAnd, BitOr, BitXor};
 use primitive_types::H160;
 

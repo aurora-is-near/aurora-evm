@@ -1,5 +1,3 @@
-#[macro_use]
-mod macros;
 mod system;
 
 use crate::core::utils::{U256_ONE, U256_ZERO};
