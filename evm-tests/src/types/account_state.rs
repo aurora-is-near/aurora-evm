@@ -52,10 +52,10 @@ impl From<StateAccount> for MemoryAccount {
 /// corresponding state (`StateAccount`).
 /// It uses a `BTreeMap` to ensure a consistent order for serialization.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Clone)]
-pub struct AccountsState(BTreeMap<H160, StateAccount>);
+pub struct AccountsState(pub BTreeMap<H160, StateAccount>);
 
 impl AccountsState {
-    /// Converts the `AccountsState` into a `BTreeMap` of `H160` addresses to `MemoryAccount`.   
+    /// Converts the `AccountsState` into a `BTreeMap` of `H160` addresses to `MemoryAccount`.
     #[must_use]
     pub fn to_memory_accounts_state(&self) -> MemoryAccountsState {
         MemoryAccountsState(
