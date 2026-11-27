@@ -25,7 +25,7 @@ pub(crate) fn code_hash_of(code: &[u8]) -> H256 {
 
 /// Basic account information.
 ///
-#[derive(Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Default)]
 #[cfg_attr(
     feature = "with-codec",
     derive(scale_codec::Encode, scale_codec::Decode, scale_info::TypeInfo)
