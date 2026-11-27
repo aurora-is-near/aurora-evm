@@ -451,6 +451,7 @@ impl<'config, 'precompiles, S: StackState<'config>, P: PrecompileSet>
         &mut self.state
     }
 
+    // Moving out generic state requires a destructor that is not const, even on Rust 1.100.
     #[allow(clippy::missing_const_for_fn)]
     pub fn into_state(self) -> S {
         self.state
