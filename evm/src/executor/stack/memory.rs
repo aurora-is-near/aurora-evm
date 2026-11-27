@@ -261,7 +261,7 @@ impl<'config> MemoryStackSubstate<'config> {
 
                 Apply::Modify {
                     address,
-                    basic: account.basic.clone(),
+                    basic: account.basic,
                     code: mem::take(&mut account.code).into_bytes(),
                     storage,
                     reset_storage: account.reset,
@@ -398,7 +398,7 @@ impl<'config> MemoryStackSubstate<'config> {
     /// If it's `None` just take a look.
     #[must_use]
     pub fn known_basic(&self, address: H160) -> Option<Basic> {
-        self.known_account(address).map(|acc| acc.basic.clone())
+        self.known_account(address).map(|acc| acc.basic)
     }
 
     /// Returns an owned copy of journaled code, or `None` if the backend supplies it.
@@ -489,7 +489,7 @@ impl<'config> MemoryStackSubstate<'config> {
     ) -> MemoryStackAccount {
         if let Some(account) = parent.and_then(|frame| frame.known_account(address)) {
             return MemoryStackAccount {
-                basic: account.basic.clone(),
+                basic: account.basic,
                 code: account.code.clone(),
                 // The parent still owns any storage reset it recorded.
                 reset: false,
