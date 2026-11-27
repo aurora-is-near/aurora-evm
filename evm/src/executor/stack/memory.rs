@@ -188,9 +188,8 @@ impl<'config> MemoryStackSubstate<'config> {
     }
 
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn logs(&self) -> &[Log] {
-        &self.logs
+    pub const fn logs(&self) -> &[Log] {
+        self.logs.as_slice()
     }
 
     pub const fn logs_mut(&mut self) -> &mut Vec<Log> {

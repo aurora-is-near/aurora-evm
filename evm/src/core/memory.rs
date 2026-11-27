@@ -37,9 +37,7 @@ impl Memory {
     /// Length of the materialized buffer, not MSIZE. Unwritten memory can make it shorter
     /// than [`Self::effective_len`]; direct writes without expansion can make it longer.
     #[must_use]
-    // TODO: rust-v1.87 - const fn
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.data.len()
     }
 
@@ -51,9 +49,7 @@ impl Memory {
 
     /// Whether the materialized buffer is empty, even if effective memory has expanded.
     #[must_use]
-    // TODO: rust-v1.87 - const fn
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
